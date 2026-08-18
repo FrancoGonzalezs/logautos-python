@@ -13,6 +13,26 @@ contrato completo: rutas explícitas en `routes.php`, autenticación por API key
 body JSON leído de `raw_input_stream` (CodeIgniter 3 no lo parsea solo), y una
 tabla `api_idempotency` compartida entre entidades con una columna `entidad`.
 
+## Variables de entorno
+
+Todas tienen default para que correr local no necesite configurar nada.
+
+| Variable | Default local | En el contenedor |
+|---|---|---|
+| `DB_PATH` | `./local.db` | ruta dentro del volumen, ej. `/data/local.db` |
+| `DATA_DIR` | `./data` | el volumen, ej. `/data` — ahí va la caché de UF |
+| `SECRET_KEY` | clave fija de desarrollo | **obligatoria**, si no las cookies de sesión son falsificables |
+
+`DATA_DIR` importa: fuera del volumen el disco del contenedor se borra en cada
+redeploy, así que la caché de UF se perdería y cada arranque volvería a pegarle
+a mindicador.cl.
+
+La clave fija de desarrollo está en el repo a propósito, para que reiniciar el
+servidor no cierre la sesión mientras se trabaja. Hoy no agrega riesgo porque
+el login es una maqueta que acepta cualquier usuario y la app es de solo
+lectura; **cuando el login valide de verdad, esa rama debería fallar en vez de
+dar una clave por defecto.**
+
 ## Levantar el ambiente
 
 ```bash

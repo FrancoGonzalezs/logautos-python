@@ -24,11 +24,18 @@ def crear_app():
     app = Flask(__name__)
     app.teardown_appcontext(cerrar_db)
 
-    # La sesion del login. En desarrollo se genera una al vuelo: no hay nada
-    # sensible en la sesion (solo el nombre de usuario de la maqueta) y una
-    # clave fija en el repo seria peor. Al desplegar hay que fijar
-    # SECRET_KEY por entorno, o cada reinicio cierra la sesion de todos.
-    app.secret_key = os.environ.get("SECRET_KEY") or os.urandom(32)
+    # La sesion del login sale de SECRET_KEY del entorno. Si no esta, se usa
+    # una clave FIJA de desarrollo en vez de generar una al azar: con
+    # os.urandom() cada reinicio del servidor cerraba la sesion, y con
+    # recarga automatica eso pasa cada vez que se guarda un archivo.
+    #
+    # La clave fija no es un descuido pero tampoco es segura: esta en el repo,
+    # asi que cualquiera puede firmar una cookie de sesion. Hoy da lo mismo
+    # porque el login es una maqueta que acepta cualquier usuario
+    # (modulos/acceso.py) y la app es de solo lectura. EN PRODUCCION HAY QUE
+    # SETEAR SECRET_KEY -- y cuando el login valide de verdad, esta rama
+    # deberia pasar a fallar en vez de dar una clave por defecto.
+    app.secret_key = os.environ.get("SECRET_KEY") or "regla-desarrollo-no-usar-en-produccion"
 
     app.jinja_env.filters["mostrar"] = mostrar
     app.jinja_env.filters["pesos"] = pesos

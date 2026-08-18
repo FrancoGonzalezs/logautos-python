@@ -16,7 +16,13 @@ import sqlite3
 from flask import g
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+
+# Las dos rutas que la app necesita escribir o leer del disco salen del
+# entorno, con el layout local como default para que correr en la maquina no
+# necesite configurar nada. En un contenedor las dos tienen que apuntar al
+# volumen persistente: fuera de el, el disco se borra en cada redeploy.
 DB_PATH = os.environ.get("DB_PATH", os.path.join(BASE_DIR, "local.db"))
+DATA_DIR = os.environ.get("DATA_DIR", os.path.join(BASE_DIR, "data"))
 
 DB_BUSY_TIMEOUT_MS = 5000
 

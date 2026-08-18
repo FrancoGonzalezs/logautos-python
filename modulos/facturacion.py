@@ -31,14 +31,14 @@ from datetime import date, datetime
 
 from flask import Blueprint, render_template, request
 
-from core import BASE_DIR, consultar
+from core import DATA_DIR, consultar
 from modulos.catalogos import normalizar
 
 bp = Blueprint("facturacion", __name__, url_prefix="/facturacion")
 
 IVA = 1.19
 
-RUTA_CACHE_UF = os.path.join(BASE_DIR, "data", "uf.json")
+RUTA_CACHE_UF = os.path.join(DATA_DIR, "uf.json")
 URL_UF = "https://mindicador.cl/api/uf"
 
 # Los UNICOS cinco clientes que facturan acopio. No hay tarifa de fallback: si
