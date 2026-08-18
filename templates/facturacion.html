@@ -1,0 +1,214 @@
+{% extends "base.html" %}
+{% block titulo %}Facturación {{ mes }} — Logautos{% endblock %}
+
+{% block contenido %}
+  <h1>Facturación · {{ mes }}</h1>
+
+  {% if error_uf %}
+    <div class="aviso">
+      <strong>No se pudo obtener la UF de {{ mes }}.</strong>
+      {{ error_uf }} — la UF se publica por adelantado para el período que va del
+      10 de un mes al 9 del siguiente, así que un mes futuro todavía no la tiene.
+      Sin ese valor no se puede calcular el acopio.
+    </div>
+    <form class="filtros" method="get" data-auto>
+      <label for="mes">Mes</label>
+      <input type="month" id="mes" name="mes" value="{{ mes }}">
+      <button type="submit">Ver</button>
+    </form>
+  {% else %}
+
+  <p class="subtitulo">
+    UF de cierre de {{ mes }}: <strong>{{ "%.2f"|format(uf) }}</strong>
+    <span class="etiqueta{% if origen_uf == 'cache' %}{% endif %}">
+      {{ 'caché' if origen_uf == 'cache' else origen_uf }}
+    </span>
+    · se factura el mes completo con este valor, no con la UF del día
+    · acopio calculado en vivo, no se guarda en la base
+  </p>
+
+  <form class="filtros" method="get" data-auto>
+    <label for="mes">Mes</label>
+    <input type="month" id="mes" name="mes" value="{{ mes }}">
+    <button type="submit">Ver</button>
+  </form>
+
+  <section class="grupo">
+    <h2>Facturación total del mes</h2>
+    <div class="tarjetas-total">
+      <div class="total">
+        <span class="rotulo">Total a facturar</span>
+        <span class="cifra">{{ totales.facturar | pesos }}</span>
+        <span class="detalle">OT {{ totales.ot | pesos }} + acopio {{ totales.acopio | pesos }}</span>
+      </div>
+      <div class="total">
+        <span class="rotulo">Total con IVA</span>
+        <span class="cifra">{{ totales.facturar_iva | pesos }}</span>
+        <span class="detalle">× 1,19</span>
+      </div>
+      <div class="total suave">
+        <span class="rotulo">Proyección</span>
+        <span class="cifra">{{ totales.proyeccion | pesos }}</span>
+        <span class="detalle">OT abiertas de DyP y servicio mecánico</span>
+      </div>
+      <div class="total suave">
+        <span class="rotulo">Proyección con IVA</span>
+        <span class="cifra">{{ totales.proyeccion_iva | pesos }}</span>
+        <span class="detalle">× 1,19</span>
+      </div>
+      <div class="total">
+        <span class="rotulo">Total + proyección neto</span>
+        <span class="cifra">{{ totales.con_proyeccion | pesos }}</span>
+        <span class="detalle">—</span>
+      </div>
+      <div class="total">
+        <span class="rotulo">Total + proyección con IVA</span>
+        <span class="cifra">{{ totales.con_proyeccion_iva | pesos }}</span>
+        <span class="detalle">× 1,19</span>
+      </div>
+    </div>
+    <p class="vacio">
+      Solo clientes que facturan: acopio de {{ clientes_acopio|join(', ') }};
+      OT de {{ clientes_ot|join(', ') }}. LOGAUTOS queda fuera — es la empresa
+      dueña del sistema, no un cliente.
+    </p>
+  </section>
+
+  <section class="grupo">
+    <h2>Acopio por cliente <span class="cuenta">{{ acopio|length }}</span></h2>
+    {% if not acopio %}
+      <p class="vacio">Ninguna unidad en acopio este mes.</p>
+    {% else %}
+      <div class="tabla-scroll">
+        <table>
+          <thead>
+            <tr>
+              <th>Cliente</th><th>Tarifa/día</th><th>Unidades</th><th>Días</th>
+              <th>Valor acopio</th><th>Ingresadas mes</th><th>Despachadas mes</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for a in acopio %}
+              <tr>
+                <td><strong>{{ a.cliente }}</strong></td>
+                <td class="num">{{ a.tarifa | pesos }}</td>
+                <td class="num">{{ a.unidades | numero }}</td>
+                <td class="num">{{ a.dias | numero }}</td>
+                <td class="num">{{ a.valor | pesos }}</td>
+                <td class="num">{{ a.ingresadas_mes | numero }}</td>
+                <td class="num">{{ a.despachadas_mes | numero }}</td>
+              </tr>
+            {% endfor %}
+          </tbody>
+          <tfoot>
+            <tr>
+              <th>TOTALES</th><th></th>
+              <th class="num">{{ total_unidades | numero }}</th>
+              <th class="num">{{ total_dias | numero }}</th>
+              <th class="num">{{ totales.acopio | pesos }}</th>
+              <th></th><th></th>
+            </tr>
+          </tfoot>
+        </table>
+      </div>
+    {% endif %}
+    {% if acopio_fuera %}
+      <p class="vacio nota-fuera">
+        Fuera del acopio, por no ser clientes que lo facturen:
+        {% for cliente, n in acopio_fuera %}{{ cliente }} ({{ n }}){% if not loop.last %} · {% endif %}{% endfor %}
+      </p>
+    {% endif %}
+  </section>
+
+  <section class="grupo">
+    <h2>OT cerradas del mes <span class="cuenta">{{ total_ot_cant | numero }}</span></h2>
+    {% if not ot_externas %}
+      <p class="vacio">Sin OT cerradas de clientes externos este mes.</p>
+    {% else %}
+      <div class="tabla-scroll">
+        <table>
+          <thead><tr><th>Cliente</th><th>OT cerradas</th><th>Precio</th></tr></thead>
+          <tbody>
+            {% for o in ot_externas %}
+              <tr>
+                <td><strong>{{ o.cliente }}</strong></td>
+                <td class="num">{{ o.ot | numero }}</td>
+                <td class="num">{{ o.precio | pesos }}</td>
+              </tr>
+            {% endfor %}
+          </tbody>
+          <tfoot>
+            <tr>
+              <th>TOTALES</th>
+              <th class="num">{{ total_ot_cant | numero }}</th>
+              <th class="num">{{ totales.ot | pesos }}</th>
+            </tr>
+          </tfoot>
+        </table>
+      </div>
+    {% endif %}
+    {% if ot_fuera %}
+      <p class="vacio nota-fuera">
+        Fuera de la facturación, por no ser clientes con OT facturables:
+        {% for cliente, d in ot_fuera %}{{ cliente }} ({{ d.ot }} OT, {{ d.precio | pesos }}){% if not loop.last %} · {% endif %}{% endfor %}
+      </p>
+    {% endif %}
+  </section>
+
+  <section class="grupo">
+    <h2>LOGAUTOS — costo interno <span class="cuenta">{{ ot_interna.ot if ot_interna else 0 }}</span></h2>
+    <p class="nota-pendiente">
+      <strong>Costo interno, no se factura.</strong>
+      LOGAUTOS es la empresa dueña del sistema, no un cliente. Estas OT son merma:
+      nunca llevan precio, y por eso el margen da siempre negativo. No entran en
+      ninguno de los totales de arriba.
+    </p>
+    {% if not ot_interna %}
+      <p class="vacio">Sin OT internas cerradas este mes.</p>
+    {% else %}
+      <div class="tabla-scroll">
+        <table>
+          <thead><tr><th>Cliente</th><th>OT cerradas</th><th>Precio</th></tr></thead>
+          <tbody>
+            <tr>
+              <td><strong>{{ ot_interna.cliente }}</strong></td>
+              <td class="num">{{ ot_interna.ot | numero }}</td>
+              <td class="num">{{ ot_interna.precio | pesos }}</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    {% endif %}
+  </section>
+
+  <section class="grupo">
+    <h2>Proyección — OT abiertas programadas <span class="cuenta">{{ proyecciones|length }}</span></h2>
+    {% if not proyecciones %}
+      <p class="vacio">Sin OT abiertas de DyP o servicio mecánico programadas para este mes.</p>
+    {% else %}
+      <div class="tabla-scroll">
+        <table>
+          <thead><tr><th>Cliente</th><th>OT abiertas</th><th>Precio</th></tr></thead>
+          <tbody>
+            {% for p in proyecciones %}
+              <tr>
+                <td><strong>{{ p.cliente }}</strong></td>
+                <td class="num">{{ p.ot | numero }}</td>
+                <td class="num">{{ p.precio | pesos }}</td>
+              </tr>
+            {% endfor %}
+          </tbody>
+          <tfoot>
+            <tr>
+              <th>TOTALES</th>
+              <th class="num">{{ proyecciones|sum(attribute='ot') | numero }}</th>
+              <th class="num">{{ totales.proyeccion | pesos }}</th>
+            </tr>
+          </tfoot>
+        </table>
+      </div>
+    {% endif %}
+  </section>
+
+  {% endif %}{# error_uf #}
+{% endblock %}

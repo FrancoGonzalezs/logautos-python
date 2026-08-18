@@ -1,0 +1,933 @@
+/* ===========================================================================
+   REGLA — sistema de diseño
+   ===========================================================================
+
+   Dos temas, claro y oscuro, por atributo data-tema en <html>. TODO el color
+   sale de las variables de abajo: agregar o ajustar un tema es tocar un
+   bloque y ninguna regla más.
+
+   Reglas del sistema, para no volver a mezclar estilos con el tiempo:
+
+   - Radios: 12px en tarjetas, 8px en inputs y botones. Nada más.
+   - Las tarjetas se separan del fondo por un borde de 1px y una diferencia
+     leve de fondo, NO por sombra. No hay drop-shadows en la app (la única
+     sombra que queda es la del visor de fotos, que flota sobre todo).
+   - Un solo font-family en toda la app.
+   - El acento es para navegación activa, links, botones primarios y datos;
+     no para pintar cada tarjeta de un color distinto. Verde y rojo quedan
+     reservados a plata a favor / en contra y a alertas.
+   =========================================================================== */
+
+:root {
+  /* --- tema claro (por defecto) --- */
+  --fondo: #f4f6f9;
+  --fondo-lateral: #eef1f6;
+  --tarjeta: #ffffff;
+  --tarjeta-alt: #f8fafc;
+  --linea: #e2e7ee;
+  --linea-fuerte: #d3dae4;
+
+  --tinta: #12181f;
+  --tinta-media: #4a5665;
+  --tinta-suave: #78859a;
+
+  --acento: #3c8dbc;
+  --acento-hover: #337ab7;
+  --acento-suave: rgba(60, 141, 188, .10);
+  --acento-borde: rgba(60, 141, 188, .28);
+
+  --bien: #1e7b3c;
+  --bien-fondo: #e8f5ec;
+  --mal: #b3261e;
+  --mal-fondo: #fdedec;
+  --ojo: #96631a;
+  --ojo-fondo: #fdf6e4;
+
+  --logo-fondo: transparent;
+  --logo-padding: 0;
+
+  --panel-danos: #7da5b5;
+  --panel-danos-borde: #6b93a3;
+  --panel-danos-tinta: #ffffff;
+
+  /* --- medidas, iguales en los dos temas --- */
+  --r-tarjeta: 12px;
+  --r-control: 8px;
+  --aire: 22px;
+}
+
+html[data-tema="oscuro"] {
+  --fondo: #0d1117;
+  --fondo-lateral: #10151c;
+  --tarjeta: #161b22;
+  --tarjeta-alt: #1b2129;
+  --linea: #262d38;
+  --linea-fuerte: #333c49;
+
+  --tinta: #e8edf4;
+  --tinta-media: #a9b4c2;
+  --tinta-suave: #7d8896;
+
+  --acento: #4a9fd4;
+  --acento-hover: #6bb3e0;
+  --acento-suave: rgba(74, 159, 212, .14);
+  --acento-borde: rgba(74, 159, 212, .34);
+
+  --bien: #4fc47c;
+  --bien-fondo: rgba(79, 196, 124, .12);
+  --mal: #f0736a;
+  --mal-fondo: rgba(240, 115, 106, .12);
+  --ojo: #e0b25f;
+  --ojo-fondo: rgba(224, 178, 95, .12);
+
+  /* El PNG del logo es azul sobre transparente y se pierde en el fondo
+     oscuro: se le pone una plaquita blanca detrás en vez de invertirlo, que
+     le cambiaría el color de marca. */
+  --logo-fondo: #ffffff;
+  --logo-padding: 4px 8px;
+
+  --panel-danos: #2c4652;
+  --panel-danos-borde: #3a5766;
+  --panel-danos-tinta: #cfe2ea;
+}
+
+* { box-sizing: border-box; }
+
+/*
+ * NO poner height: 100% en html/body. Con eso el body queda del alto exacto
+ * de la ventana y el sticky de la barra lateral deja de tener contra qué
+ * pegarse en las páginas largas: la ficha de unidad se scrollea y el menú se
+ * va para arriba. min-height sí sirve, porque deja crecer al contenido.
+ */
+html { min-height: 100%; }
+
+body {
+  margin: 0;
+  font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  font-size: 14px;
+  line-height: 1.55;
+  color: var(--tinta);
+  background: var(--fondo);
+  -webkit-font-smoothing: antialiased;
+}
+
+a { color: var(--acento); text-decoration: none; }
+a:hover { color: var(--acento-hover); text-decoration: underline; }
+
+h1 { margin: 0 0 4px; font-size: 22px; font-weight: 650; letter-spacing: -.2px; }
+h2 { margin: 0; font-size: 13px; font-weight: 650; }
+
+/* ---------------------------------------------------------------------------
+   Estructura: barra lateral + contenido
+   --------------------------------------------------------------------------- */
+
+/*
+ * La barra va FIXED, no sticky. Sticky depende del contexto de scroll del
+ * ancestro: cualquier overflow o altura mal calculada más arriba lo rompe, y
+ * eso pasaba en el navegador real aunque los estilos computados se vieran
+ * bien. Fixed se posiciona contra el viewport y no depende de nada.
+ *
+ * El precio de fixed es que la barra sale del flujo, así que el contenido
+ * necesita el margen izquierdo a mano — de ahí la variable, para que el ancho
+ * se defina en un solo lugar y no puedan quedar desalineados.
+ */
+:root { --ancho-lateral: 224px; }
+
+.app { display: block; min-height: 100vh; }
+
+.lateral {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: var(--ancho-lateral);
+  height: 100vh;
+  z-index: 20;
+  background: var(--fondo-lateral);
+  border-right: 1px solid var(--linea);
+  padding: 20px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 22px;
+  overflow-y: auto;
+}
+
+.marca { display: block; }
+.marca:hover { text-decoration: none; }
+.marca-logo {
+  display: block;
+  height: 26px;
+  width: auto;
+  max-width: 100%;
+  margin-bottom: 10px;
+  background: var(--logo-fondo);
+  padding: var(--logo-padding);
+  border-radius: 6px;
+}
+.wordmark {
+  font-size: 19px;
+  font-weight: 700;
+  letter-spacing: 2.5px;
+}
+/* Wordmark de dos tonos, también usado en el login. */
+.wm-a { color: var(--acento); }
+.wm-b { color: var(--tinta); }
+.marca-pie {
+  display: block;
+  font-size: 10.5px;
+  letter-spacing: .4px;
+  text-transform: uppercase;
+  color: var(--tinta-suave);
+  margin-top: 2px;
+}
+
+.menu { display: flex; flex-direction: column; gap: 2px; }
+.menu-titulo {
+  font-size: 10px;
+  font-weight: 650;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  color: var(--tinta-suave);
+  padding: 0 10px 6px;
+}
+.menu a {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  border-radius: var(--r-control);
+  color: var(--tinta-media);
+  font-size: 13.5px;
+  border: 1px solid transparent;
+}
+.menu a:hover { background: var(--tarjeta); color: var(--tinta); text-decoration: none; }
+.menu a.activo {
+  background: var(--acento-suave);
+  border-color: var(--acento-borde);
+  color: var(--acento);
+  font-weight: 600;
+}
+.menu .num {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: .5px;
+  color: var(--tinta-suave);
+  background: var(--tarjeta);
+  border: 1px solid var(--linea);
+  border-radius: 5px;
+  padding: 1px 5px;
+  min-width: 24px;
+  text-align: center;
+}
+.menu a.activo .num {
+  color: var(--acento);
+  border-color: var(--acento-borde);
+  background: transparent;
+}
+
+.lateral-pie {
+  margin-top: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  font-size: 11.5px;
+  color: var(--tinta-suave);
+}
+.boton-tema {
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+  background: var(--tarjeta);
+  color: var(--tinta-media);
+  border: 1px solid var(--linea);
+  border-radius: var(--r-control);
+  padding: 7px 10px;
+  text-align: left;
+}
+.boton-tema:hover { border-color: var(--acento-borde); color: var(--acento); }
+.replica, .salir { color: var(--tinta-suave); }
+.salir:hover { color: var(--acento); }
+
+.contenido {
+  min-width: 0;
+  margin-left: var(--ancho-lateral);
+  padding: 26px 30px 44px;
+}
+
+.subtitulo { margin: 0 0 20px; color: var(--tinta-suave); font-size: 13px; }
+.volver { margin: 0 0 10px; font-size: 13px; }
+
+/* ---------------------------------------------------------------------------
+   Tarjetas y superficies
+   --------------------------------------------------------------------------- */
+
+.tarjeta, .kpi, .total, .avanzados, .tabla-scroll, .aviso, details.grupo {
+  background: var(--tarjeta);
+  border: 1px solid var(--linea);
+  border-radius: var(--r-tarjeta);
+}
+
+section.grupo > h2 { margin-bottom: 12px; }
+
+/*
+ * Dos usos distintos de .grupo, y conviene no confundirlos:
+ *   <details class="grupo">  -> panel plegable de la ficha, ES una tarjeta
+ *   <section class="grupo">  -> región con título de un dashboard, NO lo es
+ * Si la sección también fuera tarjeta, la tabla de adentro (que sí lo es)
+ * quedaría como una tarjeta dentro de otra, con doble borde.
+ */
+details.grupo { margin: 0 0 12px; padding: var(--aire); }
+section.grupo { margin: 0 0 26px; }
+details.grupo .tabla-scroll { border: 0; border-radius: 0; }
+.grupo > h2, details.grupo > summary h2 {
+  text-transform: uppercase;
+  letter-spacing: .8px;
+  font-size: 11.5px;
+  color: var(--tinta-suave);
+}
+.cuenta {
+  background: var(--tarjeta-alt);
+  border: 1px solid var(--linea);
+  color: var(--tinta-media);
+  border-radius: 20px;
+  padding: 1px 8px;
+  font-size: 10.5px;
+  margin-left: 6px;
+}
+
+details.plegable > summary {
+  cursor: pointer;
+  list-style: none;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+}
+details.plegable > summary::-webkit-details-marker { display: none; }
+details.plegable > summary::before {
+  content: "▸";
+  color: var(--tinta-suave);
+  font-size: 10px;
+  transition: transform .15s ease;
+}
+details.plegable[open] > summary::before { transform: rotate(90deg); }
+details.plegable > summary h2 { flex: 1; }
+details.plegable > summary:hover h2 { color: var(--acento); }
+details.plegable[open] > summary { margin-bottom: 16px; }
+
+.plegar-todo { display: flex; gap: 8px; margin: 0 0 16px; }
+.plegar-todo button {
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+  padding: 6px 13px;
+  border: 1px solid var(--linea);
+  border-radius: var(--r-control);
+  background: var(--tarjeta);
+  color: var(--tinta-media);
+}
+.plegar-todo button:hover { color: var(--acento); border-color: var(--acento-borde); }
+
+.tarjeta { padding: 16px 18px; margin: 0 0 12px; transition: border-color .15s ease; }
+.tarjeta:hover { border-color: var(--acento-borde); }
+.tarjeta header {
+  padding-bottom: 10px;
+  margin-bottom: 12px;
+  border-bottom: 1px solid var(--linea);
+  color: var(--tinta-suave);
+  font-size: 13px;
+}
+.tarjeta header strong { color: var(--tinta); }
+
+.aviso { padding: 14px 18px; margin: 0 0 18px; font-size: 13px; }
+.aviso table.mini { margin-top: 12px; }
+
+/* ---------------------------------------------------------------------------
+   Cifras: la unidad visual de los dashboards
+   --------------------------------------------------------------------------- */
+
+.tarjetas-total, .kpis {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
+  gap: 12px;
+}
+
+.total, .kpi { padding: var(--aire); }
+
+.rotulo, .kpi header h2 {
+  display: block;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: .9px;
+  text-transform: uppercase;
+  color: var(--tinta-suave);
+  margin: 0;
+}
+.cifra, .kpi-tasa {
+  display: block;
+  font-size: 30px;
+  font-weight: 700;
+  letter-spacing: -.6px;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.15;
+  margin: 8px 0 0;
+  color: var(--tinta);
+}
+.detalle, .kpi-fraccion {
+  display: block;
+  font-size: 13px;
+  color: var(--tinta-suave);
+  margin: 5px 0 0;
+}
+.kpi-pct { font-size: 16px; font-weight: 600; color: var(--tinta-suave); margin-left: 3px; }
+.kpi-tasa.sin-datos { font-size: 19px; color: var(--tinta-suave); }
+
+/* El acento a la izquierda solo cuando el número significa plata o alerta. */
+.total { border-left: 3px solid var(--bien); }
+.total.suave { border-left-color: var(--linea-fuerte); }
+
+.kpi { display: flex; flex-direction: column; }
+.kpi header { display: flex; align-items: center; gap: 8px; }
+.kpi-icono { font-size: 15px; line-height: 1; }
+.kpi-meta { margin: 14px 0 0; font-size: 12px; color: var(--tinta-media); }
+.kpi-nota { margin: 6px 0 0; font-size: 11.5px; color: var(--tinta-suave); }
+.kpi-formula {
+  margin: 12px 0 0;
+  padding-top: 11px;
+  border-top: 1px solid var(--linea);
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--tinta-suave);
+}
+
+/* ---------------------------------------------------------------------------
+   Formularios
+   --------------------------------------------------------------------------- */
+
+.filtros { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-bottom: 16px; }
+.filtros input[type=search] { flex: 1 1 320px; }
+.filtros input, .filtros select, .filtros button,
+.avanzados-fila input, .avanzados-fila select {
+  padding: 8px 11px;
+  border: 1px solid var(--linea-fuerte);
+  border-radius: var(--r-control);
+  font: inherit;
+  font-size: 13px;
+  background: var(--tarjeta);
+  color: var(--tinta);
+}
+.filtros input:focus, .filtros select:focus,
+.avanzados-fila input:focus, .avanzados-fila select:focus {
+  outline: none;
+  border-color: var(--acento);
+  box-shadow: 0 0 0 3px var(--acento-suave);
+}
+.filtros button {
+  background: var(--acento);
+  color: #fff;
+  border-color: var(--acento);
+  cursor: pointer;
+  font-weight: 600;
+}
+.filtros button:hover { background: var(--acento-hover); border-color: var(--acento-hover); }
+.filtros label { font-size: 12px; color: var(--tinta-suave); }
+.filtros .limpiar { font-size: 12.5px; color: var(--tinta-suave); }
+.filtros.auto-activo button[type=submit] { display: none; }
+
+.avanzados { flex: 1 1 100%; padding: 12px 16px; }
+.avanzados summary { cursor: pointer; font-size: 12.5px; color: var(--tinta-suave); }
+.avanzados-fila { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 12px; }
+.avanzados-fila label { font-size: 12px; color: var(--tinta-suave); }
+.avanzados-fila input[type=number] { width: 118px; }
+.nota-avanzados { margin: 12px 0 2px; font-size: 11.5px; }
+
+.resumen { color: var(--tinta-suave); margin: 0 0 12px; font-size: 13px; }
+
+/* ---------------------------------------------------------------------------
+   Tablas
+   --------------------------------------------------------------------------- */
+
+.tabla-scroll { overflow-x: auto; }
+table { border-collapse: collapse; width: 100%; font-size: 13px; }
+th, td { padding: 9px 13px; text-align: left; border-bottom: 1px solid var(--linea); white-space: nowrap; }
+th {
+  background: var(--tarjeta-alt);
+  font-weight: 600;
+  font-size: 11px;
+  letter-spacing: .5px;
+  text-transform: uppercase;
+  color: var(--tinta-suave);
+  position: sticky;
+  top: 0;
+}
+tbody tr:last-child td { border-bottom: 0; }
+tbody tr:hover { background: var(--tarjeta-alt); }
+tfoot th { background: var(--tarjeta-alt); border-top: 1px solid var(--linea-fuerte); position: static; }
+td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
+td.ancho { white-space: normal; min-width: 250px; max-width: 460px; }
+.vacio, td.vacio { color: var(--tinta-suave); }
+tr.es-legado, tr.es-prueba { opacity: .55; }
+tr.es-legado td:first-child::after {
+  content: " legado";
+  font-size: 9.5px;
+  text-transform: uppercase;
+  letter-spacing: .4px;
+  color: var(--tinta-suave);
+}
+
+.paginacion {
+  display: flex;
+  gap: 14px;
+  align-items: center;
+  flex-wrap: wrap;
+  margin: 12px 0;
+  font-size: 13px;
+}
+.ir-a-pagina { display: flex; align-items: center; gap: 6px; margin-left: auto; }
+.ir-a-pagina span { color: var(--tinta-suave); font-size: 12px; }
+.ir-a-pagina input {
+  width: 76px;
+  padding: 5px 8px;
+  border: 1px solid var(--linea-fuerte);
+  border-radius: var(--r-control);
+  font: inherit;
+  font-size: 12.5px;
+  background: var(--tarjeta);
+  color: var(--tinta);
+}
+.ir-a-pagina input:focus {
+  outline: none;
+  border-color: var(--acento);
+  box-shadow: 0 0 0 3px var(--acento-suave);
+}
+.ir-a-pagina button {
+  padding: 5px 12px;
+  border: 1px solid var(--acento);
+  border-radius: var(--r-control);
+  background: var(--acento);
+  color: #fff;
+  font: inherit;
+  font-size: 12.5px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.ir-a-pagina button:hover { background: var(--acento-hover); border-color: var(--acento-hover); }
+
+/* Barra de scroll horizontal espejo, encima del encabezado de la tabla. */
+.scroll-espejo {
+  overflow-x: auto;
+  overflow-y: hidden;
+  border: 1px solid var(--linea);
+  border-bottom: 0;
+  border-radius: var(--r-tarjeta) var(--r-tarjeta) 0 0;
+  background: var(--tarjeta-alt);
+}
+.scroll-espejo > div { height: 1px; }
+.scroll-espejo + .tabla-scroll { border-radius: 0 0 var(--r-tarjeta) var(--r-tarjeta); }
+
+/* ---------------------------------------------------------------------------
+   Pastillas y etiquetas
+   --------------------------------------------------------------------------- */
+
+.badge {
+  display: inline-block;
+  padding: 2px 9px;
+  border-radius: 20px;
+  font-size: 10.5px;
+  font-weight: 650;
+  letter-spacing: .3px;
+  white-space: nowrap;
+  border: 1px solid transparent;
+}
+.badge-ok     { background: var(--bien-fondo); color: var(--bien); border-color: var(--bien); }
+.badge-malo   { background: var(--mal-fondo);  color: var(--mal);  border-color: var(--mal); }
+.badge-espera { background: var(--ojo-fondo);  color: var(--ojo);  border-color: var(--ojo); }
+.badge-info   { background: var(--acento-suave); color: var(--acento); border-color: var(--acento-borde); }
+.badge-neutro { background: var(--tarjeta-alt); color: var(--tinta-suave); border-color: var(--linea-fuerte); }
+
+.etiqueta {
+  background: var(--tarjeta-alt);
+  color: var(--tinta-suave);
+  border: 1px solid var(--linea);
+  border-radius: 20px;
+  padding: 1px 8px;
+  font-size: 10.5px;
+  text-transform: uppercase;
+  letter-spacing: .4px;
+}
+.etiqueta.alerta { background: var(--mal-fondo); color: var(--mal); border-color: var(--mal); }
+
+/* ---------------------------------------------------------------------------
+   Ficha de unidad
+   --------------------------------------------------------------------------- */
+
+dl { display: grid; grid-template-columns: repeat(auto-fill, minmax(270px, 1fr)); gap: 0 20px; margin: 0; }
+.par { display: flex; gap: 10px; padding: 6px 0; border-bottom: 1px solid var(--linea); min-width: 0; }
+.par dt { flex: 0 0 46%; color: var(--tinta-suave); font-size: 11.5px; overflow-wrap: anywhere; }
+.par dd { margin: 0; flex: 1; overflow-wrap: anywhere; font-size: 13px; }
+.par-vacio dd { color: var(--tinta-suave); }
+.par-pendiente dt { color: var(--ojo); }
+.pendiente {
+  background: var(--ojo-fondo);
+  border: 1px solid var(--ojo);
+  color: var(--ojo);
+  border-radius: 20px;
+  padding: 0 8px;
+  font-size: 11px;
+}
+.nota-pendiente {
+  background: var(--ojo-fondo);
+  border: 1px solid var(--ojo);
+  color: var(--ojo);
+  border-radius: var(--r-control);
+  padding: 9px 13px;
+  margin: 0 0 14px;
+  font-size: 12.5px;
+}
+
+/* Bloques dentro de una tarjeta de check list */
+.bloque { margin-top: 16px; }
+.bloque:first-of-type { margin-top: 0; }
+.bloque-titulo {
+  display: block;
+  font-size: 10.5px;
+  font-weight: 650;
+  letter-spacing: .8px;
+  text-transform: uppercase;
+  color: var(--tinta-suave);
+  margin-bottom: 8px;
+}
+
+/*
+ * Daños del check list: foto + descripción emparejadas por índice.
+ *
+ * La grilla va sobre un panel teñido para que las tarjetas blancas de cada
+ * daño resalten; blanco sobre blanco las dejaba planas. El tono se define por
+ * tema: en claro es el #7DA5B5 pedido, y en oscuro una versión oscurecida del
+ * mismo azul, porque ese celeste sobre #0d1117 sería un parche que encandila.
+ */
+.bloque-danos {
+  background: var(--panel-danos);
+  border: 1px solid var(--panel-danos-borde);
+  border-radius: var(--r-control);
+  padding: 14px;
+}
+.bloque-danos .bloque-titulo { color: var(--panel-danos-tinta); }
+
+.danos {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  gap: 8px;
+}
+.dano {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  padding: 8px;
+  border: 1px solid var(--linea);
+  border-radius: var(--r-control);
+  background: var(--tarjeta);
+}
+.dano img {
+  width: 62px;
+  height: 48px;
+  object-fit: cover;
+  border-radius: 6px;
+  border: 1px solid var(--linea);
+  cursor: zoom-in;
+  display: block;
+}
+.dano a:hover img { border-color: var(--acento); }
+.dano-sin-foto {
+  width: 62px;
+  height: 48px;
+  flex: 0 0 62px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px dashed var(--linea-fuerte);
+  border-radius: 6px;
+  font-size: 9.5px;
+  text-transform: uppercase;
+  letter-spacing: .3px;
+  color: var(--tinta-suave);
+  text-align: center;
+}
+.dano-texto { min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.dano-texto strong { font-size: 12.5px; overflow-wrap: anywhere; }
+.dano-tipo { font-size: 11.5px; color: var(--tinta-suave); overflow-wrap: anywhere; }
+.dano-texto .badge { align-self: flex-start; }
+
+.lista-danos { margin: 0; padding-left: 17px; }
+.lista-danos li { margin-bottom: 3px; }
+
+.texto-largo { margin: 10px 0 0; overflow-wrap: anywhere; font-size: 13px; }
+.texto-largo .campo {
+  display: inline-block;
+  color: var(--tinta-suave);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: .4px;
+  margin-right: 7px;
+}
+
+.items { display: flex; flex-wrap: wrap; gap: 5px; margin: 8px 0; }
+.item {
+  background: var(--tarjeta-alt);
+  border: 1px solid var(--linea);
+  border-radius: var(--r-control);
+  padding: 3px 9px;
+  font-size: 11.5px;
+}
+.item em { color: var(--tinta-suave); font-style: normal; margin-right: 5px; }
+
+.variante {
+  display: inline-block;
+  background: var(--mal-fondo);
+  border: 1px solid var(--mal);
+  color: var(--mal);
+  border-radius: var(--r-control);
+  padding: 1px 7px;
+  margin: 2px 4px 2px 0;
+  font-family: ui-monospace, Consolas, monospace;
+  font-size: 11.5px;
+  white-space: pre;
+}
+.variante-ok { background: var(--bien-fondo); border-color: var(--bien); color: var(--bien); }
+.variante em { color: inherit; opacity: .7; font-style: normal; margin-left: 4px; }
+
+.nota-fuera {
+  border-top: 1px dashed var(--linea-fuerte);
+  padding-top: 10px;
+  margin-top: 12px;
+  font-size: 11.5px;
+}
+
+.fotos { margin-top: 12px; }
+.fotos-titulo {
+  display: block;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: .5px;
+  color: var(--tinta-suave);
+  margin-bottom: 7px;
+}
+.fotos img {
+  width: 104px;
+  height: 78px;
+  object-fit: cover;
+  border: 1px solid var(--linea);
+  border-radius: var(--r-control);
+  margin: 0 6px 6px 0;
+  background: var(--tarjeta-alt);
+  cursor: zoom-in;
+  transition: border-color .15s ease;
+}
+.fotos a:hover img { border-color: var(--acento); }
+
+.enlace-ot { color: inherit; }
+.enlace-ot:hover { color: var(--acento); }
+
+code {
+  background: var(--tarjeta-alt);
+  border: 1px solid var(--linea);
+  padding: 1px 5px;
+  border-radius: 5px;
+  font-family: ui-monospace, Consolas, monospace;
+  font-size: 11.5px;
+}
+
+.extras { margin-top: 26px; }
+.extras .kpi { opacity: .78; }
+
+/* ---------------------------------------------------------------------------
+   Visor de fotos — la única superficie con sombra, porque flota sobre todo
+   --------------------------------------------------------------------------- */
+
+body.con-visor { overflow: hidden; }
+
+.visor {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  background: rgba(8, 12, 18, .9);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 40px 64px;
+}
+.visor[hidden] { display: none; }
+.visor-foto {
+  max-width: 100%;
+  max-height: 100%;
+  border-radius: var(--r-tarjeta);
+  box-shadow: 0 12px 44px rgba(0, 0, 0, .55);
+  background: #fff;
+}
+.visor-cerrar, .visor-nav {
+  position: absolute;
+  border: 0;
+  background: rgba(255, 255, 255, .1);
+  color: #fff;
+  cursor: pointer;
+  border-radius: var(--r-control);
+  line-height: 1;
+}
+.visor-cerrar { top: 18px; right: 22px; font-size: 17px; padding: 9px 13px; }
+.visor-nav { top: 50%; transform: translateY(-50%); font-size: 28px; padding: 6px 17px; }
+.visor-antes { left: 16px; }
+.visor-despues { right: 16px; }
+.visor-cerrar:hover, .visor-nav:hover { background: rgba(255, 255, 255, .24); }
+.visor-pie {
+  position: absolute;
+  bottom: 18px;
+  left: 0;
+  right: 0;
+  text-align: center;
+  color: rgba(255, 255, 255, .7);
+  font-size: 12px;
+  margin: 0;
+}
+
+/* ---------------------------------------------------------------------------
+   Login — usa el mismo sistema, centrado y sin barra lateral
+   --------------------------------------------------------------------------- */
+
+.pantalla-login {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: var(--fondo);
+}
+
+.login-card {
+  width: 100%;
+  max-width: 430px;
+  background: var(--tarjeta);
+  border: 1px solid var(--linea);
+  border-radius: var(--r-tarjeta);
+  padding: 36px 32px 24px;
+  animation: aparecer .4s ease-out both;
+}
+@keyframes aparecer {
+  from { opacity: 0; transform: translateY(14px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+@media (prefers-reduced-motion: reduce) { .login-card { animation: none; } }
+
+.login-cabecera { text-align: center; margin-bottom: 26px; }
+.login-logo {
+  max-width: 168px;
+  height: auto;
+  margin: 0 auto 14px;
+  display: block;
+  background: var(--logo-fondo);
+  padding: var(--logo-padding);
+  border-radius: 6px;
+}
+.login-cabecera h1 { font-size: 28px; letter-spacing: 4px; font-weight: 700; }
+.login-subtitulo { margin: 4px 0 0; font-size: 12.5px; color: var(--tinta-suave); }
+
+.login-form { display: flex; flex-direction: column; gap: 12px; }
+.campo-icono { position: relative; display: flex; align-items: center; }
+.campo-icono .icono {
+  position: absolute;
+  left: 13px;
+  font-size: 14px;
+  color: var(--tinta-suave);
+  pointer-events: none;
+}
+.campo-icono input {
+  width: 100%;
+  padding: 11px 14px 11px 38px;
+  border: 1px solid var(--linea-fuerte);
+  border-radius: var(--r-control);
+  font: inherit;
+  font-size: 14px;
+  color: var(--tinta);
+  background: var(--tarjeta);
+}
+.campo-icono input::placeholder { color: var(--tinta-suave); }
+.campo-icono input:focus {
+  outline: none;
+  border-color: var(--acento);
+  box-shadow: 0 0 0 3px var(--acento-suave);
+}
+.campo-icono .ojo {
+  position: absolute;
+  right: 6px;
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+  font-size: 14px;
+  padding: 7px 10px;
+  border-radius: var(--r-control);
+  opacity: .45;
+  color: var(--tinta);
+}
+.campo-icono .ojo:hover, .campo-icono .ojo.activo { opacity: 1; }
+
+.login-boton {
+  margin-top: 4px;
+  padding: 11px;
+  border: 0;
+  border-radius: var(--r-control);
+  background: var(--acento);
+  color: #fff;
+  font: inherit;
+  font-weight: 650;
+  font-size: 14.5px;
+  cursor: pointer;
+  transition: background .15s ease;
+}
+.login-boton:hover { background: var(--acento-hover); }
+
+.login-error {
+  margin: 0 0 14px;
+  padding: 9px 13px;
+  border-radius: var(--r-control);
+  background: var(--mal-fondo);
+  border: 1px solid var(--mal);
+  color: var(--mal);
+  font-size: 12.5px;
+}
+.login-demo { margin: 18px 0 0; font-size: 11.5px; color: var(--tinta-suave); text-align: center; }
+.login-pie {
+  margin-top: 18px;
+  padding-top: 16px;
+  border-top: 1px solid var(--linea);
+  text-align: center;
+  font-size: 11.5px;
+  color: var(--tinta-suave);
+}
+.login-tema {
+  display: block;
+  margin: 14px auto 0;
+  width: 100%;
+}
+
+/* --------------------------------------------------------------------------- */
+
+/*
+ * En pantalla angosta la barra vuelve al flujo como cabecera horizontal: con
+ * fixed se comería el ancho útil, que en móvil es justamente lo escaso. Al
+ * salir de fixed hay que devolver el margen del contenido a cero, si no queda
+ * un hueco de 224px a la izquierda.
+ */
+@media (max-width: 860px) {
+  .lateral {
+    position: static;
+    width: auto;
+    height: auto;
+    flex-direction: row;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 12px;
+    border-right: 0;
+    border-bottom: 1px solid var(--linea);
+  }
+  .menu { flex-direction: row; flex-wrap: wrap; }
+  .menu-titulo { display: none; }
+  .lateral-pie { margin: 0; flex-direction: row; align-items: center; }
+  .contenido { margin-left: 0; padding: 20px 16px 36px; }
+}

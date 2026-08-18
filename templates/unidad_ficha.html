@@ -1,0 +1,330 @@
+{% extends "base.html" %}
+{% from "_macros.html" import badge_estado, badge_gravedad %}
+{% block titulo %}{{ fila['vin'] | mostrar }} — Logautos{% endblock %}
+
+{% block contenido %}
+  <p class="volver"><a href="{{ url_for('unidades.listado') }}">‹ volver al listado</a></p>
+
+  <h1>{{ fila['vin'] | mostrar }}</h1>
+  <p class="subtitulo">
+    {{ fila['marca'] | mostrar }} {{ fila['modelo'] | mostrar }}
+    · {{ fila['color'] | mostrar }}
+    · patente {{ fila['patente'] | mostrar }}
+    · id {{ fila['id'] }}
+    · {{ badge_estado(fila['despachado']) }}
+  </p>
+
+  {% if otras %}
+    <div class="aviso">
+      Este VIN tiene <strong>{{ otras|length + 1 }}</strong> pasadas registradas por el flujo.
+      Cada fila de <code>newstocks_cidef</code> es una pasada, no el vehiculo.
+      <table class="mini">
+        <thead><tr><th>id</th><th>Estado</th><th>Patio</th><th>Despacho</th><th>Guia</th><th>Creada</th></tr></thead>
+        <tbody>
+          {% for o in otras %}
+            <tr>
+              <td><a href="{{ url_for('unidades.ficha', id_unidad=o['id']) }}">{{ o['id'] }}</a></td>
+              <td>{{ badge_estado(o['estado']) }}</td>
+              <td>{{ o['patio'] | mostrar }}</td>
+              <td>{{ o['fecha_desp'] | mostrar }}</td>
+              <td>{{ o['guia_desp'] | mostrar }}</td>
+              <td>{{ o['created_at'] | mostrar }}</td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  {% endif %}
+
+  {% set pendientes = campos | rejectattr('resuelto') | list %}
+  <p class="plegar-todo">
+    <button type="button" data-plegar="abrir">Expandir todo</button>
+    <button type="button" data-plegar="cerrar">Colapsar todo</button>
+  </p>
+
+  <details class="grupo plegable" open>
+    <summary><h2>Detalle de la unidad <span class="cuenta">{{ campos|length }}</span></h2></summary>
+    {% if pendientes %}
+      <p class="nota-pendiente">
+        {{ pendientes|length }} de estos campos no son columnas de
+        <code>newstocks_cidef</code>: salen de JOINs o de cálculos dentro de
+        <code>stocklogautos()</code> y todavía no están resueltos en Python.
+      </p>
+    {% endif %}
+    <dl>
+      {% for c in campos %}
+        <div class="par {% if not c.resuelto %}par-pendiente{% elif c.valor is vacio %}par-vacio{% endif %}">
+          <dt>{{ c.campo }}</dt>
+          <dd>
+            {% if not c.resuelto %}
+              <span class="pendiente">sin resolver</span>
+            {% elif c.campo == 'observaciones' and danos_unidad %}
+              {# El crudo trae los daños pegados con ' |' y <br>; se listan
+                 con el mismo parser que cuenta cant_danos_dyp, para que el
+                 número de la ficha y la cantidad de ítems no discrepen. #}
+              <ul class="lista-danos">
+                {% for d in danos_unidad %}<li>{{ d }}</li>{% endfor %}
+              </ul>
+            {% else %}
+              {{ c.valor | mostrar }}
+            {% endif %}
+          </dd>
+        </div>
+      {% endfor %}
+    </dl>
+  </details>
+
+  {% macro fotos(urls, titulo) %}
+    {% if urls %}
+      <div class="fotos" data-galeria>
+        <span class="fotos-titulo">{{ titulo }} ({{ urls|length }})</span>
+        {# data-lightbox marca la galería; el visor vive en base.html y se
+           arma solo. El <a> sigue apuntando a la imagen, así que sin JS el
+           click abre la foto en una pestaña igual que antes. #}
+        {% for u in urls %}
+          <a href="{{ u }}" target="_blank" rel="noopener" title="{{ u }}"
+             data-lightbox data-indice="{{ loop.index0 }}">
+            <img src="{{ u }}" loading="lazy" alt="{{ titulo }} {{ loop.index }}">
+          </a>
+        {% endfor %}
+      </div>
+    {% endif %}
+  {% endmacro %}
+
+  <details class="grupo plegable">
+    <summary><h2>Check list de ingreso <span class="cuenta">{{ check_lists|length }}</span></h2></summary>
+    {% if not check_lists %}
+      <p class="vacio">Sin check list de ingreso para el cliente {{ cliente | mostrar }}.</p>
+    {% else %}
+      {% for c in check_lists %}
+        <article class="tarjeta">
+          <header>
+            <strong>#{{ c.fila['id'] }}</strong>
+            · ingreso {{ c.fila['fecha_ingreso'] | mostrar }}
+            · entrega {{ c.fila['fecha_entrega'] | mostrar }}
+            · guía {{ c.fila['guia_ingreso'] | mostrar }}
+            · {{ badge_estado(c.fila['estado']) }}
+          </header>
+
+          <div class="bloque">
+            <span class="bloque-titulo">Recepción</span>
+            <dl>
+              <div class="par"><dt>encargado</dt><dd>{{ c.fila['encargado'] | mostrar }}</dd></div>
+              <div class="par"><dt>kilometraje</dt><dd>{{ c.fila['kilometraje'] | mostrar }}</dd></div>
+              <div class="par"><dt>estanque</dt><dd>{{ c.fila['estanque'] | mostrar }}</dd></div>
+              <div class="par"><dt>asientos</dt><dd>{{ c.fila['n_asientos'] | mostrar }}</dd></div>
+              <div class="par"><dt>motonave</dt><dd>{{ c.fila['motonave'] | mostrar }}</dd></div>
+              <div class="par"><dt>faltante</dt><dd>{{ c.fila['faltante'] | mostrar }}</dd></div>
+            </dl>
+          </div>
+
+          {% if c.fila['equipamiento1'] is not vacio
+                or c.fila['equipamiento2'] is not vacio
+                or c.fila['equipamiento3'] is not vacio %}
+            <div class="bloque">
+              <span class="bloque-titulo">Equipamiento</span>
+              <div class="items">
+                {% for campo in ['equipamiento1', 'equipamiento2', 'equipamiento3'] %}
+                  {% for pieza in (c.fila[campo] or '').split('/') %}
+                    {% if pieza.strip() %}<span class="item">{{ pieza.strip() }}</span>{% endif %}
+                  {% endfor %}
+                {% endfor %}
+              </div>
+            </div>
+          {% endif %}
+
+          {% if c.danos %}
+            <div class="bloque bloque-danos">
+              <span class="bloque-titulo">Daños registrados ({{ c.danos|length }})</span>
+              {# data-galeria agrupa TODAS las fotos de la sección en un solo
+                 recorrido del lightbox. Sin esto cada tarjeta de daño era su
+                 propia galería de una foto y no se podía avanzar. #}
+              <div class="danos" data-galeria>
+                {% for d in c.danos %}
+                  <article class="dano">
+                    {% if d.foto %}
+                      <a href="{{ d.foto }}" target="_blank" rel="noopener" data-lightbox>
+                        <img src="{{ d.foto }}" loading="lazy"
+                             alt="{{ d.pieza }} {{ d.tipo }}">
+                      </a>
+                    {% else %}
+                      <span class="dano-sin-foto" title="El check list registró el daño pero no subió la foto">sin foto</span>
+                    {% endif %}
+                    <div class="dano-texto">
+                      <strong>{{ d.pieza | mostrar }}</strong>
+                      <span class="dano-tipo">{{ d.tipo | mostrar }}</span>
+                      {{ badge_gravedad(d.gravedad) }}
+                    </div>
+                  </article>
+                {% endfor %}
+              </div>
+            </div>
+          {% endif %}
+
+          {% if c.fila['observaciones'] is not vacio %}
+            <p class="texto-largo"><span class="campo">observaciones</span> {{ c.fila['observaciones'] }}</p>
+          {% endif %}
+
+          {{ fotos(c.foto_unidad, 'Foto de la unidad') }}
+          {{ fotos(c.foto_guia, 'Foto de la guía') }}
+        </article>
+      {% endfor %}
+    {% endif %}
+  </details>
+
+  {% if muestra_mecanica %}
+    <details class="grupo plegable">
+      <summary><h2>Check list mecánico <span class="cuenta">{{ mecanica|length }}</span></h2></summary>
+      {% if not mecanica %}
+        <p class="vacio">Sin check list mecánico para esta unidad.</p>
+      {% else %}
+        {% for m in mecanica %}
+          <article class="tarjeta">
+            <header>
+              <strong>#{{ m.fila['id'] }}</strong>
+              · {{ m.fila['fecha_creacion_completa'] | mostrar }}
+              · guia {{ m.fila['guia'] | mostrar }}
+              · {{ m.fila['encargado'] | mostrar }}
+              · {{ badge_estado(m.fila['estado']) }}
+            </header>
+            <p class="vacio">
+              {{ m.revisados|length }} ítems con valor. La tabla usa una columna por ítem,
+              con abreviaturas internas del sistema viejo.
+            </p>
+            <div class="items">
+              {% for i in m.revisados %}
+                <span class="item"><em>{{ i.item }}</em> {{ i.estado }}</span>
+              {% endfor %}
+            </div>
+            {% for campo in ['obs_general', 'observacion', 'fallas_adicionales', 'precios', 'precios_adicionales'] %}
+              {% if m.fila[campo] is not vacio %}
+                <p class="texto-largo"><span class="campo">{{ campo }}</span> {{ m.fila[campo] }}</p>
+              {% endif %}
+            {% endfor %}
+            {{ fotos(m.fotos, 'Fotos') }}
+          </article>
+        {% endfor %}
+      {% endif %}
+    </details>
+  {% endif %}
+
+  <details class="grupo plegable">
+    <summary><h2>Inspección de despacho <span class="cuenta">{{ inspecciones|length }}</span></h2></summary>
+    {% if not inspecciones %}
+      <p class="vacio">Sin inspecciones de despacho registradas.</p>
+    {% else %}
+      {% for i in inspecciones %}
+        <article class="tarjeta">
+          <header>
+            <strong>#{{ i.fila['id'] }}</strong>
+            · {{ i.fila['fecha_completa'] | mostrar }}
+            · guia {{ i.fila['guia_despacho'] | mostrar }}
+            · destino {{ i.fila['destino'] | mostrar }}
+            · <span class="etiqueta">{{ i.fila['cliente'] | mostrar }}</span>
+          </header>
+          <dl>
+            <div class="par"><dt>encargado</dt><dd>{{ i.fila['encargado'] | mostrar }}</dd></div>
+            <div class="par"><dt>kilometraje</dt><dd>{{ i.fila['kilometraje'] | mostrar }}</dd></div>
+            <div class="par"><dt>estanque</dt><dd>{{ i.fila['estanque'] | mostrar }}</dd></div>
+            <div class="par"><dt>llaves</dt><dd>{{ i.fila['llaves'] | mostrar }}</dd></div>
+            <div class="par"><dt>fecha_entrega</dt><dd>{{ i.fila['fecha_entrega'] | mostrar }}</dd></div>
+            <div class="par"><dt>faltante</dt><dd>{{ i.fila['faltante'] | mostrar }}</dd></div>
+          </dl>
+          {% if i.fila['observaciones'] is not vacio %}
+            <p class="texto-largo"><span class="campo">observaciones</span> {{ i.fila['observaciones'] }}</p>
+          {% endif %}
+          {{ fotos(i.fotos, 'Fotos de la inspección') }}
+        </article>
+      {% endfor %}
+    {% endif %}
+  </details>
+
+  <details class="grupo plegable">
+    <summary><h2>Historial de movimientos <span class="cuenta">{{ movimientos|length }}</span></h2></summary>
+    {% if not movimientos %}
+      <p class="vacio">Sin movimientos registrados para este VIN.</p>
+    {% else %}
+      <p class="vacio">
+        Cada fila muestra dónde quedó la unidad. La posición puede ser una calle
+        física (<code>A</code>, <code>G</code>) o una zona lógica
+        (<code>STOCK</code>, <code>ZD</code>, <code>ZR</code>, <code>DESPACHADO</code>).
+      </p>
+      <div class="tabla-scroll">
+        <table>
+          <thead>
+            <tr>
+              <th>Fecha</th><th>Posición</th><th>Estado</th><th>Patio</th>
+              <th>Cliente</th><th>Obs</th><th>Usuario</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for m in movimientos %}
+              <tr {% if m.legado %}class="es-legado"{% endif %}>
+                <td>{{ m.fila['created_at'] | mostrar }}</td>
+                <td><strong>{{ m.fila['accion'] | mostrar }}</strong></td>
+                <td>{{ badge_estado(m.fila['estado']) }}</td>
+                <td>{{ m.fila['patio'] | mostrar }}</td>
+                <td>{{ m.fila['clientemov'] | mostrar }}</td>
+                <td class="ancho">{{ m.fila['obs'] | mostrar }}</td>
+                <td title="id de tbl_users, tabla aún no importada">{{ m.fila['created_by'] | mostrar }}</td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    {% endif %}
+  </details>
+
+  <details class="grupo plegable">
+    <summary><h2>Órdenes de trabajo <span class="cuenta">{{ ots|length }}</span></h2></summary>
+    {% if not ots %}
+      <p class="vacio">Sin OT asociadas por <code>id_vehiculo</code>.</p>
+    {% else %}
+      <div class="tabla-scroll">
+        <table>
+          <thead><tr><th>id</th><th>Requerimiento</th><th>Estado</th><th>Situacion</th><th>Precio</th><th>Costo</th><th>Creada</th></tr></thead>
+          <tbody>
+            {% for o in ots %}
+              <tr>
+                <td>{{ o['id'] }}</td>
+                <td class="ancho">{{ o['requerimiento'] | mostrar }}</td>
+                <td>{{ badge_estado(o['estado']) }}</td>
+                <td>{{ o['situacion'] | mostrar }}</td>
+                <td>{{ o['precio'] | mostrar }}</td>
+                <td>{{ o['costo'] | mostrar }}</td>
+                <td>{{ o['createdDtm'] | mostrar }}</td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    {% endif %}
+  </details>
+
+  <details class="grupo plegable">
+    <summary><h2>Reparaciones externas <span class="cuenta">{{ reparaciones|length }}</span></h2></summary>
+    {% if not reparaciones %}
+      <p class="vacio">Sin reparaciones asociadas por VIN.</p>
+    {% else %}
+      <div class="tabla-scroll">
+        <table>
+          <thead><tr><th>id_rep</th><th>Reparador</th><th>Detalle</th><th>Tipo</th><th>OT</th><th>Total</th><th>Estado</th><th>Fecha</th></tr></thead>
+          <tbody>
+            {% for r in reparaciones %}
+              <tr>
+                <td>{{ r['id_rep'] }}</td>
+                <td>{{ r['nombre_reparador'] | mostrar }}</td>
+                <td class="ancho">{{ r['detalle'] | mostrar }}</td>
+                <td>{{ r['tipo_ot'] | mostrar }}</td>
+                <td>{% if r['ot_relacionada'] %}{{ r['ot_relacionada'] }}{% else %}<span class="vacio">sin OT</span>{% endif %}</td>
+                <td>{{ r['total'] | mostrar }}</td>
+                <td>{{ badge_estado(r['estado']) }}</td>
+                <td>{{ r['fecha_text'] | mostrar }}</td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    {% endif %}
+  </details>
+{% endblock %}

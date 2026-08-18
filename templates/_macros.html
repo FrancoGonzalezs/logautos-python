@@ -1,0 +1,50 @@
+{#
+  Macros compartidos por las pantallas.
+
+  `badge_estado` pinta un estado como pastilla de color en vez de texto plano.
+  El color sale de una familia de palabras, no de una lista cerrada de valores:
+  `despachado` tiene 26 valores distintos y `estado` de OT tiene otros, así que
+  enumerarlos todos envejecería mal. Lo que no cae en ninguna familia sale en
+  gris, que es lo correcto — un estado nuevo se ve neutro, no rojo por error.
+#}
+
+{#
+  `badge_gravedad` usa la escala del check list: LEVE / MEDIO / GRAVE. Va
+  aparte de badge_estado porque acá el rojo sí es semántico —marca la
+  severidad del daño— y no un estado de flujo.
+#}
+{% macro badge_gravedad(valor) %}
+  {%- if valor is vacio -%}
+    <span class="vacio">—</span>
+  {%- else -%}
+    {%- set v = valor | string | upper | trim -%}
+    {%- if 'GRAVE' in v -%}{%- set clase = 'malo' -%}
+    {%- elif 'MEDIO' in v -%}{%- set clase = 'espera' -%}
+    {%- elif 'LEVE' in v -%}{%- set clase = 'info' -%}
+    {%- else -%}{%- set clase = 'neutro' -%}
+    {%- endif -%}
+    <span class="badge badge-{{ clase }}">{{ v }}</span>
+  {%- endif -%}
+{% endmacro %}
+
+{% macro badge_estado(valor) %}
+  {%- if valor is vacio -%}
+    <span class="vacio">—</span>
+  {%- else -%}
+    {%- set v = valor | string | upper | trim -%}
+    {%- if 'DESPACHAD' in v or v == 'CERRADA' or v == 'OK' -%}
+      {%- set clase = 'ok' -%}
+    {%- elif 'RECHAZ' in v or 'FALL' in v or 'ANULAD' in v -%}
+      {%- set clase = 'malo' -%}
+    {#- 'ABIERT' y no 'ABIERTA': la OT viene en femenino y el check list en
+        masculino ('ABIERTO'), y los dos significan lo mismo. -#}
+    {%- elif 'ESPERA' in v or 'ZONA' in v or 'ABIERT' in v or 'SOLIC' in v -%}
+      {%- set clase = 'espera' -%}
+    {%- elif 'STOCK' in v or 'INGRES' in v or 'NAVEGANDO' in v -%}
+      {%- set clase = 'info' -%}
+    {%- else -%}
+      {%- set clase = 'neutro' -%}
+    {%- endif -%}
+    <span class="badge badge-{{ clase }}">{{ v }}</span>
+  {%- endif -%}
+{% endmacro %}

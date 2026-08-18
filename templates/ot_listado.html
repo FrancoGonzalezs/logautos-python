@@ -1,0 +1,71 @@
+{% extends "base.html" %}
+{% from "_macros.html" import badge_estado %}
+{% block titulo %}Órdenes de trabajo — Logautos{% endblock %}
+
+{% block contenido %}
+  <h1>Órdenes de trabajo</h1>
+  <p class="subtitulo">
+    {% if requerimiento %}
+      Filtradas por requerimiento <strong>{{ requerimiento }}</strong>
+    {% else %}
+      Todas las órdenes de la réplica local
+    {% endif %}
+    · <a href="{{ url_for('catalogos.requerimientos') }}">ver el catálogo de requerimientos</a>
+  </p>
+
+  <form class="filtros" method="get">
+    <input type="hidden" name="requerimiento" value="{{ requerimiento }}">
+    <input type="search" name="q" value="{{ busqueda }}"
+           placeholder="VIN, cliente o patente">
+    <button type="submit">Buscar</button>
+    {% if busqueda or requerimiento %}
+      <a class="limpiar" href="{{ url_for('ot.listado') }}">limpiar</a>
+    {% endif %}
+  </form>
+
+  {% if crudas and crudas|length > 1 %}
+    <p class="vacio nota-fuera">
+      Incluye {{ crudas|length }} variantes crudas del mismo requerimiento:
+      {% for c in crudas %}<span class="variante">{{ c | tojson }}</span>{% endfor %}
+    </p>
+  {% endif %}
+
+  <p class="resumen">{{ "{:,}".format(total).replace(",", ".") }} órdenes · página {{ pagina }} de {{ "{:,}".format(paginas).replace(",", ".") }}</p>
+
+  {% if not filas %}
+    <div class="aviso">Ninguna orden coincide.</div>
+  {% else %}
+    <div class="tabla-scroll">
+      <table>
+        <thead><tr>{% for _, titulo in columnas %}<th>{{ titulo }}</th>{% endfor %}</tr></thead>
+        <tbody>
+          {% for f in filas %}
+            <tr>
+              {% for campo, _ in columnas %}
+                {% if campo == 'estado' %}
+                  <td>{{ badge_estado(f[campo]) }}</td>
+                {% elif campo == 'precio' %}
+                  <td class="num">{{ f[campo] | pesos }}</td>
+                {% else %}
+                  <td {% if f[campo] is vacio %}class="vacio"{% endif %}>{{ f[campo] | mostrar }}</td>
+                {% endif %}
+              {% endfor %}
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+
+    <nav class="paginacion">
+      {% set base = {'requerimiento': requerimiento, 'q': busqueda} %}
+      {% if pagina > 1 %}
+        <a href="{{ url_for('ot.listado', pagina=1, **base) }}">« primera</a>
+        <a href="{{ url_for('ot.listado', pagina=pagina-1, **base) }}">‹ anterior</a>
+      {% endif %}
+      {% if pagina < paginas %}
+        <a href="{{ url_for('ot.listado', pagina=pagina+1, **base) }}">siguiente ›</a>
+        <a href="{{ url_for('ot.listado', pagina=paginas, **base) }}">última »</a>
+      {% endif %}
+    </nav>
+  {% endif %}
+{% endblock %}

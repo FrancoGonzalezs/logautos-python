@@ -1,0 +1,95 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Ingresar — REGLA</title>
+  <script>
+    (function () {
+      try {
+        var t = localStorage.getItem('tema');
+        if (t === 'oscuro' || t === 'claro') {
+          document.documentElement.setAttribute('data-tema', t);
+        }
+      } catch (e) {}
+    })();
+  </script>
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/estilo.css') }}">
+</head>
+<body class="pantalla-login">
+  <main class="login-card">
+    <header class="login-cabecera">
+      <img class="login-logo" alt="Logautos"
+           src="https://logautos.cl/clientes/assets/images/logautos_logo.png">
+      <h1><span class="wm-a">RE</span><span class="wm-b">GLA</span></h1>
+      <p class="login-subtitulo">Sistema de Gestión Logística</p>
+    </header>
+
+    {% if error %}
+      <p class="login-error">{{ error }}</p>
+    {% endif %}
+
+    <form method="post" class="login-form">
+      <input type="hidden" name="siguiente" value="{{ siguiente }}">
+
+      <div class="campo-icono">
+        <span class="icono" aria-hidden="true">✉</span>
+        <input type="text" name="usuario" placeholder="Usuario"
+               value="{{ usuario_demo }}" autofocus required>
+      </div>
+
+      <div class="campo-icono">
+        <span class="icono" aria-hidden="true">🔒</span>
+        <input type="password" name="clave" id="clave" placeholder="Contraseña">
+        <button type="button" class="ojo" id="ver-clave"
+                aria-label="Mostrar u ocultar la contraseña">👁</button>
+      </div>
+
+      <button type="submit" class="login-boton">Iniciar sesión</button>
+    </form>
+
+    <button type="button" id="cambiar-tema" class="boton-tema login-tema">
+      <span class="tema-nombre">Tema claro</span>
+    </button>
+
+    <p class="login-demo">
+      Acceso de demostración: entra con cualquier usuario. Todavía no hay
+      sistema de usuarios en esta versión.
+    </p>
+
+    <footer class="login-pie">REGLA · © Logística Automotriz SPA</footer>
+  </main>
+
+  <script>
+    (function () {
+      var boton = document.getElementById('ver-clave');
+      var campo = document.getElementById('clave');
+      boton.addEventListener('click', function () {
+        var oculta = campo.type === 'password';
+        campo.type = oculta ? 'text' : 'password';
+        boton.classList.toggle('activo', oculta);
+        campo.focus();
+      });
+    })();
+
+    (function () {
+      var boton = document.getElementById('cambiar-tema');
+      var nombre = boton.querySelector('.tema-nombre');
+      function actual() {
+        return document.documentElement.getAttribute('data-tema') === 'oscuro'
+          ? 'oscuro' : 'claro';
+      }
+      function pintar() {
+        nombre.textContent = actual() === 'oscuro' ? 'Tema oscuro' : 'Tema claro';
+      }
+      boton.addEventListener('click', function () {
+        var nuevo = actual() === 'oscuro' ? 'claro' : 'oscuro';
+        document.documentElement.setAttribute('data-tema', nuevo);
+        try { localStorage.setItem('tema', nuevo); } catch (e) {}
+        pintar();
+      });
+      pintar();
+    })();
+  </script>
+</body>
+</html>

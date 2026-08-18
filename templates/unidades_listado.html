@@ -1,0 +1,140 @@
+{% extends "base.html" %}
+{% block titulo %}Unidades — Logautos{% endblock %}
+
+{% block contenido %}
+  {# data-buscar-vivo: filtra mientras se escribe. El botón queda como
+     fallback y es lo único que funciona sin JS. #}
+  <form class="filtros" method="get" data-buscar-vivo>
+    <input type="search" name="q" value="{{ busqueda }}"
+           placeholder="VIN, patente, motor, guia, cliente o pedido"
+           autofocus autocomplete="off">
+    <select name="estado">
+      <option value="">Todos los estados</option>
+      {% for e in estados %}
+        <option value="{{ e.canonico }}" {% if e.canonico == estado %}selected{% endif %}>
+          {{ e.canonico }} ({{ "{:,}".format(e.total).replace(",", ".") }})
+        </option>
+      {% endfor %}
+    </select>
+    <button type="submit">Buscar</button>
+    {% if busqueda or estado or hay_filtros_avanzados %}
+      <a class="limpiar" href="{{ url_for('unidades.listado') }}">limpiar todo</a>
+    {% endif %}
+
+    <details class="avanzados" {% if hay_filtros_avanzados %}open{% endif %}>
+      <summary>Filtros avanzados{% if hay_filtros_avanzados %} <span class="etiqueta">activos</span>{% endif %}</summary>
+
+      <div class="avanzados-fila">
+        <label for="num_campo">Campo numérico</label>
+        <select id="num_campo" name="num_campo">
+          <option value="">—</option>
+          {% for campo, titulo in campos_numericos %}
+            <option value="{{ campo }}" {% if campo == numerico.campo %}selected{% endif %}>{{ titulo }}</option>
+          {% endfor %}
+        </select>
+        <label for="num_min">mayor o igual a</label>
+        <input type="number" step="any" id="num_min" name="num_min" value="{{ numerico['min'] }}">
+        <label for="num_max">menor o igual a</label>
+        <input type="number" step="any" id="num_max" name="num_max" value="{{ numerico['max'] }}">
+      </div>
+
+      <div class="avanzados-fila">
+        <label for="fecha_campo">Campo de fecha</label>
+        <select id="fecha_campo" name="fecha_campo">
+          <option value="">—</option>
+          {% for campo, titulo in campos_fecha %}
+            <option value="{{ campo }}" {% if campo == fechas.campo %}selected{% endif %}>{{ titulo }}</option>
+          {% endfor %}
+        </select>
+        <label for="fecha_desde">desde</label>
+        <input type="date" id="fecha_desde" name="fecha_desde" value="{{ fechas.desde }}">
+        <label for="fecha_hasta">hasta</label>
+        <input type="date" id="fecha_hasta" name="fecha_hasta" value="{{ fechas.hasta }}">
+        <label for="fecha_mes">o mes completo</label>
+        <input type="month" id="fecha_mes" name="fecha_mes" value="{{ mes }}">
+      </div>
+
+      <p class="vacio nota-avanzados">
+        El rango de fechas descarta solo las filas con el campo vacío o en
+        <code>0000-00-00</code>. El filtro numérico compara como número, no como
+        texto, y excluye las filas sin el dato cargado.
+      </p>
+    </details>
+  </form>
+
+  <p class="resumen">
+    {{ "{:,}".format(total).replace(",", ".") }} unidades
+    {%- if busqueda or estado %} que coinciden{% endif %}
+    · pagina {{ pagina }} de {{ "{:,}".format(paginas).replace(",", ".") }}
+  </p>
+
+  {% if not filas %}
+    <div class="aviso">Ninguna unidad coincide con la busqueda.</div>
+  {% else %}
+    {# Los filtros tienen que sobrevivir al cambio de página. Se define acá
+       arriba porque lo usan las dos paginaciones, la de arriba y la del pie. #}
+    {% set base = {'q': busqueda, 'estado': estado,
+                   'num_campo': numerico.campo, 'num_min': numerico['min'],
+                   'num_max': numerico['max'], 'fecha_campo': fechas.campo,
+                   'fecha_desde': fechas.desde, 'fecha_hasta': fechas.hasta} %}
+
+    {% macro paginacion() %}
+      <nav class="paginacion">
+        {% if pagina > 1 %}
+          <a href="{{ url_for('unidades.listado', pagina=1, **base) }}">« primera</a>
+          <a href="{{ url_for('unidades.listado', pagina=pagina-1, **base) }}">‹ anterior</a>
+        {% endif %}
+        {% if pagina < paginas %}
+          <a href="{{ url_for('unidades.listado', pagina=pagina+1, **base) }}">siguiente ›</a>
+          <a href="{{ url_for('unidades.listado', pagina=paginas, **base) }}">ultima »</a>
+        {% endif %}
+        <form class="ir-a-pagina" method="get">
+          {% for campo, valor in base.items() %}
+            {% if valor %}<input type="hidden" name="{{ campo }}" value="{{ valor }}">{% endif %}
+          {% endfor %}
+          {# Sin <label for>: el macro se dibuja dos veces y los id quedarían
+             duplicados. El aria-label cumple la misma función. #}
+          <span>ir a</span>
+          <input type="number" name="pagina" min="1" max="{{ paginas }}"
+                 value="{{ pagina }}" aria-label="Número de página">
+          <button type="submit">ir</button>
+        </form>
+      </nav>
+    {% endmacro %}
+
+    {{ paginacion() }}
+
+    {#
+      Barra de scroll horizontal por encima del encabezado. Con 40 columnas la
+      única barra del navegador queda al pie de la tabla, así que para correrse
+      a la derecha había que bajar hasta la última fila. Este div vacío imita
+      el ancho de la tabla y se sincroniza con ella en los dos sentidos.
+    #}
+    <div class="scroll-espejo" data-scroll-espejo aria-hidden="true"><div></div></div>
+
+    <div class="tabla-scroll" data-scroll-tabla>
+      <table>
+        <thead>
+          <tr>
+            {% for _, titulo in columnas %}<th>{{ titulo }}</th>{% endfor %}
+          </tr>
+        </thead>
+        <tbody>
+          {% for f in filas %}
+            <tr>
+              {% for campo, _ in columnas %}
+                {% if campo == 'id' %}
+                  <td><a href="{{ url_for('unidades.ficha', id_unidad=f['id']) }}">{{ f['id'] }}</a></td>
+                {% else %}
+                  <td {% if f[campo] is vacio %}class="vacio"{% endif %}>{{ f[campo] | mostrar }}</td>
+                {% endif %}
+              {% endfor %}
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+
+    {{ paginacion() }}
+  {% endif %}
+{% endblock %}

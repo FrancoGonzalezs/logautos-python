@@ -1,0 +1,24 @@
+# La replica local: se regenera con scripts/importar_dump.py y pesa ~200 MB.
+local.db
+local.db-wal
+local.db-shm
+data/*.db
+data/*.db-wal
+data/*.db-shm
+
+# Todo lo que la app deja en data/ es cache o trabajo local: la UF del mes se
+# rehace sola desde mindicador.cl y las bases de prueba se regeneran con el
+# importador. Va el comodin y no uf.json a secas, para que un archivo nuevo no
+# se cuele por olvido.
+data/*.json
+
+# Dumps y respaldos
+*.sql
+*.sql.gz
+*.zip
+
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.env

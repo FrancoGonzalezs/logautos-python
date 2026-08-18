@@ -1,0 +1,78 @@
+{% extends "base.html" %}
+{% block titulo %}Catálogo de requerimientos — Logautos{% endblock %}
+
+{% block contenido %}
+  <h1>Catálogo de requerimientos</h1>
+  <p class="subtitulo">
+    Derivado de las {{ "{:,}".format(total_ot).replace(",", ".") }} filas de
+    <code>orden_trabajo</code>, no escrito a mano.
+  </p>
+
+  <div class="aviso">
+    <strong>{{ crudos }}</strong> valores crudos distintos se reducen a
+    <strong>{{ catalogo|length }}</strong> canónicos.
+    El dashboard PHP recorre una lista fija de <strong>16</strong>.
+    {% if vacios %}Hay <strong>{{ vacios }}</strong> OT con el campo vacío.{% endif %}
+  </div>
+
+  <section class="grupo">
+    <h2>Canónicos <span class="cuenta">{{ catalogo|length }}</span></h2>
+    <div class="tabla-scroll">
+      <table>
+        <thead>
+          <tr><th>Requerimiento</th><th>OT</th><th>Variantes crudas que absorbe</th><th>Familia</th></tr>
+        </thead>
+        <tbody>
+          {% for e in catalogo %}
+            <tr {% if e.de_prueba %}class="es-prueba"{% endif %}>
+              <td>
+                <a class="enlace-ot"
+                   href="{{ url_for('ot.listado', requerimiento=e.canonico) }}"
+                   title="Ver las {{ e.total }} órdenes de trabajo de este requerimiento">
+                  <strong>{{ e.canonico }}</strong>
+                </a>
+                {% if e.de_prueba %} <span class="etiqueta">prueba</span>{% endif %}
+              </td>
+              <td class="num">{{ "{:,}".format(e.total).replace(",", ".") }}</td>
+              <td class="ancho">
+                {% if e.variantes|length == 1 and e.variantes[0].limpio %}
+                  <span class="vacio">—</span>
+                {% else %}
+                  {% for v in e.variantes %}
+                    <span class="variante {% if v.limpio %}variante-ok{% endif %}">{{ v.crudo | tojson }} <em>{{ v.n }}</em></span>
+                  {% endfor %}
+                {% endif %}
+              </td>
+              <td>{{ e.familia | mostrar }}</td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section class="grupo">
+    <h2>Los que necesitaron normalización <span class="cuenta">{{ con_variantes|length }}</span></h2>
+    <p class="vacio">
+      Estos son los que hoy se cuentan por separado en el sistema viejo y aquí quedan unificados.
+    </p>
+    <div class="tabla-scroll">
+      <table>
+        <thead><tr><th>Canónico</th><th>Total</th><th>Se armó con</th></tr></thead>
+        <tbody>
+          {% for e in con_variantes %}
+            <tr>
+              <td><strong>{{ e.canonico }}</strong></td>
+              <td class="num">{{ "{:,}".format(e.total).replace(",", ".") }}</td>
+              <td class="ancho">
+                {% for v in e.variantes %}
+                  <span class="variante {% if v.limpio %}variante-ok{% endif %}">{{ v.crudo | tojson }} <em>{{ v.n }}</em></span>
+                {% endfor %}
+              </td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </section>
+{% endblock %}

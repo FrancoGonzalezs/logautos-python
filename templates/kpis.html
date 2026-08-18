@@ -1,0 +1,78 @@
+{% extends "base.html" %}
+{% block titulo %}KPIs {{ mes }} — Logautos{% endblock %}
+
+{% block contenido %}
+  <h1>KPIs · {{ mes }}</h1>
+  <p class="subtitulo">
+    Período {{ inicio }} al {{ fin }} ·
+    {{ tarjetas|length }} de {{ total_oficiales }} indicadores del dashboard,
+    en el orden de <code>$kpis</code> del PHP
+  </p>
+
+  <form class="filtros" method="get" data-auto>
+    <label for="mes">Mes</label>
+    <input type="month" id="mes" name="mes" value="{{ mes }}">
+    <button type="submit">Ver</button>
+  </form>
+
+  {% if sin_datos %}
+    <div class="aviso">
+      <strong>No hay datos para {{ mes }}.</strong>
+      Ningún indicador tiene unidades en el período — probablemente el mes está
+      fuera del rango que cubre la réplica local.
+    </div>
+  {% endif %}
+
+  {% macro tarjeta(k) %}
+      <article class="kpi">
+        <header>
+          {% if k.icono %}<span class="kpi-icono">{{ k.icono }}</span>{% endif %}
+          <h2>{{ k.titulo }}</h2>
+        </header>
+
+        {% if k.es_conteo %}
+          <p class="kpi-tasa">{{ k.numerador | numero }}<span class="kpi-pct">unidades</span></p>
+          <p class="kpi-fraccion">conteo, no porcentaje</p>
+        {% elif k.unidad %}
+          <p class="kpi-tasa">{{ "%.1f"|format(k.promedio) }}<span class="kpi-pct">{{ k.unidad }}</span></p>
+          <p class="kpi-fraccion">
+            promedio sobre <strong>{{ k.denominador | numero }}</strong>
+          </p>
+        {% elif k.tasa is none %}
+          <p class="kpi-tasa sin-datos">sin datos</p>
+          <p class="kpi-fraccion">no hay unidades en el período</p>
+        {% else %}
+          <p class="kpi-tasa">{{ "%.2f"|format(k.tasa) }}<span class="kpi-pct">%</span></p>
+          <p class="kpi-fraccion">
+            <strong>{{ k.numerador | numero }}</strong> de {{ k.denominador | numero }}
+          </p>
+        {% endif %}
+
+        <p class="kpi-meta">
+          Meta <strong>{{ k.meta }}</strong>
+          {% if k.mayor_es_mejor %}<span class="etiqueta">más alto es mejor</span>{% endif %}
+        </p>
+        {% if k.nota %}<p class="kpi-nota">{{ k.nota }}</p>{% endif %}
+        <p class="kpi-formula">{{ k.formula }}</p>
+      </article>
+  {% endmacro %}
+
+  <div class="kpis">
+    {% for k in tarjetas %}{{ tarjeta(k) }}{% endfor %}
+  </div>
+
+  {% if extras %}
+    <section class="grupo extras">
+      <h2>Extras — fuera del dashboard oficial <span class="cuenta">{{ extras|length }}</span></h2>
+      <p class="vacio">
+        Estas funciones existen en <code>Kpi.php</code> pero <strong>no figuran en el
+        array <code>$kpis</code></strong> de <code>views/kpi/dashboard.php</code>: el
+        sistema viejo nunca las muestra. Se dejan acá para no perderlas, separadas
+        de los {{ total_oficiales }} que sí son el dashboard.
+      </p>
+      <div class="kpis">
+        {% for k in extras %}{{ tarjeta(k) }}{% endfor %}
+      </div>
+    </section>
+  {% endif %}
+{% endblock %}
