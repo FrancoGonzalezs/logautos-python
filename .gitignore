@@ -22,6 +22,11 @@ data/.secret_key
 # pesan lo que pesa una camara de telefono.
 data/uploads/
 
+# La semilla que genera scripts/semilla_volumen.py: lleva tbl_users completa,
+# o sea emails, RUT, telefonos y hashes de 144 personas reales. Se genera, se
+# aplica y se borra -- al repo no va nunca.
+semilla*.sql.gz
+
 # Dumps y respaldos
 *.sql
 *.sql.gz

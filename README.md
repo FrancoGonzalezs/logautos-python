@@ -53,6 +53,7 @@ python app.py                      # http://localhost:5000
 | `scripts/importar_dump.py` | Traduce el dump de MariaDB a SQLite. `--tablas a,b` para importar otras tablas, `--solo-indices` para recrear los índices de trabajo. |
 | `scripts/verificar_replica.py` | Conteos, unicidad del VIN y qué pasaría si las relaciones del análisis fueran FK reales. |
 | `scripts/crear_usuario.py` | Siembra un usuario de prueba para entrar en local sin usar una credencial real. `--listar` los muestra, `--borrar` los saca. |
+| `scripts/semilla_volumen.py` | Pone al día la base del volumen con las tablas chicas importadas después del deploy. `--revisar` dice qué falta, `--exportar` arma la semilla, `--aplicar` la aplica. |
 
 ## Lo que se comprobó sobre el dato real
 
