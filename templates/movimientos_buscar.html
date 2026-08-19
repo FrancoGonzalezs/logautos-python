@@ -1,0 +1,147 @@
+{% extends "base.html" %}
+{% from "_macros.html" import badge_estado %}
+{% block titulo %}Movimientos — REGLA{% endblock %}
+
+{% block contenido %}
+  <h1>Movimientos</h1>
+  <p class="subtitulo">Buscá la unidad para ver su estado y el siguiente paso sugerido.</p>
+
+  <div class="entrada-doble">
+
+    {# El escáner y la búsqueda por texto conviven al mismo nivel: muchas
+       veces no hay QR a mano o la cámara no sirve en el momento, así que
+       tener el texto escondido detrás de un "si falla, probá esto" haría
+       perder tiempo justo cuando ya se está perdiendo. #}
+    <section class="tarjeta escaner">
+      <header><strong>Escanear QR</strong></header>
+      <div id="escaner-zona">
+        <p class="vacio" id="escaner-estado">Preparando la cámara…</p>
+        <video id="escaner-video" playsinline hidden></video>
+      </div>
+      <div class="escaner-controles">
+        <button type="button" class="boton" id="escaner-iniciar" hidden>Encender cámara</button>
+        <button type="button" class="boton secundario" id="escaner-detener" hidden>Detener</button>
+      </div>
+    </section>
+
+    <section class="tarjeta">
+      <header><strong>Buscar por texto</strong></header>
+      <form method="get" data-buscar-vivo>
+        <input type="search" name="q" value="{{ texto }}" autofocus autocomplete="off"
+               placeholder="VIN, patente o número de motor" class="entrada-grande">
+        <button type="submit" class="boton">Buscar</button>
+      </form>
+      <p class="vacio nota-avanzados">
+        Sirve un VIN completo o un pedazo. También busca por patente y por
+        número de motor.
+      </p>
+    </section>
+  </div>
+
+  {% if texto %}
+    {% if not resultados %}
+      <div class="aviso">Ninguna unidad coincide con <strong>{{ texto }}</strong>.</div>
+    {% else %}
+      <p class="resumen">{{ resultados|length }} unidad{{ 'es' if resultados|length != 1 }}</p>
+      <div class="tabla-scroll">
+        <table>
+          <thead><tr><th>id</th><th>VIN</th><th>Patente</th><th>Marca</th><th>Modelo</th><th>Cliente</th><th>Estado</th></tr></thead>
+          <tbody>
+            {% for r in resultados %}
+              <tr>
+                <td><a href="{{ url_for('movimientos.unidad', id_unidad=r['id']) }}">{{ r['id'] }}</a></td>
+                <td><a href="{{ url_for('movimientos.unidad', id_unidad=r['id']) }}">{{ r['vin'] | mostrar }}</a></td>
+                <td>{{ r['patente'] | mostrar }}</td>
+                <td>{{ r['marca'] | mostrar }}</td>
+                <td>{{ r['modelo'] | mostrar }}</td>
+                <td>{{ r['clientecompleto'] | mostrar }}</td>
+                <td>{{ badge_estado(r['despachado']) }}</td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    {% endif %}
+  {% endif %}
+
+  <script>
+    /*
+     * Escáner de QR con la cámara, sin instalar nada y sin librería externa:
+     * se usa BarcodeDetector, que viene en el navegador.
+     *
+     * OJO: hoy lo trae Chrome en Android y no Safari en iOS. Cuando no está,
+     * NO se degrada a nada raro — se avisa y se usa el buscador por texto de
+     * al lado, que por eso está siempre visible y no escondido.
+     */
+    (function () {
+      var zona = document.getElementById('escaner-zona');
+      if (!zona) { return; }
+      var video = document.getElementById('escaner-video');
+      var estado = document.getElementById('escaner-estado');
+      var iniciar = document.getElementById('escaner-iniciar');
+      var detener = document.getElementById('escaner-detener');
+      var stream = null, detector = null, corriendo = false;
+
+      var soportado = ('BarcodeDetector' in window) &&
+                      navigator.mediaDevices && navigator.mediaDevices.getUserMedia;
+
+      if (!soportado) {
+        estado.textContent = 'Este navegador no puede leer QR. Usá la búsqueda ' +
+          'por texto de al lado (en el celular, Chrome en Android sí puede).';
+        return;
+      }
+
+      estado.textContent = 'Listo para escanear.';
+      iniciar.hidden = false;
+
+      iniciar.addEventListener('click', function () {
+        detector = new BarcodeDetector({ formats: ['qr_code'] });
+        navigator.mediaDevices.getUserMedia({
+          video: { facingMode: 'environment' }
+        }).then(function (s) {
+          stream = s;
+          video.srcObject = s;
+          video.hidden = false;
+          iniciar.hidden = true;
+          detener.hidden = false;
+          estado.textContent = 'Apuntá al código QR de la unidad.';
+          corriendo = true;
+          return video.play();
+        }).then(leer).catch(function (e) {
+          estado.textContent = 'No se pudo abrir la cámara (' + e.name +
+            '). Usá la búsqueda por texto.';
+        });
+      });
+
+      detener.addEventListener('click', apagar);
+
+      function apagar() {
+        corriendo = false;
+        if (stream) { stream.getTracks().forEach(function (t) { t.stop(); }); }
+        video.hidden = true;
+        detener.hidden = true;
+        iniciar.hidden = false;
+        estado.textContent = 'Listo para escanear.';
+      }
+
+      function leer() {
+        if (!corriendo) { return; }
+        detector.detect(video).then(function (codigos) {
+          if (codigos.length) {
+            var texto = (codigos[0].rawValue || '').trim();
+            if (texto) {
+              estado.textContent = 'Leído: ' + texto;
+              apagar();
+              // Se manda al mismo buscador: si el QR trae un VIN válido, la
+              // vista entra directo a la unidad sin pasar por la lista.
+              window.location = '{{ url_for("movimientos.buscar") }}?q=' +
+                encodeURIComponent(texto);
+              return;
+            }
+          }
+          setTimeout(leer, 250);
+        }).catch(function () { setTimeout(leer, 400); });
+      }
+    })();
+  </script>
+{% endblock %}

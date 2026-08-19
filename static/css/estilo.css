@@ -583,6 +583,127 @@ dl { display: grid; grid-template-columns: repeat(auto-fill, minmax(270px, 1fr))
   font-size: 12.5px;
 }
 
+/* --- Movimientos ---------------------------------------------------------- */
+
+.entrada-doble {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+  gap: 12px;
+  margin-bottom: 20px;
+  align-items: start;
+}
+.entrada-doble .tarjeta { margin: 0; }
+.entrada-doble form { display: flex; gap: 8px; flex-wrap: wrap; }
+.entrada-grande {
+  flex: 1 1 200px;
+  padding: 11px 13px;
+  border: 1px solid var(--linea-fuerte);
+  border-radius: var(--r-control);
+  font: inherit;
+  font-size: 15px;
+  background: var(--tarjeta);
+  color: var(--tinta);
+}
+.entrada-grande:focus {
+  outline: none;
+  border-color: var(--acento);
+  box-shadow: 0 0 0 3px var(--acento-suave);
+}
+
+.boton {
+  padding: 11px 18px;
+  border: 1px solid var(--acento);
+  border-radius: var(--r-control);
+  background: var(--acento);
+  color: #fff;
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+.boton:hover { background: var(--acento-hover); border-color: var(--acento-hover); }
+.boton.secundario {
+  background: transparent;
+  color: var(--acento);
+}
+.boton.secundario:hover { background: var(--acento-suave); }
+
+#escaner-video {
+  width: 100%;
+  max-height: 260px;
+  border-radius: var(--r-control);
+  background: #000;
+  object-fit: cover;
+}
+.escaner-controles { display: flex; gap: 8px; margin-top: 10px; }
+
+.estado-actual {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  padding: 14px 18px;
+  margin-bottom: 12px;
+  background: var(--tarjeta);
+  border: 1px solid var(--linea);
+  border-radius: var(--r-tarjeta);
+}
+.estado-actual .rotulo { margin: 0; }
+
+/* La recomendación es lo primero que hay que ver: lleva el acento a la
+   izquierda, igual que las tarjetas de plata en Facturación. */
+.recomendacion {
+  background: var(--tarjeta);
+  border: 1px solid var(--linea);
+  border-left: 3px solid var(--acento);
+  border-radius: var(--r-tarjeta);
+  padding: var(--aire);
+  margin-bottom: 16px;
+}
+.paso-titulo {
+  font-size: 24px;
+  font-weight: 700;
+  letter-spacing: -.3px;
+  text-transform: none;
+  color: var(--tinta);
+  margin: 6px 0 0;
+}
+.paso-porque { margin: 6px 0 0; color: var(--tinta-media); font-size: 13px; }
+
+.form-paso { margin-top: 18px; }
+.campos-paso {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(210px, 1fr));
+  gap: 12px;
+  margin-bottom: 16px;
+}
+.campos-paso label { display: flex; flex-direction: column; gap: 5px; }
+.campos-paso label > span {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: .5px;
+  color: var(--tinta-suave);
+}
+.campos-paso input, .campos-paso select {
+  padding: 9px 11px;
+  border: 1px solid var(--linea-fuerte);
+  border-radius: var(--r-control);
+  font: inherit;
+  font-size: 13.5px;
+  background: var(--tarjeta);
+  color: var(--tinta);
+}
+.campos-paso input:focus, .campos-paso select:focus {
+  outline: none;
+  border-color: var(--acento);
+  box-shadow: 0 0 0 3px var(--acento-suave);
+}
+
+.aviso-ok {
+  background: var(--bien-fondo);
+  border-color: var(--bien);
+  color: var(--bien);
+}
+
 /* Bloques dentro de una tarjeta de check list */
 .bloque { margin-top: 16px; }
 .bloque:first-of-type { margin-top: 0; }

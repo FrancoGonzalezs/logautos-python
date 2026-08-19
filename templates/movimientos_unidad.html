@@ -1,0 +1,187 @@
+{% extends "base.html" %}
+{% from "_macros.html" import badge_estado %}
+{% block titulo %}{{ u['vin'] | mostrar }} — Movimientos{% endblock %}
+
+{% block contenido %}
+  <p class="volver"><a href="{{ url_for('movimientos.buscar') }}">‹ buscar otra unidad</a></p>
+
+  {% if request.args.get('registrado') %}
+    <div class="aviso aviso-ok">
+      Movimiento registrado. El siguiente paso ya está recalculado abajo.
+    </div>
+  {% endif %}
+
+  <h1>{{ u['vin'] | mostrar }}</h1>
+  <p class="subtitulo">
+    {{ u['marca'] | mostrar }} {{ u['modelo'] | mostrar }}
+    · {{ u['color'] | mostrar }}
+    · patente {{ u['patente'] | mostrar }}
+    · <strong>{{ u['clientecompleto'] | mostrar }}</strong>
+    · <a href="{{ url_for('unidades.ficha', id_unidad=u['id']) }}">ver ficha completa</a>
+  </p>
+
+  <div class="estado-actual">
+    <span class="rotulo">Estado actual</span>
+    <span class="valor">{{ badge_estado(estado) }}</span>
+    {% if estado_desde_regla %}
+      <span class="etiqueta">según el último movimiento registrado en REGLA</span>
+    {% endif %}
+    {% if retorno %}<span class="etiqueta">retorno · ya pasó antes por el sistema</span>{% endif %}
+  </div>
+
+  {# La recomendación va primero y completa: el operario no debería tener que
+     navegar a ningún lado para saber qué hacer con la unidad que tiene
+     delante. #}
+  {% if recomendado %}
+    <section class="recomendacion">
+      <span class="rotulo">Siguiente paso sugerido</span>
+      <h2 class="paso-titulo">{{ recomendado.titulo }}</h2>
+      <p class="paso-porque">{{ recomendado.porque }}</p>
+
+      <form method="post" action="{{ url_for('movimientos.registrar_movimiento', id_unidad=u['id']) }}"
+            class="form-paso">
+        <input type="hidden" name="paso" value="{{ recomendado.clave }}">
+
+        <div class="campos-paso">
+          {% for campo, etiqueta, tipo in recomendado.pide %}
+            <label>
+              <span>{{ etiqueta }}</span>
+              <input type="{{ tipo }}" name="{{ campo }}"
+                     {% if tipo == 'date' %}value="{{ hoy }}"{% endif %}
+                     {% if campo == 'responsable' and usuario %}value="{{ usuario }}"{% endif %}>
+            </label>
+          {% endfor %}
+
+          {% if recomendado.resultados %}
+            <label>
+              <span>Resultado de la PDI</span>
+              <select name="resultado_pdi">
+                {% for clave, texto in recomendado.resultados %}
+                  <option value="{{ clave }}">{{ texto }}</option>
+                {% endfor %}
+              </select>
+            </label>
+          {% endif %}
+        </div>
+
+        <button type="submit" class="boton">Confirmar {{ recomendado.titulo }}</button>
+      </form>
+    </section>
+  {% else %}
+    <div class="aviso">
+      Esta unidad ya pasó el tramo que cubre el módulo por ahora
+      (Navegando → PDI). Los pasos siguientes son de la fase 2.
+    </div>
+  {% endif %}
+
+  <details class="grupo plegable">
+    <summary><h2>Registrar otro paso <span class="cuenta">desvío</span></h2></summary>
+    <p class="vacio">
+      Si la unidad no sigue la sugerencia, se puede registrar cualquier otro
+      paso — pero hay que decir por qué. El motivo queda guardado junto al
+      movimiento.
+    </p>
+
+    <form method="post" action="{{ url_for('movimientos.registrar_movimiento', id_unidad=u['id']) }}"
+          class="form-paso" id="form-desvio">
+      <div class="campos-paso">
+        <label>
+          <span>Paso</span>
+          <select name="paso" id="desvio-paso">
+            {% for p in otros %}
+              <option value="{{ p.clave }}">{{ p.titulo }}</option>
+            {% endfor %}
+          </select>
+        </label>
+        <label>
+          <span>Motivo del desvío</span>
+          <select name="motivo" id="desvio-motivo" required>
+            <optgroup label="Volver a lavado">
+              {% for m in motivos.lavado %}<option value="{{ m }}">{{ m }}</option>{% endfor %}
+            </optgroup>
+            <optgroup label="Generales">
+              {% for m in motivos.generico %}<option value="{{ m }}">{{ m }}</option>{% endfor %}
+            </optgroup>
+            <option value="Otro">Otro (escribir abajo)</option>
+          </select>
+        </label>
+        <label id="desvio-detalle-campo" hidden>
+          <span>Detalle del motivo</span>
+          <input type="text" name="motivo_detalle" id="desvio-detalle"
+                 placeholder="Por qué se desvía del paso sugerido">
+        </label>
+        <label>
+          <span>Responsable</span>
+          <input type="text" name="responsable" value="{{ usuario or '' }}">
+        </label>
+      </div>
+      <button type="submit" class="boton secundario">Registrar desvío</button>
+    </form>
+  </details>
+
+  <details class="grupo plegable" {% if historial %}open{% endif %}>
+    <summary><h2>Movimientos registrados <span class="cuenta">{{ historial|length }}</span></h2></summary>
+    {% if not historial %}
+      <p class="vacio">Todavía no se registró ningún movimiento para este VIN desde REGLA.</p>
+    {% else %}
+      <div class="tabla-scroll">
+        <table>
+          <thead><tr><th>Cuándo</th><th>Paso</th><th>Sugerido</th><th>Motivo</th><th>Resultado PDI</th><th>Responsable</th></tr></thead>
+          <tbody>
+            {% for m in historial %}
+              <tr>
+                <td>{{ m['creado_en'] | mostrar }}</td>
+                <td><strong>{{ m['paso'] }}</strong></td>
+                <td>
+                  {% if m['es_desvio'] %}
+                    <span class="badge badge-espera">desvío</span>
+                  {% else %}
+                    <span class="badge badge-ok">siguió la sugerencia</span>
+                  {% endif %}
+                </td>
+                <td class="ancho">{{ m['motivo'] | mostrar }}{% if m['motivo_detalle'] %} — {{ m['motivo_detalle'] }}{% endif %}</td>
+                <td>{{ m['resultado_pdi'] | mostrar }}</td>
+                <td>{{ m['responsable'] | mostrar }}</td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    {% endif %}
+  </details>
+
+  <details class="grupo plegable">
+    <summary><h2>Hitos de la unidad <span class="cuenta">{{ hitos.values() | select | list | length }}/{{ hitos|length }}</span></h2></summary>
+    <p class="vacio">
+      Lo que la recomendación mira para decidir. Sale del dato, no de un
+      contador de pasos: una unidad puede tener la PDI hecha aunque su estado
+      diga otra cosa.
+    </p>
+    <dl>
+      {% for clave, cumplido in hitos.items() %}
+        <div class="par {% if not cumplido %}par-vacio{% endif %}">
+          <dt>{{ clave }}</dt>
+          <dd>{% if cumplido %}<span class="badge badge-ok">sí</span>{% else %}<span class="badge badge-neutro">no</span>{% endif %}</dd>
+        </div>
+      {% endfor %}
+    </dl>
+  </details>
+
+  <script>
+    /* El campo de texto libre solo aparece cuando el motivo es "Otro", y ahí
+       pasa a ser obligatorio: un desvío sin explicación no sirve para medir. */
+    (function () {
+      var motivo = document.getElementById('desvio-motivo');
+      var campo = document.getElementById('desvio-detalle-campo');
+      var input = document.getElementById('desvio-detalle');
+      if (!motivo) { return; }
+      function pintar() {
+        var otro = motivo.value === 'Otro';
+        campo.hidden = !otro;
+        input.required = otro;
+      }
+      motivo.addEventListener('change', pintar);
+      pintar();
+    })();
+  </script>
+{% endblock %}

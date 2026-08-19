@@ -42,17 +42,20 @@
       <a href="{{ url_for('unidades.listado') }}" class="{{ 'activo' if seccion == 'unidades' }}">
         <span class="num">00</span> Unidades
       </a>
+      <a href="{{ url_for('movimientos.buscar') }}" class="{{ 'activo' if seccion == 'movimientos' }}">
+        <span class="num">01</span> Movimientos
+      </a>
       <a href="{{ url_for('ot.listado') }}" class="{{ 'activo' if seccion == 'ot' }}">
-        <span class="num">01</span> Órdenes de Trabajo
+        <span class="num">02</span> Órdenes de Trabajo
       </a>
       <a href="{{ url_for('facturacion.dashboard') }}" class="{{ 'activo' if seccion == 'facturacion' }}">
-        <span class="num">02</span> Facturación
+        <span class="num">03</span> Facturación
       </a>
       <a href="{{ url_for('kpis.dashboard') }}" class="{{ 'activo' if seccion == 'kpis' }}">
-        <span class="num">03</span> KPIs
+        <span class="num">04</span> KPIs
       </a>
       <a href="{{ url_for('catalogos.requerimientos') }}" class="{{ 'activo' if seccion == 'catalogos' }}">
-        <span class="num">04</span> Requerimientos
+        <span class="num">05</span> Requerimientos
       </a>
     </nav>
 

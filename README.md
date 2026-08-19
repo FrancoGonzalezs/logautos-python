@@ -838,6 +838,42 @@ tarjeta; `<section class="grupo">` es una región con título de un dashboard y
 **no** lo es. Si la sección también fuera tarjeta, la tabla de adentro —que sí
 lo es— quedaría como una tarjeta dentro de otra, con doble borde.
 
+## Movimientos (fase 1: Navegando → PDI)
+
+`/movimientos` — buscar una unidad y ver su estado y el siguiente paso
+sugerido. Cubre el tramo hasta la PDI; Lavado→IT→CC→ZD→Despacho es fase 2.
+
+### Motor de reglas, no flowchart
+
+El siguiente paso se deduce de **estado + cliente + hitos ya cumplidos**, no de
+un contador de pasos. Los 299.322 movimientos de `registros` muestran que la
+operación real tiene vueltas atrás y excepciones constantes: un flujo lineal
+mentiría sobre cómo funciona. El usuario **siempre** puede elegir otro paso —
+eso no es un error, es la operación; lo que se le pide es el motivo.
+
+Los hitos salen del dato (`g_ingreso`, `contenedor.vines`,
+`fecha_lavado_y_combustible`, `fecha_check_list`, `fecha_pdi`), así que una
+unidad con la PDI hecha se detecta aunque su estado diga otra cosa.
+
+### Los movimientos NO se escriben en `registros`
+
+Van a una tabla propia, `movimientos_regla`, por dos razones: `registros` es la
+réplica del sistema viejo y sirve de patrón de comparación contra producción,
+y además el importador la dropea en cada reimportación. Esa tabla es también la
+cola natural para el push cuando se construya el sync.
+
+Como la réplica no se toca, el avance del flujo se logra **superponiendo** los
+movimientos registrados sobre lo que dice la réplica. Sin esa superposición,
+registrar un ingreso no cambiaría nada y la pantalla recomendaría el mismo paso
+para siempre.
+
+### Escáner QR
+
+Usa `BarcodeDetector`, que ya viene en el navegador — sin librería externa ni
+nada que instalar. **Hoy lo trae Chrome en Android y no Safari en iOS**: cuando
+no está, se avisa y se usa la búsqueda por texto, que por eso está siempre
+visible al lado y no escondida detrás de un "si falla, probá esto".
+
 ## Órdenes de trabajo
 
 `/ot` — listado paginado con id, cliente, vehículo, requerimiento, estado,
