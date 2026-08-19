@@ -867,6 +867,32 @@ movimientos registrados sobre lo que dice la réplica. Sin esa superposición,
 registrar un ingreso no cambiaría nada y la pantalla recomendaría el mismo paso
 para siempre.
 
+### Asignación diaria por movilizador
+
+El PHP tiene `unidades_asignadas($id)`: filtra por `encargado_patio` y
+`fecha_asignacion_movilizador = hoy`, para que un movilizador vea sus unidades
+del día y no las 71.546. La pantalla arranca con esa lista y deja el buscador y
+el QR abajo, para ir a una unidad fuera de ella.
+
+**Pero el dato dice que la función casi no se usó.** En todo el dump hay
+**cinco** filas con asignación y **cuatro son de prueba** (VIN `PRUEBAPRUEBA`,
+`VINARDO...`, cliente `PRUEBA`). La única real es la unidad **80405**, asignada
+el **2025-05-21** — catorce meses antes del corte del dump. Además
+`encargado_patio` mezcla formatos: guarda ids (`'666'`, `'1007'`) y también
+nombres (`'Carlos Cares'`).
+
+Por eso la pantalla no da por sentado que va a haber lista: cuando está vacía
+lo explica en vez de mostrar un panel en blanco que parece roto, y el día se
+puede cambiar — con "hoy" fijo sería imposible de probar contra el único dato
+real que existe.
+
+La identidad del movilizador se elige a mano y vive en la sesión. **Es un
+parche**: hoy el login acepta cualquier usuario y no sabe de roles. Cuando
+`tbl_users` se importe y el login valide, eso sale y el id sale del usuario
+autenticado. Lo mismo vale para la restricción por rol de
+`stocklogautos_patio()` (role 2, role 6 o cliente LOGAUTOS), que no está
+implementada porque no hay roles todavía.
+
 ### Escáner QR
 
 Usa `BarcodeDetector`, que ya viene en el navegador — sin librería externa ni

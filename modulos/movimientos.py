@@ -338,6 +338,49 @@ def registrar(unidad, datos):
 # Vistas
 # ---------------------------------------------------------------------------
 
+# ---------------------------------------------------------------------------
+# Asignación diaria por movilizador
+# ---------------------------------------------------------------------------
+#
+# El PHP tiene `unidades_asignadas($id)`: filtra newstocks_cidef por
+# encargado_patio = id y fecha_asignacion_movilizador = hoy, para que cada
+# movilizador vea sus unidades del dia y no las 71.546.
+#
+# OJO CON EL DATO: la funcion existe pero casi no se uso. En todo el dump hay
+# CINCO filas con asignacion, y cuatro son de prueba (VIN 'PRUEBAPRUEBA',
+# 'VINARDO...', cliente 'PRUEBA'). La unica real es la unidad 80405, asignada
+# el 2025-05-21. Ademas `encargado_patio` mezcla formatos: guarda ids ('666',
+# '1007') y tambien nombres ('Carlos Cares').
+#
+# Por eso la pantalla NO da por sentado que va a haber lista: cuando esta
+# vacia lo dice y deja el buscador a mano, en vez de mostrar un panel en
+# blanco que parece roto.
+
+
+def encargados_conocidos():
+    """Los valores de `encargado_patio` que existen en el dato. Sirven de
+    sugerencia mientras no haya sistema de usuarios."""
+    return [f["encargado_patio"] for f in consultar(
+        'SELECT DISTINCT encargado_patio FROM "{}" '
+        "WHERE encargado_patio IS NOT NULL AND TRIM(encargado_patio) <> '' "
+        "ORDER BY 1".format(TABLA))]
+
+
+def unidades_asignadas(encargado, fecha):
+    """Las unidades asignadas a ese movilizador para esa fecha.
+
+    Se compara con TRIM porque `encargado_patio` es texto libre y ya se vio
+    en otras columnas de esta tabla que los espacios sobrantes son la norma."""
+    if not encargado or not fecha:
+        return []
+    return consultar(
+        'SELECT id, vin, patente, marca, modelo, color, clientecompleto, '
+        'despachado, patio FROM "{}" '
+        "WHERE TRIM(encargado_patio) = ? AND fecha_asignacion_movilizador = ? "
+        "ORDER BY id DESC".format(TABLA),
+        (str(encargado).strip(), fecha))
+
+
 def _buscar(texto):
     """Busca por VIN exacto primero y por coincidencia después.
 
@@ -366,6 +409,17 @@ def _buscar(texto):
         (patron, patron, patron))
 
 
+@bp.route("/soy", methods=["POST"])
+def soy():
+    """Guarda quien es el movilizador. Es un PARCHE hasta que haya sistema de
+    usuarios: hoy el login acepta cualquier cosa y no sabe de roles, asi que
+    la identidad para la asignacion se elige a mano y vive en la sesion.
+    Cuando `tbl_users` se importe y el login valide, esto sale y el id se toma
+    del usuario autenticado."""
+    session["movilizador"] = request.form.get("movilizador", "").strip()
+    return redirect(url_for("movimientos.buscar"))
+
+
 @bp.route("/")
 def buscar():
     texto = request.args.get("q", "").strip()
@@ -376,8 +430,18 @@ def buscar():
     if texto and len(resultados) == 1:
         return redirect(url_for("movimientos.unidad", id_unidad=resultados[0]["id"]))
 
-    return render_template("movimientos_buscar.html",
-                           texto=texto, resultados=resultados)
+    # La fecha se puede cambiar y no esta clavada en hoy. No es un capricho:
+    # la ultima asignacion del dump es de 2025-06-17, asi que con "hoy" fijo
+    # la pantalla seria imposible de probar contra el dato que existe.
+    movilizador = session.get("movilizador", "")
+    fecha = request.args.get("fecha") or date.today().isoformat()
+
+    return render_template(
+        "movimientos_buscar.html",
+        texto=texto, resultados=resultados,
+        movilizador=movilizador, fecha=fecha, hoy=date.today().isoformat(),
+        asignadas=unidades_asignadas(movilizador, fecha),
+        encargados=encargados_conocidos())
 
 
 @bp.route("/<int:id_unidad>")

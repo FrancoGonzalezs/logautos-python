@@ -4,7 +4,81 @@
 
 {% block contenido %}
   <h1>Movimientos</h1>
-  <p class="subtitulo">Buscá la unidad para ver su estado y el siguiente paso sugerido.</p>
+  <p class="subtitulo">
+    {% if movilizador %}
+      Tus unidades asignadas primero; el buscador queda abajo para ir a
+      cualquier otra.
+    {% else %}
+      Buscá la unidad para ver su estado y el siguiente paso sugerido.
+    {% endif %}
+  </p>
+
+  {# La asignación del día va ARRIBA del buscador: un movilizador no debería
+     tener que buscar a mano lo que ya tiene asignado. El buscador y el QR
+     quedan igual de disponibles, para las unidades fuera de esa lista. #}
+  <section class="asignacion">
+    <form method="post" action="{{ url_for('movimientos.soy') }}" class="quien-soy">
+      <label>
+        <span>Movilizador</span>
+        <input type="text" name="movilizador" list="encargados"
+               value="{{ movilizador }}" placeholder="tu id o nombre">
+        <datalist id="encargados">
+          {% for e in encargados %}<option value="{{ e }}">{% endfor %}
+        </datalist>
+      </label>
+      <button type="submit" class="boton secundario">Guardar</button>
+    </form>
+
+    <form method="get" class="quien-soy" data-auto>
+      <label>
+        <span>Día</span>
+        <input type="date" name="fecha" value="{{ fecha }}">
+      </label>
+      <button type="submit" class="boton secundario">Ver</button>
+    </form>
+
+    {% if not movilizador %}
+      <p class="vacio">
+        Escribí tu id o nombre de movilizador para ver tus unidades del día.
+        Es provisorio: cuando el login valide contra <code>tbl_users</code>,
+        la identidad va a salir del usuario y no de acá.
+      </p>
+    {% elif asignadas %}
+      <p class="resumen">
+        {{ asignadas|length }} unidad{{ 'es' if asignadas|length != 1 }} asignada{{ 's' if asignadas|length != 1 }}
+        a <strong>{{ movilizador }}</strong> el {{ fecha }}
+      </p>
+      <div class="tabla-scroll">
+        <table>
+          <thead><tr><th>VIN</th><th>Patente</th><th>Marca</th><th>Modelo</th><th>Cliente</th><th>Patio</th><th>Estado</th></tr></thead>
+          <tbody>
+            {% for a in asignadas %}
+              <tr>
+                <td><a href="{{ url_for('movimientos.unidad', id_unidad=a['id']) }}">{{ a['vin'] | mostrar }}</a></td>
+                <td>{{ a['patente'] | mostrar }}</td>
+                <td>{{ a['marca'] | mostrar }}</td>
+                <td>{{ a['modelo'] | mostrar }}</td>
+                <td>{{ a['clientecompleto'] | mostrar }}</td>
+                <td>{{ a['patio'] | mostrar }}</td>
+                <td>{{ badge_estado(a['despachado']) }}</td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    {% else %}
+      <div class="aviso">
+        <strong>{{ movilizador }}</strong> no tiene unidades asignadas el {{ fecha }}.
+        {% if fecha == hoy %}
+          Ojo: en toda la réplica hay <strong>cinco</strong> asignaciones y cuatro
+          son de prueba — la única real es del <strong>2025-05-21</strong>. Si la
+          lista está vacía no es un error de la pantalla, es que la asignación
+          diaria casi no se usó en el sistema viejo.
+        {% endif %}
+        Usá el buscador de abajo para ir a una unidad puntual.
+      </div>
+    {% endif %}
+  </section>
 
   <div class="entrada-doble">
 
