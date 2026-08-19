@@ -42,7 +42,10 @@
       <a href="{{ url_for('unidades.listado') }}" class="{{ 'activo' if seccion == 'unidades' }}">
         <span class="num">00</span> Unidades
       </a>
-      <a href="{{ url_for('movimientos.buscar') }}" class="{{ 'activo' if seccion == 'movimientos' }}">
+      {# El check list de ingreso es una pantalla de Movimientos aunque viva en
+         su propio blueprint, así que el ítem tiene que quedar marcado. #}
+      <a href="{{ url_for('movimientos.buscar') }}"
+         class="{{ 'activo' if seccion in ('movimientos', 'check_list') }}">
         <span class="num">01</span> Movimientos
       </a>
       <a href="{{ url_for('ot.listado') }}" class="{{ 'activo' if seccion == 'ot' }}">
@@ -66,7 +69,14 @@
       </button>
       <span class="replica" title="{{ db_path }}">réplica local</span>
       {% if usuario %}
-        <a class="salir" href="{{ url_for('acceso.salir') }}">{{ usuario }} · salir</a>
+        {# El rol se muestra al lado del nombre porque decide lo que la
+           persona puede hacer: verlo evita el "¿por qué a mí no me aparece?"
+           cuando alguien entra con la cuenta equivocada. #}
+        <span class="quien">
+          <strong>{{ usuario.name }}</strong>
+          <span class="quien-rol">{{ usuario.roleText }}</span>
+        </span>
+        <a class="salir" href="{{ url_for('acceso.salir') }}">salir</a>
       {% endif %}
     </div>
   </aside>

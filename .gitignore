@@ -12,6 +12,16 @@ data/*.db-shm
 # se cuele por olvido.
 data/*.json
 
+# La clave con que se firman las cookies de sesion, generada al azar la
+# primera vez que arranca sin SECRET_KEY. Publicarla equivaldria a volver a la
+# clave fija que habia antes del login real.
+data/.secret_key
+
+# Las fotos que sube el check list de ingreso. Van al volumen persistente
+# (DATA_DIR), nunca al repo: son fotos de unidades de clientes reales y ademas
+# pesan lo que pesa una camara de telefono.
+data/uploads/
+
 # Dumps y respaldos
 *.sql
 *.sql.gz

@@ -38,6 +38,20 @@
       <h2 class="paso-titulo">{{ recomendado.titulo }}</h2>
       <p class="paso-porque">{{ recomendado.porque }}</p>
 
+      {#
+        Los pasos con formulario propio —hoy el check list de ingreso— no se
+        confirman desde acá: son demasiados campos para la tarjeta del paso,
+        así que se entra a la pantalla que los pide. El movimiento lo escribe
+        ese formulario al confirmar, no este botón.
+      #}
+      {% if recomendado.formulario %}
+        <p class="paso-porque">
+          Este paso se completa en su propia pantalla.
+        </p>
+        <p><a class="boton" href="{{ url_for(recomendado.formulario, id_unidad=u['id']) }}">
+          Hacer {{ recomendado.titulo }}
+        </a></p>
+      {% else %}
       <form method="post" action="{{ url_for('movimientos.registrar_movimiento', id_unidad=u['id']) }}"
             class="form-paso">
         <input type="hidden" name="paso" value="{{ recomendado.clave }}">
@@ -47,8 +61,7 @@
             <label>
               <span>{{ etiqueta }}</span>
               <input type="{{ tipo }}" name="{{ campo }}"
-                     {% if tipo == 'date' %}value="{{ hoy }}"{% endif %}
-                     {% if campo == 'responsable' and usuario %}value="{{ usuario }}"{% endif %}>
+                     {% if tipo == 'date' %}value="{{ hoy }}"{% endif %}>
             </label>
           {% endfor %}
 
@@ -64,8 +77,12 @@
           {% endif %}
         </div>
 
+        {# Quién firma el movimiento no es editable: sale de la sesión. Se
+           muestra para que quede a la vista antes de confirmar. #}
+        <p class="firma">Lo registra <strong>{{ usuario.name }}</strong></p>
         <button type="submit" class="boton">Confirmar {{ recomendado.titulo }}</button>
       </form>
+      {% endif %}
     </section>
   {% else %}
     <div class="aviso">
@@ -110,11 +127,8 @@
           <input type="text" name="motivo_detalle" id="desvio-detalle"
                  placeholder="Por qué se desvía del paso sugerido">
         </label>
-        <label>
-          <span>Responsable</span>
-          <input type="text" name="responsable" value="{{ usuario or '' }}">
-        </label>
       </div>
+      <p class="firma">Lo registra <strong>{{ usuario.name }}</strong></p>
       <button type="submit" class="boton secundario">Registrar desvío</button>
     </form>
   </details>

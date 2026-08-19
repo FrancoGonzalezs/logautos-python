@@ -30,6 +30,7 @@ from datetime import date, datetime
 from flask import Blueprint, redirect, render_template, request, session, url_for
 
 from core import consultar, get_db
+from modulos.acceso import id_actual, nombre_actual, usuario_actual
 from modulos.catalogos import normalizar
 # `vin_limpio` vive en kpis.py porque ahi nacio (filtra los VIN invalidos de
 # los indicadores). Es el mismo criterio que hace falta aca para decidir si lo
@@ -53,32 +54,35 @@ PASOS = {
         "pide": [
             ("guia_ingreso", "Guía de ingreso", "text"),
             ("fecha", "Fecha de ingreso", "date"),
-            ("responsable", "Quién lo ingresa", "text"),
         ],
     },
     "revision_contenedor": {
         "titulo": "Revisión de Contenedor/Grúa",
         "detalle": "Revisar la unidad al desconsolidar, antes del check list.",
         "estado_destino": "ZONA DE RECEPCION",
-        "pide": [("responsable", "Quién revisa", "text")],
+        "pide": [],
     },
     "lavado_revision": {
         "titulo": "Lavado Revisión",
         "detalle": "Lavado previo al check list, para poder ver la carrocería.",
         "estado_destino": "ZONA DE LAVADO",
-        "pide": [("responsable", "Quién lava", "text")],
+        "pide": [],
     },
     "check_list_ingreso": {
         "titulo": "Check List de Ingreso",
         "detalle": "Levantar daños, faltantes y equipamiento de la unidad.",
         "estado_destino": "ZONA DE RECEPCION",
-        "pide": [("responsable", "Quién hace el check list", "text")],
+        "pide": [],
+        # Este paso no se confirma acá sino en su propio formulario
+        # (modulos/check_list.py): son ~30 campos, tres catálogos y una foto
+        # por daño, que no entran en la tarjeta del paso.
+        "formulario": "check_list.formulario",
     },
     "pdi": {
         "titulo": "PDI",
         "detalle": "Inspección de preentrega.",
         "estado_destino": "STOCK",
-        "pide": [("responsable", "Quién hace la PDI", "text")],
+        "pide": [],
         # La PDI es el unico paso con resultado: no cambia cual es el siguiente
         # paso recomendado, pero si queda registrado cual de los tres fue.
         "resultados": [
@@ -91,13 +95,13 @@ PASOS = {
         "titulo": "Lavado Producción",
         "detalle": "Lavado de salida.",
         "estado_destino": "ZONA DE LAVADO",
-        "pide": [("responsable", "Quién lava", "text")],
+        "pide": [],
     },
     "check_mecanica": {
         "titulo": "Check de Mecánica",
         "detalle": "Revisión mecánica (alimenta check_list_mecanica).",
         "estado_destino": "INGRESO A TALLER",
-        "pide": [("responsable", "Quién revisa", "text")],
+        "pide": [],
     },
 }
 
@@ -318,9 +322,11 @@ def movimientos_de(vin):
 
 
 def registrar(unidad, datos):
+    """Devuelve el id del movimiento escrito. Lo necesita el check list, que
+    guarda su propia fila y la cuelga del movimiento que la originó."""
     db = get_db()
     _asegurar_tabla(db)
-    db.execute("""
+    cur = db.execute("""
         INSERT INTO movimientos_regla
           (unidad_id, vin, paso, paso_recomendado, es_desvio, motivo,
            motivo_detalle, resultado_pdi, guia_ingreso, fecha, responsable,
@@ -330,8 +336,9 @@ def registrar(unidad, datos):
         1 if datos["es_desvio"] else 0, datos.get("motivo"),
         datos.get("motivo_detalle"), datos.get("resultado_pdi"),
         datos.get("guia_ingreso"), datos.get("fecha"), datos.get("responsable"),
-        session.get("usuario"), datetime.now().isoformat(timespec="seconds")))
+        id_actual(), datetime.now().isoformat(timespec="seconds")))
     db.commit()
+    return cur.lastrowid
 
 
 # ---------------------------------------------------------------------------
@@ -350,35 +357,54 @@ def registrar(unidad, datos):
 # CINCO filas con asignacion, y cuatro son de prueba (VIN 'PRUEBAPRUEBA',
 # 'VINARDO...', cliente 'PRUEBA'). La unica real es la unidad 80405, asignada
 # el 2025-05-21. Ademas `encargado_patio` mezcla formatos: guarda ids ('666',
-# '1007') y tambien nombres ('Carlos Cares').
+# '1007') y tambien nombres ('Carlos Cares') -- que resulto ser la misma
+# persona escrita de dos maneras, ver `_identidades_del_movilizador`.
 #
 # Por eso la pantalla NO da por sentado que va a haber lista: cuando esta
 # vacia lo dice y deja el buscador a mano, en vez de mostrar un panel en
 # blanco que parece roto.
+#
+# La identidad ya NO se elige a mano: sale del usuario logueado.
 
 
-def encargados_conocidos():
-    """Los valores de `encargado_patio` que existen en el dato. Sirven de
-    sugerencia mientras no haya sistema de usuarios."""
-    return [f["encargado_patio"] for f in consultar(
-        'SELECT DISTINCT encargado_patio FROM "{}" '
-        "WHERE encargado_patio IS NOT NULL AND TRIM(encargado_patio) <> '' "
-        "ORDER BY 1".format(TABLA))]
+def _identidades_del_movilizador():
+    """Con que valores puede figurar el usuario logueado en `encargado_patio`.
 
+    La columna mezcla formatos -- guarda ids ('666', '1007') y tambien nombres
+    ('Carlos Cares') --, y ahora se sabe por que: los dos son la misma persona
+    escrita de dos maneras. Se comprobo contra `tbl_users` que '666' y '1007'
+    son userId reales y que el userId 1007 se llama exactamente 'Carlos Cares'.
 
-def unidades_asignadas(encargado, fecha):
-    """Las unidades asignadas a ese movilizador para esa fecha.
-
-    Se compara con TRIM porque `encargado_patio` es texto libre y ya se vio
-    en otras columnas de esta tabla que los espacios sobrantes son la norma."""
-    if not encargado or not fecha:
+    Con login real no hay que elegir cual de los dos formatos usar: se buscan
+    los dos. Antes esto era imposible, porque la identidad se escribia a mano
+    en un campo de texto y no habia con que cruzarla."""
+    usuario = usuario_actual()
+    if not usuario:
         return []
+    valores = []
+    if usuario["userId"] is not None:
+        valores.append(str(usuario["userId"]))
+    if usuario["name"]:
+        valores.append(usuario["name"].strip())
+    return valores
+
+
+def unidades_asignadas(identidades, fecha):
+    """Las unidades asignadas al movilizador para esa fecha.
+
+    Se compara con TRIM porque `encargado_patio` es texto libre y ya se vio en
+    otras columnas de esta tabla que los espacios sobrantes son la norma, y
+    contra TODAS las formas en que el usuario puede figurar (su id y su
+    nombre), por lo mismo que explica `_identidades_del_movilizador`."""
+    if not identidades or not fecha:
+        return []
+    huecos = ",".join("?" for _ in identidades)
     return consultar(
         'SELECT id, vin, patente, marca, modelo, color, clientecompleto, '
         'despachado, patio FROM "{}" '
-        "WHERE TRIM(encargado_patio) = ? AND fecha_asignacion_movilizador = ? "
-        "ORDER BY id DESC".format(TABLA),
-        (str(encargado).strip(), fecha))
+        "WHERE TRIM(encargado_patio) IN ({}) AND fecha_asignacion_movilizador = ? "
+        "ORDER BY id DESC".format(TABLA, huecos),
+        tuple(identidades) + (fecha,))
 
 
 def _buscar(texto):
@@ -409,15 +435,10 @@ def _buscar(texto):
         (patron, patron, patron))
 
 
-@bp.route("/soy", methods=["POST"])
-def soy():
-    """Guarda quien es el movilizador. Es un PARCHE hasta que haya sistema de
-    usuarios: hoy el login acepta cualquier cosa y no sabe de roles, asi que
-    la identidad para la asignacion se elige a mano y vive en la sesion.
-    Cuando `tbl_users` se importe y el login valide, esto sale y el id se toma
-    del usuario autenticado."""
-    session["movilizador"] = request.form.get("movilizador", "").strip()
-    return redirect(url_for("movimientos.buscar"))
+# La ruta /soy ya no existe. Era el parche con que se elegia a mano quien era
+# el movilizador y se guardaba en la sesion, porque el login aceptaba
+# cualquier usuario y no sabia de roles. Con login real la identidad sale del
+# usuario autenticado, que es lo que esa nota anticipaba.
 
 
 @bp.route("/")
@@ -433,15 +454,17 @@ def buscar():
     # La fecha se puede cambiar y no esta clavada en hoy. No es un capricho:
     # la ultima asignacion del dump es de 2025-06-17, asi que con "hoy" fijo
     # la pantalla seria imposible de probar contra el dato que existe.
-    movilizador = session.get("movilizador", "")
+    usuario = usuario_actual()
     fecha = request.args.get("fecha") or date.today().isoformat()
+    identidades = _identidades_del_movilizador()
 
     return render_template(
         "movimientos_buscar.html",
         texto=texto, resultados=resultados,
-        movilizador=movilizador, fecha=fecha, hoy=date.today().isoformat(),
-        asignadas=unidades_asignadas(movilizador, fecha),
-        encargados=encargados_conocidos())
+        movilizador=(usuario or {}).get("name", ""),
+        fecha=fecha, hoy=date.today().isoformat(),
+        asignadas=unidades_asignadas(identidades, fecha),
+        identidades=identidades)
 
 
 @bp.route("/<int:id_unidad>")
@@ -476,6 +499,17 @@ def registrar_movimiento(id_unidad):
     if paso not in PASOS:
         return redirect(url_for("movimientos.unidad", id_unidad=id_unidad))
 
+    # Los pasos que tienen formulario propio NO se registran acá: se manda al
+    # usuario a llenarlo y el movimiento lo escribe ese formulario al
+    # confirmar. El motivo del desvío viaja en la URL para no perderlo -- si
+    # se registrara acá y además allá, el paso quedaría dos veces.
+    destino = PASOS[paso].get("formulario")
+    if destino:
+        return redirect(url_for(
+            destino, id_unidad=id_unidad,
+            motivo=request.form.get("motivo") or None,
+            motivo_detalle=request.form.get("motivo_detalle") or None))
+
     recomendado = recomendar(fila)
     clave_recomendada = recomendado["clave"] if recomendado else None
     es_desvio = paso != clave_recomendada
@@ -489,7 +523,8 @@ def registrar_movimiento(id_unidad):
         "resultado_pdi": request.form.get("resultado_pdi") or None,
         "guia_ingreso": request.form.get("guia_ingreso") or None,
         "fecha": request.form.get("fecha") or None,
-        "responsable": request.form.get("responsable") or None,
+        # Firma el que esta logueado, no un nombre escrito a mano.
+        "responsable": nombre_actual() or None,
     })
 
     return redirect(url_for("movimientos.unidad", id_unidad=id_unidad,

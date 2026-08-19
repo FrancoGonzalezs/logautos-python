@@ -9,11 +9,12 @@ medida que se migran, cada uno como un Blueprint en modulos/.
 
 import os
 
-from flask import Flask, redirect, session, url_for
+from flask import Flask, redirect, url_for
 
-from core import DB_PATH, cerrar_db, mostrar, numero, pesos, vacio
-from modulos.acceso import bp as bp_acceso, registrar_guardia
+from core import DB_PATH, cerrar_db, clave_de_sesion, mostrar, numero, pesos, vacio
+from modulos.acceso import bp as bp_acceso, registrar_guardia, usuario_actual
 from modulos.catalogos import bp as bp_catalogos
+from modulos.check_list import bp as bp_check_list
 from modulos.facturacion import bp as bp_facturacion
 from modulos.kpis import bp as bp_kpis
 from modulos.movimientos import bp as bp_movimientos
@@ -25,18 +26,25 @@ def crear_app():
     app = Flask(__name__)
     app.teardown_appcontext(cerrar_db)
 
-    # La sesion del login sale de SECRET_KEY del entorno. Si no esta, se usa
-    # una clave FIJA de desarrollo en vez de generar una al azar: con
-    # os.urandom() cada reinicio del servidor cerraba la sesion, y con
-    # recarga automatica eso pasa cada vez que se guarda un archivo.
+    # La cookie de sesion ahora dice QUIEN es el usuario y con que rol, asi
+    # que la clave que la firma dejo de ser un detalle: con una clave conocida
+    # cualquiera puede fabricarse una sesion de administrador sin saber
+    # ninguna contrasena. Por eso ya no hay clave fija en el repo.
     #
-    # La clave fija no es un descuido pero tampoco es segura: esta en el repo,
-    # asi que cualquiera puede firmar una cookie de sesion. Hoy da lo mismo
-    # porque el login es una maqueta que acepta cualquier usuario
-    # (modulos/acceso.py) y la app es de solo lectura. EN PRODUCCION HAY QUE
-    # SETEAR SECRET_KEY -- y cuando el login valide de verdad, esta rama
-    # deberia pasar a fallar en vez de dar una clave por defecto.
-    app.secret_key = os.environ.get("SECRET_KEY") or "regla-desarrollo-no-usar-en-produccion"
+    # Sale de SECRET_KEY, y si no esta se genera una al azar que se guarda en
+    # DATA_DIR -- fuera del repo. Nunca vuelve a haber una clave conocida, que
+    # es lo unico que importaba: da igual si el que arranca es gunicorn o
+    # `python app.py`, ninguno de los dos firma con algo publicado.
+    #
+    # Se guarda en vez de regenerarse en cada arranque porque con la recarga
+    # automatica cada archivo guardado cerraria la sesion, y ahora volver a
+    # entrar cuesta escribir una contrasena de verdad. En el contenedor eso
+    # depende de que DATA_DIR sea el volumen: si no lo es, cada redeploy
+    # cambia la clave y obliga a que todos vuelvan a entrar -- molesto, no
+    # inseguro. Setear SECRET_KEY lo evita y es lo recomendado.
+    app.secret_key = clave_de_sesion()
+
+    app.config["MAX_CONTENT_LENGTH"] = 64 * 1024 * 1024
 
     app.jinja_env.filters["mostrar"] = mostrar
     app.jinja_env.filters["pesos"] = pesos
@@ -46,6 +54,7 @@ def crear_app():
     app.register_blueprint(bp_acceso)
     app.register_blueprint(bp_unidades)
     app.register_blueprint(bp_movimientos)
+    app.register_blueprint(bp_check_list)
     app.register_blueprint(bp_ot)
     app.register_blueprint(bp_catalogos)
     app.register_blueprint(bp_facturacion)
@@ -59,7 +68,10 @@ def crear_app():
 
     @app.context_processor
     def contexto():
-        return {"db_path": DB_PATH, "usuario": session.get("usuario")}
+        # `usuario` es el dict del logueado (o None), no un string suelto: las
+        # pantallas necesitan el nombre para mostrarlo y el rol para decidir
+        # que ofrecer, y pasarlos por separado los deja desincronizarse.
+        return {"db_path": DB_PATH, "usuario": usuario_actual()}
 
     return app
 

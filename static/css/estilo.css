@@ -897,6 +897,214 @@ code {
 .extras .kpi { opacity: .78; }
 
 /* ---------------------------------------------------------------------------
+   Identidad del usuario logueado
+   --------------------------------------------------------------------------- */
+
+/* Un dato que la pantalla muestra pero no deja editar: el encargado del check
+   list, el movilizador. No es un input deshabilitado a proposito -- un input
+   viaja igual en el POST, y estos valores salen de la sesion. */
+.campo-fijo {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  align-items: flex-start;
+}
+.campo-fijo .rotulo { margin: 0; }
+.campo-fijo strong { font-size: 14px; }
+.campo-fijo .etiqueta { margin: 0; }
+
+.firma {
+  margin: 14px 0 12px;
+  font-size: 12.5px;
+  color: var(--tinta-suave);
+}
+.firma strong { color: var(--tinta); }
+
+/* Nombre y rol en el pie de la barra lateral. */
+.quien {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  font-size: 12px;
+  margin-bottom: 6px;
+  min-width: 0;
+}
+.quien strong { color: var(--tinta); overflow-wrap: anywhere; }
+.quien-rol {
+  font-size: 10.5px;
+  text-transform: uppercase;
+  letter-spacing: .6px;
+  color: var(--tinta-suave);
+}
+
+/* ---------------------------------------------------------------------------
+   Check List de Ingreso (formulario)
+   --------------------------------------------------------------------------- */
+
+.aviso-malo {
+  background: var(--mal-fondo);
+  border-color: var(--mal);
+  color: var(--mal);
+}
+.lista-errores { margin: 8px 0 0; padding-left: 18px; }
+.lista-errores li { margin-bottom: 3px; }
+.nota-errores { margin: 8px 0 0; font-size: 12px; opacity: .85; }
+
+/* Cada seccion del formulario es una tarjeta, y section.grupo NO es tarjeta
+   por si sola (ver la nota de los dos usos de .grupo). Aca si tiene que
+   serlo: son bloques de campos que se leen de a uno. */
+.form-checklist section.grupo {
+  background: var(--tarjeta);
+  border: 1px solid var(--linea);
+  border-radius: var(--r-tarjeta);
+  padding: var(--aire);
+  margin-bottom: 16px;
+}
+.form-checklist > .boton { margin-top: 4px; }
+
+/* La seccion de danos SI va sobre el panel tenido, igual que la grilla de
+   danos de la ficha: son tarjetas blancas que tienen que resaltar contra el
+   fondo. Va despues y con la misma especificidad que la regla de arriba, que
+   si no le pone fondo de tarjeta encima -- y ahi el titulo y la nota, que son
+   blancos por diseno, quedarian blanco sobre blanco. */
+.form-checklist section.grupo.bloque-danos {
+  background: var(--panel-danos);
+  border-color: var(--panel-danos-borde);
+}
+
+.form-checklist input[type=file] {
+  width: 100%;
+  padding: 9px 10px;
+  border: 1px solid var(--linea-fuerte);
+  border-radius: var(--r-control);
+  background: var(--tarjeta-alt);
+  color: var(--tinta);
+  font-size: 13px;
+  font-family: inherit;
+}
+.form-checklist input[type=file]:focus {
+  outline: none;
+  border-color: var(--acento);
+  box-shadow: 0 0 0 3px var(--acento-suave);
+}
+
+/* Verificacion cruzada: informado (fijo) contra observado (editable) y el
+   veredicto calculado al lado. */
+.verificacion { display: flex; flex-direction: column; gap: 12px; }
+.verificacion-fila {
+  display: flex;
+  align-items: flex-end;
+  gap: 14px;
+  flex-wrap: wrap;
+}
+.verificacion-fila > label { display: flex; flex-direction: column; gap: 5px; flex: 1 1 220px; }
+.verificacion-fila > label > span {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: .6px;
+  color: var(--tinta-suave);
+}
+.verificacion-fila input {
+  padding: 9px 10px;
+  border: 1px solid var(--linea-fuerte);
+  border-radius: var(--r-control);
+  background: var(--tarjeta-alt);
+  color: var(--tinta);
+  font-size: 13px;
+  font-family: inherit;
+}
+.verificacion-fila input:focus {
+  outline: none;
+  border-color: var(--acento);
+  box-shadow: 0 0 0 3px var(--acento-suave);
+}
+.verificacion-informado {
+  flex: 1 1 220px;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  padding-bottom: 9px;
+}
+.verificacion-informado .rotulo { margin: 0; }
+.verificacion-informado strong { font-size: 13px; overflow-wrap: anywhere; }
+/* El veredicto se alinea con la base de los campos y reserva su lugar, para
+   que aparecer no empuje la fila. */
+.verificacion-veredicto { min-width: 96px; padding-bottom: 10px; }
+
+/* Equipamiento: tres columnas de checkboxes. */
+.equipamiento {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+  gap: 18px;
+}
+.equipamiento-grupo { display: flex; flex-direction: column; gap: 6px; }
+.equipamiento-grupo .rotulo { margin: 0 0 2px; }
+.tilde { display: flex; align-items: center; gap: 8px; font-size: 13px; cursor: pointer; }
+.tilde input { width: 16px; height: 16px; accent-color: var(--acento); flex: 0 0 auto; }
+.tilde span { overflow-wrap: anywhere; }
+
+/* Filas de danos. Van sobre el panel tenido, igual que la grilla de danos de
+   la ficha, para que las filas resalten contra el fondo. */
+.bloque-danos .nota-danos {
+  margin: 0 0 12px;
+  font-size: 12.5px;
+  color: var(--panel-danos-tinta);
+  opacity: .9;
+}
+.filas-danos { display: flex; flex-direction: column; gap: 10px; margin-bottom: 12px; }
+.fila-dano {
+  display: grid;
+  grid-template-columns: 2fr 1.4fr 1fr 1.4fr auto;
+  gap: 10px;
+  align-items: end;
+  background: var(--tarjeta);
+  border: 1px solid var(--linea);
+  border-radius: var(--r-tarjeta);
+  padding: 12px 14px;
+}
+.fila-dano label { display: flex; flex-direction: column; gap: 5px; min-width: 0; }
+.fila-dano label > span {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: .6px;
+  color: var(--tinta-suave);
+}
+.fila-dano select, .fila-dano input {
+  padding: 9px 10px;
+  border: 1px solid var(--linea-fuerte);
+  border-radius: var(--r-control);
+  background: var(--tarjeta-alt);
+  color: var(--tinta);
+  font-size: 13px;
+  font-family: inherit;
+  max-width: 100%;
+}
+.fila-dano select:focus, .fila-dano input:focus {
+  outline: none;
+  border-color: var(--acento);
+  box-shadow: 0 0 0 3px var(--acento-suave);
+}
+.quitar-fila {
+  border: 1px solid var(--linea-fuerte);
+  background: var(--tarjeta-alt);
+  color: var(--tinta-suave);
+  border-radius: var(--r-control);
+  padding: 9px 11px;
+  font-size: 13px;
+  cursor: pointer;
+  line-height: 1;
+}
+.quitar-fila:hover { border-color: var(--mal); color: var(--mal); background: var(--mal-fondo); }
+
+/* En pantalla angosta la fila se apila: es donde de verdad se usa esto, con
+   el telefono en la mano al lado del auto. */
+@media (max-width: 860px) {
+  .fila-dano { grid-template-columns: 1fr; }
+  .quitar-fila { justify-self: end; }
+  .verificacion-veredicto { padding-bottom: 0; }
+}
+
+/* ---------------------------------------------------------------------------
    Visor de fotos — la única superficie con sombra, porque flota sobre todo
    --------------------------------------------------------------------------- */
 

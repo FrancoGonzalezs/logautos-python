@@ -1,0 +1,389 @@
+{% extends "base.html" %}
+{% from "_macros.html" import badge_gravedad %}
+{% block titulo %}Check List de Ingreso — {{ u['vin'] | mostrar }}{% endblock %}
+
+{% block contenido %}
+  <p class="volver">
+    <a href="{{ url_for('movimientos.unidad', id_unidad=u['id']) }}">‹ volver a la unidad</a>
+  </p>
+
+  <h1>Check List de Ingreso</h1>
+  <p class="subtitulo">
+    {{ u['vin'] | mostrar }}
+    · {{ u['marca'] | mostrar }} {{ u['modelo'] | mostrar }}
+    · patente {{ u['patente'] | mostrar }}
+    · <strong>{{ u['clientecompleto'] | mostrar }}</strong>
+  </p>
+
+  {% if errores %}
+    <div class="aviso aviso-malo">
+      <strong>No se guardó nada.</strong>
+      <ul class="lista-errores">
+        {% for e in errores %}<li>{{ e }}</li>{% endfor %}
+      </ul>
+      {# Los inputs de archivo no se pueden repoblar desde el servidor: el
+         navegador no lo permite. Decirlo es mejor que dejar al usuario
+         creyendo que las fotos que ya había elegido siguen puestas. #}
+      <p class="nota-errores">Las fotos hay que volver a elegirlas.</p>
+    </div>
+  {% endif %}
+
+  {% if es_desvio %}
+    <div class="aviso">
+      El paso sugerido para esta unidad
+      {% if recomendado %}es <strong>{{ recomendado.titulo }}</strong>{% else %}no es el check list{% endif %}.
+      Se puede hacer el check list igual — es la operación, no un error —
+      pero queda registrado como desvío y hay que decir por qué.
+    </div>
+  {% endif %}
+
+  <form method="post" enctype="multipart/form-data" class="form-paso form-checklist"
+        action="{{ url_for('check_list.confirmar', id_unidad=u['id']) }}">
+
+    {% if es_desvio %}
+      <section class="grupo">
+        <h2 class="bloque-titulo">Motivo del desvío</h2>
+        <div class="campos-paso">
+          <label>
+            <span>Por qué se hace el check list ahora</span>
+            <input type="text" name="motivo" value="{{ motivo }}" required
+                   placeholder="Motivo del desvío">
+          </label>
+          <label>
+            <span>Detalle (opcional)</span>
+            <input type="text" name="motivo_detalle" value="{{ motivo_detalle }}">
+          </label>
+        </div>
+      </section>
+    {% endif %}
+
+    <section class="grupo">
+      <h2 class="bloque-titulo">Ingreso</h2>
+      <div class="campos-paso">
+        <label>
+          <span>Guía de ingreso</span>
+          <input type="text" name="guia_ingreso" inputmode="numeric"
+                 value="{{ v.get('guia_ingreso', '') }}">
+        </label>
+        <label>
+          <span>Fecha de ingreso</span>
+          <input type="date" name="fecha_ingreso" required
+                 value="{{ v.get('fecha_ingreso') or hoy }}">
+        </label>
+        {# El encargado ya no se elige: es quien está logueado. No va como
+           input —ni siquiera de solo lectura—, porque un input viaja en el
+           POST y se puede editar antes de mandarlo; el servidor lo toma de la
+           sesión. Acá se muestra para que quede claro con qué nombre se firma. #}
+        <div class="campo-fijo">
+          <span class="rotulo">Encargado</span>
+          <strong>{{ encargado | mostrar('sin nombre en la sesión') }}</strong>
+          <span class="etiqueta">tu usuario</span>
+        </div>
+        <label>
+          <span>Motonave</span>
+          <input type="text" name="motonave" value="{{ v.get('motonave', '') }}"
+                 placeholder="Barco en que llegó">
+        </label>
+        <label>
+          <span>Estanque</span>
+          <input type="number" name="estanque" min="0" max="{{ estanque_max }}" step="1"
+                 inputmode="numeric" value="{{ v.get('estanque', '') }}">
+        </label>
+        <label>
+          <span>Kilometraje</span>
+          <input type="number" name="kilometraje" min="0" step="1"
+                 inputmode="numeric" value="{{ v.get('kilometraje', '') }}">
+        </label>
+      </div>
+    </section>
+
+    {#
+      Verificación cruzada. Lo informado sale de la unidad y no se puede
+      editar; lo observado lo escribe quien tiene el auto delante. La
+      coincidencia NO se le pregunta al operario: se deduce comparando los dos
+      valores, porque un tilde de "coincide" diría lo que el usuario cree y no
+      lo que el formulario tiene escrito.
+    #}
+    <section class="grupo">
+      <h2 class="bloque-titulo">Verificación de modelo y color</h2>
+      <div class="verificacion">
+        {% for campo, titulo, informado in [
+             ('modelo', 'Modelo', u['modelo']),
+             ('color', 'Color', u['color'])] %}
+          <div class="verificacion-fila" data-verificar="{{ campo }}">
+            <div class="verificacion-informado">
+              <span class="rotulo">{{ titulo }} informado</span>
+              <strong data-informado>{{ informado | mostrar }}</strong>
+            </div>
+            <label>
+              <span>{{ titulo }} observado</span>
+              {# Arranca VACÍO, con lo informado solo como placeholder. Si
+                 viniera precargado con el valor informado, el veredicto por
+                 defecto sería "coincide" y quedaría registrada como
+                 verificada una unidad que nadie miró — que es justo lo
+                 contrario de para qué existe este bloque. #}
+              <input type="text" name="{{ campo }}_observado" data-observado
+                     placeholder="{{ informado | mostrar('sin dato informado') }}"
+                     value="{{ v.get(campo + '_observado', '') }}">
+            </label>
+            <span class="verificacion-veredicto" data-veredicto></span>
+          </div>
+        {% endfor %}
+      </div>
+    </section>
+
+    {#
+      Fotos generales SOLO para CIDEF. Es el if($cliente=='CIDEF') del
+      original: al resto de los clientes el sistema viejo no se las pide, así
+      que pedirlas acá sería inventar un requisito que hoy nadie cumple.
+    #}
+    {% if con_fotos_generales %}
+      <section class="grupo">
+        <h2 class="bloque-titulo">Fotos de la unidad <span class="cuenta">CIDEF</span></h2>
+        <p class="vacio">
+          Las dos son obligatorias para las unidades CIDEF.
+        </p>
+        <div class="campos-paso">
+          <label>
+            <span>Placa del VIN</span>
+            <input type="file" name="placa_vin" accept="image/*" capture="environment" required>
+          </label>
+          <label>
+            <span>Foto de la unidad</span>
+            <input type="file" name="foto_unidad" accept="image/*" capture="environment" required>
+          </label>
+        </div>
+      </section>
+    {% endif %}
+
+    <section class="grupo">
+      <h2 class="bloque-titulo">Equipamiento</h2>
+      <div class="equipamiento">
+        {% for clave, titulo, items in equipamiento %}
+          <div class="equipamiento-grupo">
+            <span class="rotulo">{{ titulo }}</span>
+            {% set marcados = v.getlist(clave) if v.getlist is defined else [] %}
+            {% for item in items %}
+              <label class="tilde">
+                <input type="checkbox" name="{{ clave }}" value="{{ item }}"
+                       {% if item in marcados %}checked{% endif %}>
+                <span>{{ item }}</span>
+              </label>
+            {% endfor %}
+          </div>
+        {% endfor %}
+      </div>
+    </section>
+
+    <section class="grupo">
+      <h2 class="bloque-titulo">Faltantes y observaciones</h2>
+      <div class="campos-paso">
+        <label>
+          <span>Faltante</span>
+          <input type="text" name="faltante" value="{{ v.get('faltante', '') }}"
+                 placeholder="Ok, o qué falta">
+        </label>
+        <label>
+          <span>Observaciones</span>
+          <input type="text" name="observaciones" value="{{ v.get('observaciones', '') }}"
+                 placeholder="Ok, o qué observar">
+        </label>
+      </div>
+    </section>
+
+    {#
+      Daños. DESVIACIÓN CONSCIENTE del original: allá se manda un daño por
+      envío y se van acumulando, así que una unidad con seis daños son seis
+      idas y vueltas al servidor con el auto delante. Acá van todos juntos.
+      Lo que se guarda es idéntico — las tres listas paralelas separadas por
+      '-' y las fotos por ' | ' — así que la ficha lo lee sin cambios.
+    #}
+    <section class="grupo bloque-danos">
+      <h2 class="bloque-titulo">Daños</h2>
+      <p class="nota-danos">
+        Una fila por daño. Cada una necesita su foto: las fotos se guardan en
+        el mismo orden que los daños, así que una sin foto correría todas las
+        siguientes al daño equivocado.
+      </p>
+
+      <div class="filas-danos" id="filas-danos">
+        {% for f in filas_danos %}
+          <div class="fila-dano" data-fila>
+            <label>
+              <span>Pieza a trabajar</span>
+              <select name="dano_pieza_{{ f.i }}" data-campo="pieza">
+                <option value="">— elegir —</option>
+                {% for p in piezas %}
+                  <option value="{{ p['nombre'] }}"
+                    {% if f.pieza == p['nombre'] %}selected{% endif %}>{{ p['nombre'] }}</option>
+                {% endfor %}
+              </select>
+            </label>
+            <label>
+              <span>Tipo de daño</span>
+              <select name="dano_tipo_{{ f.i }}" data-campo="tipo">
+                <option value="">— elegir —</option>
+                {% for t in tipos %}
+                  <option value="{{ t['nombre'] }}"
+                    {% if f.tipo == t['nombre'] %}selected{% endif %}>{{ t['nombre'] }}</option>
+                {% endfor %}
+              </select>
+            </label>
+            <label>
+              <span>Nivel</span>
+              {# Por id y no alfabético: LEVE, MEDIO, GRAVE, PRESUPUESTO es la
+                 escala; por nombre saldría GRAVE arriba de LEVE. #}
+              <select name="dano_nivel_{{ f.i }}" data-campo="nivel">
+                <option value="">— elegir —</option>
+                {% for n in niveles %}
+                  <option value="{{ n['nombre'] }}"
+                    {% if f.nivel == n['nombre'] %}selected{% endif %}>{{ n['nombre'] }}</option>
+                {% endfor %}
+              </select>
+            </label>
+            <label>
+              <span>Foto del daño</span>
+              <input type="file" name="dano_foto_{{ f.i }}" data-campo="foto"
+                     accept="image/*" capture="environment">
+            </label>
+            <button type="button" class="quitar-fila" data-quitar
+                    aria-label="Quitar este daño">✕</button>
+          </div>
+        {% endfor %}
+      </div>
+
+      <button type="button" class="boton secundario" id="agregar-dano">+ Agregar daño</button>
+    </section>
+
+    <button type="submit" class="boton">Guardar Check List de Ingreso</button>
+  </form>
+
+  {% if anteriores %}
+    <details class="grupo plegable">
+      <summary><h2>Check lists ya registrados en REGLA <span class="cuenta">{{ anteriores|length }}</span></h2></summary>
+      {% for c in anteriores %}
+        <div class="bloque">
+          <span class="rotulo">
+            {{ c['creado_en'] | mostrar }} · {{ c['encargado'] | mostrar }}
+          </span>
+          <dl>
+            <div class="par"><dt>Guía</dt><dd>{{ c['guia_ingreso'] | mostrar }}</dd></div>
+            <div class="par"><dt>Estanque / km</dt>
+              <dd>{{ c['estanque'] | mostrar }} · {{ c['kilometraje'] | mostrar }}</dd></div>
+            <div class="par"><dt>Modelo observado</dt>
+              <dd>
+                {{ c['modelo_observado'] | mostrar }}
+                {% if c['modelo_coincide'] == 1 %}<span class="badge badge-ok">coincide</span>
+                {% elif c['modelo_coincide'] == 0 %}<span class="badge badge-malo">no coincide</span>{% endif %}
+              </dd></div>
+            <div class="par"><dt>Color observado</dt>
+              <dd>
+                {{ c['color_observado'] | mostrar }}
+                {% if c['color_coincide'] == 1 %}<span class="badge badge-ok">coincide</span>
+                {% elif c['color_coincide'] == 0 %}<span class="badge badge-malo">no coincide</span>{% endif %}
+              </dd></div>
+            <div class="par"><dt>Faltante</dt><dd>{{ c['faltante'] | mostrar }}</dd></div>
+            <div class="par"><dt>Observaciones</dt><dd>{{ c['observaciones'] | mostrar }}</dd></div>
+            <div class="par"><dt>Daños</dt><dd>{{ c['observacion'] | mostrar }}</dd></div>
+          </dl>
+        </div>
+      {% endfor %}
+    </details>
+  {% endif %}
+
+  <script>
+    /*
+     * Verificación cruzada en vivo. El veredicto se calcula comparando los
+     * dos valores normalizados —sin tildes, sin espacios de más, en
+     * mayúsculas—, que es exactamente lo que hace el servidor al guardar. Si
+     * acá se comparara crudo, la pantalla diría "no coincide" para 'BLANCO '
+     * y el registro guardado diría que sí, y el operario dejaría de mirar el
+     * aviso a los dos días.
+     */
+    (function () {
+      function normalizar(texto) {
+        return (texto || '')
+          .normalize('NFD').replace(/[̀-ͯ]/g, '')
+          .replace(/\s+/g, ' ').trim().toUpperCase();
+      }
+
+      Array.prototype.forEach.call(
+        document.querySelectorAll('[data-verificar]'),
+        function (fila) {
+          var informado = fila.querySelector('[data-informado]');
+          var campo = fila.querySelector('[data-observado]');
+          var veredicto = fila.querySelector('[data-veredicto]');
+
+          function pintar() {
+            var a = normalizar(informado.textContent);
+            var b = normalizar(campo.value);
+            if (!a || !b || a === '—') {
+              veredicto.className = 'verificacion-veredicto';
+              veredicto.textContent = '';
+              return;
+            }
+            var igual = a === b;
+            veredicto.className = 'verificacion-veredicto badge badge-' + (igual ? 'ok' : 'malo');
+            veredicto.textContent = igual ? 'coincide' : 'no coincide';
+          }
+
+          campo.addEventListener('input', pintar);
+          pintar();
+        });
+    })();
+
+    /*
+     * Filas de daños. Se clona la primera fila y se le renumeran los `name`.
+     *
+     * El número de fila NO se recalcula al borrar: el servidor lee los
+     * índices de los nombres que llegan y no asume 0..N, así que dejar
+     * huecos es correcto y evita el bug clásico de renumerar mal y pisar una
+     * fila con otra.
+     */
+    (function () {
+      var contenedor = document.getElementById('filas-danos');
+      var agregar = document.getElementById('agregar-dano');
+      if (!contenedor || !agregar) { return; }
+
+      var siguiente = contenedor.querySelectorAll('[data-fila]').length;
+
+      function renumerar(fila, indice) {
+        Array.prototype.forEach.call(
+          fila.querySelectorAll('[data-campo]'),
+          function (campo) {
+            campo.name = 'dano_' + campo.getAttribute('data-campo') + '_' + indice;
+          });
+      }
+
+      agregar.addEventListener('click', function () {
+        var modelo = contenedor.querySelector('[data-fila]');
+        var nueva = modelo.cloneNode(true);
+        Array.prototype.forEach.call(nueva.querySelectorAll('select'), function (s) {
+          s.selectedIndex = 0;
+        });
+        Array.prototype.forEach.call(nueva.querySelectorAll('input[type=file]'), function (i) {
+          i.value = '';
+        });
+        renumerar(nueva, siguiente);
+        siguiente += 1;
+        contenedor.appendChild(nueva);
+        nueva.querySelector('select').focus();
+      });
+
+      contenedor.addEventListener('click', function (e) {
+        if (!e.target.hasAttribute('data-quitar')) { return; }
+        var filas = contenedor.querySelectorAll('[data-fila]');
+        // La última no se borra: se vacía. Sin fila visible no habría dónde
+        // cargar un daño y el botón de agregar no tendría qué clonar.
+        if (filas.length === 1) {
+          Array.prototype.forEach.call(filas[0].querySelectorAll('select'), function (s) {
+            s.selectedIndex = 0;
+          });
+          filas[0].querySelector('input[type=file]').value = '';
+          return;
+        }
+        e.target.closest('[data-fila]').remove();
+      });
+    })();
+  </script>
+{% endblock %}

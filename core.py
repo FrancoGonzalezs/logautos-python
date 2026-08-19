@@ -26,6 +26,45 @@ DATA_DIR = os.environ.get("DATA_DIR", os.path.join(BASE_DIR, "data"))
 
 DB_BUSY_TIMEOUT_MS = 5000
 
+# Como se decide que estamos en produccion: por si hay SECRET_KEY. No hay
+# deteccion de entorno por otro lado -- ni variable propia ni marca de la
+# plataforma -- porque no hace falta ninguna: SECRET_KEY ya era obligatoria en
+# el contenedor, y atarse a algo como RAILWAY_ENVIRONMENT dejaria de valer el
+# dia que esto se mueva de hosting, justo del lado inseguro.
+NOMBRE_CLAVE_LOCAL = ".secret_key"
+
+
+def clave_de_sesion():
+    """La clave con que se firma la cookie de sesion.
+
+    En produccion sale de SECRET_KEY y no hay alternativa. Antes habia una
+    clave fija escrita en el repo, que era tolerable mientras el login aceptaba
+    cualquier usuario y la app era de solo lectura; con login real esa clave
+    permite fabricarse una sesion de cualquier usuario, con cualquier rol, sin
+    saber una sola contrasena.
+
+    En local se genera una al azar la primera vez y se guarda en DATA_DIR,
+    que esta fuera del repo. Se guarda en vez de regenerarla en cada arranque
+    porque con la recarga automatica cada archivo guardado cerraria la sesion,
+    y ahora volver a entrar cuesta escribir una contrasena de verdad."""
+    del_entorno = os.environ.get("SECRET_KEY")
+    if del_entorno:
+        return del_entorno
+
+    ruta = os.path.join(DATA_DIR, NOMBRE_CLAVE_LOCAL)
+    if os.path.exists(ruta):
+        with open(ruta, "r", encoding="utf-8") as f:
+            guardada = f.read().strip()
+        if guardada:
+            return guardada
+
+    import secrets
+    nueva = secrets.token_hex(32)
+    os.makedirs(DATA_DIR, exist_ok=True)
+    with open(ruta, "w", encoding="utf-8") as f:
+        f.write(nueva)
+    return nueva
+
 
 def conectar_db(path=None):
     """WAL + busy_timeout: WAL deja que las lecturas sigan andando mientras

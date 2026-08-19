@@ -26,21 +26,26 @@
     </header>
 
     {% if error %}
-      <p class="login-error">{{ error }}</p>
+      <p class="login-error" role="alert">{{ error }}</p>
     {% endif %}
 
     <form method="post" class="login-form">
       <input type="hidden" name="siguiente" value="{{ siguiente }}">
 
+      {# type=email y no text: en el celular abre el teclado con la arroba, y
+         el navegador puede ofrecer el email guardado. El sistema viejo
+         tambien entra por email, no por nombre de usuario. #}
       <div class="campo-icono">
         <span class="icono" aria-hidden="true">✉</span>
-        <input type="text" name="usuario" placeholder="Usuario"
-               value="{{ usuario_demo }}" autofocus required>
+        <input type="email" name="email" placeholder="Email"
+               value="{{ email }}" autocomplete="username"
+               autofocus required>
       </div>
 
       <div class="campo-icono">
         <span class="icono" aria-hidden="true">🔒</span>
-        <input type="password" name="clave" id="clave" placeholder="Contraseña">
+        <input type="password" name="clave" id="clave" placeholder="Contraseña"
+               autocomplete="current-password" required>
         <button type="button" class="ojo" id="ver-clave"
                 aria-label="Mostrar u ocultar la contraseña">👁</button>
       </div>
@@ -52,10 +57,9 @@
       <span class="tema-nombre">Tema claro</span>
     </button>
 
-    <p class="login-demo">
-      Acceso de demostración: entra con cualquier usuario. Todavía no hay
-      sistema de usuarios en esta versión.
-    </p>
+    {# Acá vivía el atajo de demostración, que entraba con cualquier usuario.
+       Se eliminó al pasar a login real: no queda ninguna puerta que no pida
+       contraseña, en ningún entorno. #}
 
     <footer class="login-pie">REGLA · © Logística Automotriz SPA</footer>
   </main>

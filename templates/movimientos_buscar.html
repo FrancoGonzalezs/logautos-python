@@ -17,17 +17,17 @@
      tener que buscar a mano lo que ya tiene asignado. El buscador y el QR
      quedan igual de disponibles, para las unidades fuera de esa lista. #}
   <section class="asignacion">
-    <form method="post" action="{{ url_for('movimientos.soy') }}" class="quien-soy">
-      <label>
-        <span>Movilizador</span>
-        <input type="text" name="movilizador" list="encargados"
-               value="{{ movilizador }}" placeholder="tu id o nombre">
-        <datalist id="encargados">
-          {% for e in encargados %}<option value="{{ e }}">{% endfor %}
-        </datalist>
-      </label>
-      <button type="submit" class="boton secundario">Guardar</button>
-    </form>
+    {# El movilizador ya no se escribe: es quien está logueado. Se muestra con
+       qué valores se lo busca en `encargado_patio`, porque esa columna guarda
+       a veces el id y a veces el nombre y así se ve por qué aparece (o no) la
+       lista del día. #}
+    <div class="quien-soy campo-fijo">
+      <span class="rotulo">Movilizador</span>
+      <strong>{{ movilizador | mostrar('sin nombre en la sesión') }}</strong>
+      {% if identidades %}
+        <span class="etiqueta">se busca como {{ identidades | join(' o ') }}</span>
+      {% endif %}
+    </div>
 
     <form method="get" class="quien-soy" data-auto>
       <label>
@@ -37,11 +37,9 @@
       <button type="submit" class="boton secundario">Ver</button>
     </form>
 
-    {% if not movilizador %}
+    {% if not identidades %}
       <p class="vacio">
-        Escribí tu id o nombre de movilizador para ver tus unidades del día.
-        Es provisorio: cuando el login valide contra <code>tbl_users</code>,
-        la identidad va a salir del usuario y no de acá.
+        Tu usuario no tiene nombre ni id con que buscar asignaciones.
       </p>
     {% elif asignadas %}
       <p class="resumen">
