@@ -91,6 +91,51 @@
     {% endif %}
   {% endmacro %}
 
+  {# Va ANTES del check list de ingreso porque ese es el orden de la operación:
+     la unidad se revisa al desconsolidar el contenedor y recién después se le
+     hace el check list. Hasta ahora la revisión no se veía en ningún lado de
+     la ficha, que es donde se mira la historia completa de la unidad. #}
+  <details class="grupo plegable">
+    <summary><h2>Revisión de contenedor <span class="cuenta">{{ contenedores|length }}</span></h2></summary>
+    {% if not contenedores %}
+      <p class="vacio">Esta unidad no figura en ningún contenedor.</p>
+    {% else %}
+      {% for c in contenedores %}
+        <article class="bloque">
+          <h3>
+            {% if c.propio %}
+              <a href="{{ url_for('revision_contenedor.detalle', id_contenedor=c.fila['id']) }}">
+                {{ c.fila['nombre_contenedor'] | mostrar }}</a>
+            {% else %}
+              {{ c.fila['nombre_contenedor'] | mostrar }}
+            {% endif %}
+            <span class="cuenta">{{ c.fila['estado'] | mostrar if c.fila['estado'] else 'ABIERTO' }}</span>
+          </h3>
+          <dl class="campos">
+            <div><dt>N° Sello / Contenedor</dt><dd>{{ c.fila['nro_sello'] | mostrar }}</dd></div>
+            <div><dt>Guía de ingreso</dt><dd>{{ c.fila['guia_ingreso'] | mostrar }}</dd></div>
+            <div><dt>Fecha</dt><dd>{{ c.fila['fecha'] | mostrar }}</dd></div>
+            <div><dt>Encargado</dt><dd>{{ c.fila['encargado'] | mostrar }}</dd></div>
+            <div><dt>Transporte</dt><dd>{{ c.fila['tipo_transporte'] | mostrar }}</dd></div>
+            <div><dt>Suciedad</dt><dd>{{ c.fila['suciedad'] | mostrar }}</dd></div>
+            <div><dt>Unidades</dt><dd>{{ c.fila['contador'] | mostrar }}{% if c.fila['cantidad_unidades'] %} de {{ c.fila['cantidad_unidades'] }}{% endif %}</dd></div>
+          </dl>
+          {# La observación y el nivel de ESTA unidad, no los del contenedor
+             entero: las listas del contenedor son paralelas y posicionales, y
+             lo que interesa en la ficha es la fila de este VIN. #}
+          {% if c.observacion %}
+            <p><strong>Observación:</strong> {{ c.observacion }}
+              {% if c.nivel %}<em>({{ c.nivel }})</em>{% endif %}</p>
+          {% endif %}
+          {% if c.fotos %}{{ fotos(c.fotos, "Fotos de la revisión") }}{% endif %}
+          {% if not c.propio %}
+            <p class="vacio">Viene del sistema anterior.</p>
+          {% endif %}
+        </article>
+      {% endfor %}
+    {% endif %}
+  </details>
+
   <details class="grupo plegable">
     <summary><h2>Check list de ingreso <span class="cuenta">{{ check_lists|length }}</span></h2></summary>
     {% if not check_lists %}

@@ -1,0 +1,55 @@
+{# JS de las filas de daño, sin etiqueta <script>: se incluye DENTRO del
+   bloque de scripts de cada pantalla que use _filas_dano.html. #}
+    /*
+     * Filas de daños. Se clona la primera fila y se le renumeran los `name`.
+     *
+     * El número de fila NO se recalcula al borrar: el servidor lee los
+     * índices de los nombres que llegan y no asume 0..N, así que dejar
+     * huecos es correcto y evita el bug clásico de renumerar mal y pisar una
+     * fila con otra.
+     */
+    (function () {
+      var contenedor = document.getElementById('filas-danos');
+      var agregar = document.getElementById('agregar-dano');
+      if (!contenedor || !agregar) { return; }
+
+      var siguiente = contenedor.querySelectorAll('[data-fila]').length;
+
+      function renumerar(fila, indice) {
+        Array.prototype.forEach.call(
+          fila.querySelectorAll('[data-campo]'),
+          function (campo) {
+            campo.name = 'dano_' + campo.getAttribute('data-campo') + '_' + indice;
+          });
+      }
+
+      agregar.addEventListener('click', function () {
+        var modelo = contenedor.querySelector('[data-fila]');
+        var nueva = modelo.cloneNode(true);
+        Array.prototype.forEach.call(nueva.querySelectorAll('select'), function (s) {
+          s.selectedIndex = 0;
+        });
+        Array.prototype.forEach.call(nueva.querySelectorAll('input[type=file]'), function (i) {
+          i.value = '';
+        });
+        renumerar(nueva, siguiente);
+        siguiente += 1;
+        contenedor.appendChild(nueva);
+        nueva.querySelector('select').focus();
+      });
+
+      contenedor.addEventListener('click', function (e) {
+        if (!e.target.hasAttribute('data-quitar')) { return; }
+        var filas = contenedor.querySelectorAll('[data-fila]');
+        // La última no se borra: se vacía. Sin fila visible no habría dónde
+        // cargar un daño y el botón de agregar no tendría qué clonar.
+        if (filas.length === 1) {
+          Array.prototype.forEach.call(filas[0].querySelectorAll('select'), function (s) {
+            s.selectedIndex = 0;
+          });
+          filas[0].querySelector('input[type=file]').value = '';
+          return;
+        }
+        e.target.closest('[data-fila]').remove();
+      });
+    })();

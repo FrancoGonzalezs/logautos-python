@@ -32,6 +32,20 @@
   {# La recomendación va primero y completa: el operario no debería tener que
      navegar a ningún lado para saber qué hacer con la unidad que tiene
      delante. #}
+  {# Los dos rechazos del POST se explican acá y no en una pantalla aparte: el
+     operario tiene que poder corregir sin perder de vista la unidad. #}
+  {% if request.args.get('error') == 'falta_motivo' %}
+    <div class="aviso">
+      Ese movimiento es un retroceso y necesita motivo. Elegí uno en
+      <strong>Registrar otro paso</strong> y volvé a confirmar.
+    </div>
+  {% elif request.args.get('error') == 'solo_lectura' %}
+    <div class="aviso">
+      Ese estado no se confirma desde acá: lo escribe otro módulo cuando
+      ejecuta su operación.
+    </div>
+  {% endif %}
+
   {% if recomendado %}
     <section class="recomendacion">
       <span class="rotulo">Siguiente paso sugerido</span>
@@ -44,13 +58,39 @@
         así que se entra a la pantalla que los pide. El movimiento lo escribe
         ese formulario al confirmar, no este botón.
       #}
+      {#
+        Un estado que genera otro módulo (cap. 3.2 del documento de proceso) se
+        muestra igual pero sin botón: la unidad llega a él cuando ese módulo
+        ejecuta lo suyo. Decir cuál es el módulo evita que la pantalla parezca
+        rota — no es que no haya paso, es que el paso no se da desde acá.
+      #}
+      {#
+        El orden importa: primero se pregunta si hay formulario, porque un
+        estado de solo lectura TAMBIÉN puede tenerlo. "En espera de Check List
+        de Ingreso" lo escribe el check list, así que la tarjeta lleva al
+        check list en vez de ofrecer una confirmación que el motor rechaza.
+      #}
       {% if recomendado.formulario %}
         <p class="paso-porque">
           Este paso se completa en su propia pantalla.
         </p>
         <p><a class="boton" href="{{ url_for(recomendado.formulario, id_unidad=u['id']) }}">
-          Hacer {{ recomendado.titulo }}
+          Hacer {{ recomendado.formulario_texto or recomendado.titulo }}
         </a></p>
+      {% elif recomendado.solo_lectura %}
+        {# Sin formulario propio: se dice qué módulo lo hace y que todavía no
+           está migrado. Es la verdad, y es más útil que un botón que no
+           llevaría a ningún lado. #}
+        <p class="paso-porque">
+          Este estado no se registra desde Movimientos.
+          {% if recomendado.modulo %}Lo genera <strong>{{ recomendado.modulo }}</strong>.{% endif %}
+        </p>
+        {% if recomendado.pendiente_integrar %}
+          <p class="paso-porque">
+            Ese módulo todavía no está integrado acá: por ahora se hace en el
+            sistema anterior.
+          </p>
+        {% endif %}
       {% else %}
       <form method="post" action="{{ url_for('movimientos.registrar_movimiento', id_unidad=u['id']) }}"
             class="form-paso">
@@ -83,11 +123,32 @@
         <button type="submit" class="boton">Confirmar {{ recomendado.titulo }}</button>
       </form>
       {% endif %}
+
+      {#
+        Las otras salidas válidas del estado actual, con la condición que las
+        habilita. No son desvíos: están en la matriz del proceso. Mostrarlas
+        acá evita que el operario tenga que ir al selector de desvío —y cargar
+        un motivo— para hacer algo que el proceso permite.
+      #}
+      {% if recomendado.alternativas %}
+        <details class="plegable">
+          <summary>Otras salidas válidas desde {{ estado_fisico }}</summary>
+          <ul class="alternativas">
+            {% for a in recomendado.alternativas %}
+              <li>
+                <strong>{{ a.titulo }}</strong> — {{ a.condicion }}
+                {% if a.pide_motivo %}<em>(pide motivo)</em>{% endif %}
+              </li>
+            {% endfor %}
+          </ul>
+        </details>
+      {% endif %}
     </section>
   {% else %}
     <div class="aviso">
-      Esta unidad ya pasó el tramo que cubre el módulo por ahora
-      (Navegando → PDI). Los pasos siguientes son de la fase 2.
+      No hay paso siguiente definido para <strong>{{ estado_fisico }}</strong>
+      en el proceso {{ perfil }}. Se puede registrar un movimiento igual desde
+      <strong>Registrar otro paso</strong>, indicando el motivo.
     </div>
   {% endif %}
 
@@ -115,6 +176,12 @@
           <select name="motivo" id="desvio-motivo" required>
             <optgroup label="Volver a lavado">
               {% for m in motivos.lavado %}<option value="{{ m }}">{{ m }}</option>{% endfor %}
+            </optgroup>
+            {# Rechazo de calidad: el retorno de CC a taller es un retroceso
+               previsto por el proceso, y es el que mide la calidad de la
+               preparación. Por eso tiene motivos propios y no genéricos. #}
+            <optgroup label="Rechazo de calidad (CC → taller)">
+              {% for m in motivos.cc_taller %}<option value="{{ m }}">{{ m }}</option>{% endfor %}
             </optgroup>
             <optgroup label="Generales">
               {% for m in motivos.generico %}<option value="{{ m }}">{{ m }}</option>{% endfor %}

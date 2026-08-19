@@ -1,0 +1,157 @@
+{% extends "base.html" %}
+{% from "_macros.html" import badge_estado %}
+{% block titulo %}Contenedor {{ c['nombre_contenedor'] | mostrar }}{% endblock %}
+
+{% block contenido %}
+  <h1>{{ c['nombre_contenedor'] | mostrar }}</h1>
+  <p class="subtitulo">
+    guía {{ c['guia_ingreso'] | mostrar }}
+    · sello {{ c['nro_sello'] | mostrar }}
+    · {{ c['tipo_transporte'] | mostrar }}
+    · suciedad {{ c['suciedad'] | mostrar }}
+    · <strong>{{ c['estado'] | mostrar }}</strong>
+  </p>
+
+  {% if c['origen_replica_id'] %}
+    <div class="aviso">
+      Este contenedor venía del sistema anterior y se adoptó acá para poder
+      seguir cargándole unidades sin escribirle a la réplica.
+    </div>
+  {% endif %}
+
+  {% if correo == 'auto' %}
+    <div class="aviso">
+      Se completaron las {{ c['cantidad_unidades'] }} unidades declaradas, así
+      que el contenedor <strong>se cerró solo</strong> y se mandó el informe.
+    </div>
+  {% elif correo == 'enviado' %}
+    <div class="aviso">Contenedor cerrado y correo enviado.</div>
+  {% elif correo == 'no_configurado' %}
+    <div class="aviso">
+      Contenedor cerrado. El correo <strong>no salió</strong>: falta configurar
+      el envío en esta instalación.
+    </div>
+  {% elif correo == 'error' %}
+    <div class="aviso aviso-malo">
+      Contenedor cerrado, pero el correo falló. Queda anotado para reintentar.
+    </div>
+  {% endif %}
+
+  <section class="grupo">
+    <h2>
+      Unidades cargadas
+      <span class="cuenta">{{ unidades | length }}{% if c['cantidad_unidades'] %} de {{ c['cantidad_unidades'] }}{% endif %}</span>
+    </h2>
+
+    {% if not unidades %}
+      <p class="vacio">Todavía no se cargó ninguna unidad.</p>
+    {% else %}
+      <div class="tabla-scroll">
+        <table>
+          <thead>
+            <tr><th>VIN</th><th>Marca / Modelo</th><th>Observación</th><th>Nivel</th><th>Fotos</th></tr>
+          </thead>
+          <tbody>
+            {% for item in unidades %}
+              <tr>
+                <td>
+                  {% if item.unidad %}
+                    <a href="{{ url_for('movimientos.unidad', id_unidad=item.unidad['id']) }}">
+                      {{ item.revision['vin'] | mostrar }}</a>
+                  {% else %}{{ item.revision['vin'] | mostrar }}{% endif %}
+                </td>
+                <td>
+                  {% if item.unidad %}
+                    {{ item.unidad['marca'] | mostrar }} {{ item.unidad['modelo'] | mostrar }}
+                  {% endif %}
+                </td>
+                <td>{{ item.revision['observacion'] | mostrar }}</td>
+                <td>{{ item.revision['nivel_dano'] | mostrar }}</td>
+                <td>{{ item.fotos | length }}</td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    {% endif %}
+  </section>
+
+  {% if not cerrado %}
+    {# Agregar la siguiente unidad: el mismo escáner y buscador de Movimientos.
+       El movilizador escanea el QR de la unidad que tiene delante y sigue —
+       nada de tipear 17 caracteres por VIN, que es lo que hace el sistema
+       anterior. #}
+    <section class="grupo">
+      <h2>Agregar la siguiente unidad</h2>
+      {% with destino_buscador = url_for('revision_contenedor.detalle', id_contenedor=c['id']) %}
+        {% include "_buscador_unidad.html" %}
+      {% endwith %}
+
+      {% if texto %}
+        {% if not resultados %}
+          <div class="aviso">Ninguna unidad coincide con <strong>{{ texto }}</strong>.</div>
+        {% else %}
+          <div class="tabla-scroll">
+            <table>
+              <thead><tr><th>VIN</th><th>Patente</th><th>Marca</th><th>Modelo</th><th>Cliente</th><th></th></tr></thead>
+              <tbody>
+                {% for r in resultados %}
+                  <tr>
+                    <td>{{ r['vin'] | mostrar }}</td>
+                    <td>{{ r['patente'] | mostrar }}</td>
+                    <td>{{ r['marca'] | mostrar }}</td>
+                    <td>{{ r['modelo'] | mostrar }}</td>
+                    <td>{{ r['clientecompleto'] | mostrar }}</td>
+                    <td>
+                      <a class="boton" href="{{ url_for('revision_contenedor.evidencia', id_contenedor=c['id'], id_unidad=r['id']) }}">
+                        Agregar</a>
+                    </td>
+                  </tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          </div>
+        {% endif %}
+      {% endif %}
+    </section>
+
+    {# OJO CON EL NOMBRE: en el sistema anterior este botón se llama "Finalizar
+       Check List", igual que el del check list de una unidad, y son cosas
+       distintas — este cierra el CONTENEDOR entero y manda el informe de todas
+       sus unidades. Acá se llama "Cerrar Contenedor" para que no se confundan. #}
+    <section class="grupo">
+      <h2>Cerrar Contenedor</h2>
+      <p class="vacio">
+        {% if c['cantidad_unidades'] %}
+          Este contenedor declaró <strong>{{ c['cantidad_unidades'] }}</strong>
+          unidades y van <strong>{{ unidades | length }}</strong>. Al completarlas
+          se cierra solo y sale el informe.
+          Este botón es para cerrarlo <strong>incompleto</strong>, si trajo menos
+          de las declaradas o queda alguna para otro día.
+        {% else %}
+          Al cerrar se manda el informe con las {{ unidades | length }} unidades
+          cargadas y el contenedor deja de admitir más.
+        {% endif %}
+        En el sistema anterior el cierre era solo manual y quedaron
+        233 contenedores de 2.448 sin cerrar — su informe nunca salió.
+      </p>
+      <form method="post" action="{{ url_for('revision_contenedor.cerrar', id_contenedor=c['id']) }}">
+        <button type="submit" class="boton"
+                {% if not unidades %}disabled{% endif %}>
+          Cerrar Contenedor y enviar informe
+        </button>
+      </form>
+    </section>
+  {% else %}
+    <div class="aviso">
+      Contenedor cerrado el {{ c['fecha_completa_fin'] | mostrar }}. No admite
+      más unidades.
+    </div>
+  {% endif %}
+
+  <script>
+    {% with destino_buscador = url_for('revision_contenedor.detalle', id_contenedor=c['id']) %}
+      {% include "_buscador_unidad_js.html" %}
+    {% endwith %}
+  </script>
+{% endblock %}

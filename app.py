@@ -19,6 +19,7 @@ from modulos.facturacion import bp as bp_facturacion
 from modulos.kpis import bp as bp_kpis
 from modulos.movimientos import bp as bp_movimientos
 from modulos.ot import bp as bp_ot
+from modulos.revision_contenedor import bp as bp_revision_contenedor
 from modulos.unidades import bp as bp_unidades
 
 
@@ -55,6 +56,7 @@ def crear_app():
     app.register_blueprint(bp_unidades)
     app.register_blueprint(bp_movimientos)
     app.register_blueprint(bp_check_list)
+    app.register_blueprint(bp_revision_contenedor)
     app.register_blueprint(bp_ot)
     app.register_blueprint(bp_catalogos)
     app.register_blueprint(bp_facturacion)

@@ -1,0 +1,86 @@
+{% extends "base.html" %}
+{% block titulo %}Nuevo contenedor — {{ u['vin'] | mostrar }}{% endblock %}
+
+{% block contenido %}
+  <p class="volver">
+    <a href="{{ url_for('movimientos.unidad', id_unidad=u['id']) }}">‹ volver a la unidad</a>
+  </p>
+
+  <h1>Revisión de Contenedor/Grúa</h1>
+
+  {# Se llega acá solo cuando el VIN NO pertenece a ningún contenedor: si
+     perteneciera, la entrada habría redirigido derecho a cargarle la
+     evidencia. Decirlo evita que parezca que se está creando un duplicado. #}
+  <div class="aviso">
+    <strong>{{ u['vin'] | mostrar }}</strong> todavía no está en ningún
+    contenedor. Primero se crea el contenedor y después se le van agregando las
+    unidades — esta y las que vengan atrás.
+  </div>
+
+  {% if errores %}
+    <div class="aviso aviso-malo">
+      <strong>No se creó nada.</strong>
+      <ul class="lista-errores">{% for e in errores %}<li>{{ e }}</li>{% endfor %}</ul>
+    </div>
+  {% endif %}
+
+  <form method="post" class="form-paso"
+        action="{{ url_for('revision_contenedor.crear', id_unidad=u['id']) }}">
+    <div class="campos-paso">
+      {# Datalist y no select: el formulario original tiene dos motonaves
+         escritas a mano en el HTML, contra 58 que hay en el dato — cada barco
+         nuevo obligaba a tocar la vista. Acá se sugieren las conocidas y una
+         nueva se escribe sin pedirle nada a nadie. #}
+      <label>
+        <span>Nombre motonave</span>
+        <input type="text" name="nombre_contenedor" list="motonaves"
+               style="text-transform:uppercase" autocomplete="off"
+               value="{{ v.get('nombre_contenedor') or '' }}" autofocus>
+        <datalist id="motonaves">
+          {% for m in motonaves %}<option value="{{ m }}"></option>{% endfor %}
+        </datalist>
+      </label>
+      <label>
+        <span>Guía de ingreso</span>
+        <input type="text" name="guia_ingreso" value="{{ v.get('guia_ingreso') or '' }}">
+      </label>
+      {# "N° Sello / Contenedor" en una sola etiqueta a propósito. El formulario
+         original tiene DOS campos separados, "N° Sello" y "N° de contenedor",
+         pero el controlador guarda solo el primero: en la réplica `nro_sello`
+         tiene dato en 2.383 de 2.448 filas y `nro_contenedor` en 99. O sea que
+         el número que se escribe en el segundo se pierde, y el que queda como
+         identificador del contenedor es este. #}
+      <label>
+        <span>N° Sello / Contenedor</span>
+        <input type="text" name="nro_sello" style="text-transform:uppercase"
+               value="{{ v.get('nro_sello') or '' }}">
+        <small>Es el número con que se identifica el contenedor.</small>
+      </label>
+      <label>
+        <span>Tipo de transporte</span>
+        <select name="tipo_transporte">
+          {% for t in tipos_transporte %}
+            <option value="{{ t }}" {% if v.get('tipo_transporte') == t %}selected{% endif %}>{{ t }}</option>
+          {% endfor %}
+        </select>
+      </label>
+      <label>
+        <span>Suciedad</span>
+        <select name="suciedad">
+          {% for s in niveles_suciedad %}
+            <option value="{{ s }}" {% if v.get('suciedad') == s %}selected{% endif %}>{{ s }}</option>
+          {% endfor %}
+        </select>
+      </label>
+      <label>
+        <span>Cantidad de unidades</span>
+        <input type="number" name="cantidad_unidades" min="1"
+               value="{{ v.get('cantidad_unidades') or '' }}">
+        <small>Cuántas trae el contenedor. Sirve para saber cuándo está completo.</small>
+      </label>
+    </div>
+
+    <p class="firma">Lo registra <strong>{{ encargado }}</strong></p>
+    <button type="submit" class="boton">Crear contenedor y cargar {{ u['vin'] | mostrar }}</button>
+  </form>
+{% endblock %}

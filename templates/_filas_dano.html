@@ -1,0 +1,51 @@
+{# Filas de daño: pieza, tipo, nivel y foto. Vive en un parcial porque lo
+   usan el Check List de Ingreso y la evidencia por VIN de la Revisión de
+   Contenedor, y son exactamente el mismo dato con los mismos catálogos —
+   dos copias se habrían desincronizado a la primera corrección. #}
+      <div class="filas-danos" id="filas-danos">
+        {% for f in filas_danos %}
+          <div class="fila-dano" data-fila>
+            <label>
+              <span>Pieza a trabajar</span>
+              <select name="dano_pieza_{{ f.i }}" data-campo="pieza">
+                <option value="">— elegir —</option>
+                {% for p in piezas %}
+                  <option value="{{ p['nombre'] }}"
+                    {% if f.pieza == p['nombre'] %}selected{% endif %}>{{ p['nombre'] }}</option>
+                {% endfor %}
+              </select>
+            </label>
+            <label>
+              <span>Tipo de daño</span>
+              <select name="dano_tipo_{{ f.i }}" data-campo="tipo">
+                <option value="">— elegir —</option>
+                {% for t in tipos %}
+                  <option value="{{ t['nombre'] }}"
+                    {% if f.tipo == t['nombre'] %}selected{% endif %}>{{ t['nombre'] }}</option>
+                {% endfor %}
+              </select>
+            </label>
+            <label>
+              <span>Nivel</span>
+              {# Por id y no alfabético: LEVE, MEDIO, GRAVE, PRESUPUESTO es la
+                 escala; por nombre saldría GRAVE arriba de LEVE. #}
+              <select name="dano_nivel_{{ f.i }}" data-campo="nivel">
+                <option value="">— elegir —</option>
+                {% for n in niveles %}
+                  <option value="{{ n['nombre'] }}"
+                    {% if f.nivel == n['nombre'] %}selected{% endif %}>{{ n['nombre'] }}</option>
+                {% endfor %}
+              </select>
+            </label>
+            <label>
+              <span>Foto del daño</span>
+              <input type="file" name="dano_foto_{{ f.i }}" data-campo="foto"
+                     accept="image/*" capture="environment">
+            </label>
+            <button type="button" class="quitar-fila" data-quitar
+                    aria-label="Quitar este daño">✕</button>
+          </div>
+        {% endfor %}
+      </div>
+
+      <button type="button" class="boton secundario" id="agregar-dano">+ Agregar daño</button>

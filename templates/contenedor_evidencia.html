@@ -1,0 +1,101 @@
+{% extends "base.html" %}
+{% block titulo %}{{ u['vin'] | mostrar }} en {{ c['nombre_contenedor'] | mostrar }}{% endblock %}
+
+{% block contenido %}
+  <p class="volver">
+    <a href="{{ url_for('revision_contenedor.detalle', id_contenedor=c['id']) }}">‹ volver al contenedor</a>
+  </p>
+
+  <h1>Evidencia de la unidad</h1>
+  <p class="subtitulo">
+    {{ u['vin'] | mostrar }}
+    · {{ u['marca'] | mostrar }} {{ u['modelo'] | mostrar }}
+    · {{ u['color'] | mostrar }}
+    · en <strong>{{ c['nombre_contenedor'] | mostrar }}</strong>
+  </p>
+
+  {% if errores %}
+    <div class="aviso aviso-malo">
+      <strong>No se guardó nada.</strong>
+      <ul class="lista-errores">{% for e in errores %}<li>{{ e }}</li>{% endfor %}</ul>
+      <p class="nota-errores">Las fotos hay que volver a elegirlas.</p>
+    </div>
+  {% endif %}
+
+  <form method="post" enctype="multipart/form-data" class="form-paso"
+        action="{{ url_for('revision_contenedor.guardar_evidencia', id_contenedor=c['id'], id_unidad=u['id']) }}">
+
+    <section class="grupo">
+      <h2>Modelo y color</h2>
+
+      {% if validacion %}
+        {# La clave única (vin, módulo, referencia) garantiza una validación por
+           VIN por contenedor. Si ya está hecha no se vuelve a preguntar: es lo
+           mismo que hace el sistema anterior. #}
+        <p class="vacio">
+          Esta unidad ya fue validada en este contenedor
+          {% if validacion['usuario_nombre'] %}por {{ validacion['usuario_nombre'] }}{% endif %}.
+          No hace falta volver a cargarlo.
+        </p>
+      {% else %}
+        <p class="nota-danos">
+          Según el packing list es <strong>{{ u['modelo'] | mostrar }}</strong>,
+          color <strong>{{ u['color'] | mostrar }}</strong>.
+          <br>
+          <em>Dejá los campos vacíos si coinciden.</em> Solo escribí lo que veas
+          si es distinto — así no hay que tipear nada en el caso normal.
+        </p>
+        <div class="campos-paso">
+          <label>
+            <span>Modelo observado</span>
+            <input type="text" name="modelo_observado" style="text-transform:uppercase"
+                   placeholder="{{ u['modelo'] | mostrar }}"
+                   value="{{ v.get('modelo_observado') or '' }}">
+          </label>
+          <label>
+            <span>Color observado</span>
+            <input type="text" name="color_observado" style="text-transform:uppercase"
+                   placeholder="{{ u['color'] | mostrar }}"
+                   value="{{ v.get('color_observado') or '' }}">
+          </label>
+        </div>
+      {% endif %}
+
+      {% if diferencias %}
+        {# Único punto donde se le pide una confirmación explícita: se detectó
+           una diferencia real y de acá sale un correo al cliente. #}
+        <div class="aviso aviso-malo">
+          <strong>Hay diferencia con el packing list.</strong>
+          <ul class="lista-errores">
+            {% for campo, informado, observado in diferencias %}
+              <li>{{ campo | capitalize }}: figura <strong>{{ informado }}</strong>
+                  y cargaste <strong>{{ observado }}</strong>.</li>
+            {% endfor %}
+          </ul>
+          <label>
+            <input type="checkbox" name="confirmar_diferencia" value="1">
+            Confirmo que lo que tengo delante es lo que cargué. Se va a avisar
+            al cliente por correo.
+          </label>
+        </div>
+      {% endif %}
+    </section>
+
+    <section class="grupo">
+      <h2>Daños</h2>
+      <p class="nota-danos">
+        Los mismos catálogos del Check List de Ingreso. De acá se arma sola la
+        observación y el nivel que van al informe del contenedor — no hay que
+        escribirlos aparte. Si la unidad no tiene daños, dejá la fila vacía.
+      </p>
+      {% include "_filas_dano.html" %}
+    </section>
+
+    <p class="firma">La registra <strong>{{ encargado }}</strong></p>
+    <button type="submit" class="boton">Agregar {{ u['vin'] | mostrar }} al contenedor</button>
+  </form>
+
+  <script>
+    {% include "_filas_dano_js.html" %}
+  </script>
+{% endblock %}

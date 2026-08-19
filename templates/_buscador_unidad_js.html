@@ -1,0 +1,79 @@
+{# JS del escáner, sin <script>: se incluye dentro del bloque de scripts. #}
+    /*
+     * Escáner de QR con la cámara, sin instalar nada y sin librería externa:
+     * se usa BarcodeDetector, que viene en el navegador.
+     *
+     * OJO: hoy lo trae Chrome en Android y no Safari en iOS. Cuando no está,
+     * NO se degrada a nada raro — se avisa y se usa el buscador por texto de
+     * al lado, que por eso está siempre visible y no escondido.
+     */
+    (function () {
+      var zona = document.getElementById('escaner-zona');
+      if (!zona) { return; }
+      var video = document.getElementById('escaner-video');
+      var estado = document.getElementById('escaner-estado');
+      var iniciar = document.getElementById('escaner-iniciar');
+      var detener = document.getElementById('escaner-detener');
+      var stream = null, detector = null, corriendo = false;
+
+      var soportado = ('BarcodeDetector' in window) &&
+                      navigator.mediaDevices && navigator.mediaDevices.getUserMedia;
+
+      if (!soportado) {
+        estado.textContent = 'Este navegador no puede leer QR. Usá la búsqueda ' +
+          'por texto de al lado (en el celular, Chrome en Android sí puede).';
+        return;
+      }
+
+      estado.textContent = 'Listo para escanear.';
+      iniciar.hidden = false;
+
+      iniciar.addEventListener('click', function () {
+        detector = new BarcodeDetector({ formats: ['qr_code'] });
+        navigator.mediaDevices.getUserMedia({
+          video: { facingMode: 'environment' }
+        }).then(function (s) {
+          stream = s;
+          video.srcObject = s;
+          video.hidden = false;
+          iniciar.hidden = true;
+          detener.hidden = false;
+          estado.textContent = 'Apuntá al código QR de la unidad.';
+          corriendo = true;
+          return video.play();
+        }).then(leer).catch(function (e) {
+          estado.textContent = 'No se pudo abrir la cámara (' + e.name +
+            '). Usá la búsqueda por texto.';
+        });
+      });
+
+      detener.addEventListener('click', apagar);
+
+      function apagar() {
+        corriendo = false;
+        if (stream) { stream.getTracks().forEach(function (t) { t.stop(); }); }
+        video.hidden = true;
+        detener.hidden = true;
+        iniciar.hidden = false;
+        estado.textContent = 'Listo para escanear.';
+      }
+
+      function leer() {
+        if (!corriendo) { return; }
+        detector.detect(video).then(function (codigos) {
+          if (codigos.length) {
+            var texto = (codigos[0].rawValue || '').trim();
+            if (texto) {
+              estado.textContent = 'Leído: ' + texto;
+              apagar();
+              // Se manda al mismo buscador: si el QR trae un VIN válido, la
+              // vista entra directo a la unidad sin pasar por la lista.
+              window.location = '{{ destino_buscador }}?q=' +
+                encodeURIComponent(texto);
+              return;
+            }
+          }
+          setTimeout(leer, 250);
+        }).catch(function () { setTimeout(leer, 400); });
+      }
+    })();

@@ -797,4 +797,13 @@ def ficha(id_unidad):
         check_lists=check_lists,
         mecanica=mecanica, muestra_mecanica=muestra_mecanica,
         inspecciones=inspecciones,
+        # Import diferido a proposito: revision_contenedor importa TABLA de
+        # este modulo, asi que hacerlo arriba seria un import circular. Es el
+        # unico lugar donde la ficha necesita algo de ese modulo.
+        contenedores=_revision_de_contenedor(vin),
         movimientos=movimientos_de(vin))
+
+
+def _revision_de_contenedor(vin):
+    from modulos.revision_contenedor import resumen_para_ficha
+    return resumen_para_ficha(vin)

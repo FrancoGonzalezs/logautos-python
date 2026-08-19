@@ -61,7 +61,7 @@ from werkzeug.utils import secure_filename
 from core import DATA_DIR, consultar, get_db
 from modulos.acceso import id_actual, nombre_actual
 from modulos.catalogos import normalizar
-from modulos.movimientos import recomendar, registrar
+from modulos.movimientos import es_desvio, estado_fisico, recomendar, registrar
 from modulos.unidades import TABLA
 
 bp = Blueprint("check_list", __name__, url_prefix="/movimientos")
@@ -494,7 +494,8 @@ def _pintar(unidad, errores=None, valores=None, codigo=200):
         # unidad, pero no se bloquea: el operario puede tener razon y la
         # replica estar atrasada. Lo que se le pide es el motivo, igual que en
         # cualquier otro desvio de la fase 1.
-        es_desvio=not recomendado or recomendado["clave"] != "check_list_ingreso",
+        es_desvio=es_desvio(recomendado["clave"] if recomendado else None,
+                            "check_list_ingreso"),
         recomendado=recomendado,
         motivo=request.values.get("motivo") or "",
         motivo_detalle=request.values.get("motivo_detalle") or "",
@@ -586,14 +587,22 @@ def confirmar(id_unidad):
     # caso aparte del flujo, es el paso `check_list_ingreso` con formulario.
     recomendado = recomendar(unidad)
     clave_recomendada = recomendado["clave"] if recomendado else None
-    es_desvio = clave_recomendada != "check_list_ingreso"
+    desvio = es_desvio(clave_recomendada, "check_list_ingreso")
+
+    # El arco del movimiento: el check list no mueve la unidad de estado -- se
+    # hace en ZONA DE RECEPCION y ahi queda --, pero guardarlo igual es lo que
+    # permite verificar la regla de consistencia del proceso (cap. 2), que pide
+    # que el estado anterior de un movimiento sea el actual del previo.
+    estado_actual = estado_fisico(unidad)
 
     movimiento_id = registrar(unidad, {
         "paso": "check_list_ingreso",
         "recomendado": clave_recomendada,
-        "es_desvio": es_desvio,
-        "motivo": _texto("motivo") if es_desvio else None,
-        "motivo_detalle": _texto("motivo_detalle") if es_desvio else None,
+        "es_desvio": desvio,
+        "estado_desde": estado_actual,
+        "estado_hacia": estado_actual,
+        "motivo": _texto("motivo") if desvio else None,
+        "motivo_detalle": _texto("motivo_detalle") if desvio else None,
         "resultado_pdi": None,
         "guia_ingreso": datos["guia_ingreso"] or None,
         "fecha": datos["fecha_ingreso"] or None,

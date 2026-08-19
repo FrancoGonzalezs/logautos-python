@@ -1,0 +1,37 @@
+{# Escáner de QR + búsqueda por texto. Parcial porque lo usan la pantalla
+   de búsqueda de Movimientos y la de agregar unidades a un contenedor: el
+   movilizador escanea igual en las dos, y el principio del módulo es que
+   escriba lo menos posible.
+
+   Espera `destino_buscador` (URL a la que se manda el ?q=) y `texto`. #}
+  <div class="entrada-doble">
+
+    {# El escáner y la búsqueda por texto conviven al mismo nivel: muchas
+       veces no hay QR a mano o la cámara no sirve en el momento, así que
+       tener el texto escondido detrás de un "si falla, probá esto" haría
+       perder tiempo justo cuando ya se está perdiendo. #}
+    <section class="tarjeta escaner">
+      <header><strong>Escanear QR</strong></header>
+      <div id="escaner-zona">
+        <p class="vacio" id="escaner-estado">Preparando la cámara…</p>
+        <video id="escaner-video" playsinline hidden></video>
+      </div>
+      <div class="escaner-controles">
+        <button type="button" class="boton" id="escaner-iniciar" hidden>Encender cámara</button>
+        <button type="button" class="boton secundario" id="escaner-detener" hidden>Detener</button>
+      </div>
+    </section>
+
+    <section class="tarjeta">
+      <header><strong>Buscar por texto</strong></header>
+      <form method="get" action="{{ destino_buscador }}" data-buscar-vivo>
+        <input type="search" name="q" value="{{ texto }}" autofocus autocomplete="off"
+               placeholder="VIN, patente o número de motor" class="entrada-grande">
+        <button type="submit" class="boton">Buscar</button>
+      </form>
+      <p class="vacio nota-avanzados">
+        Sirve un VIN completo o un pedazo. También busca por patente y por
+        número de motor.
+      </p>
+    </section>
+  </div>
