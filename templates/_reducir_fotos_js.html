@@ -1,0 +1,122 @@
+{# Reduce las fotos EN EL CELULAR antes de subirlas. Sin etiqueta <script>: se
+   incluye dentro del bloque de scripts de cada pantalla que suba fotos.
+
+   Por qué existe, con números de la prueba real en producción: un celular
+   moderno saca fotos de varios MB en resolución completa, y el formulario las
+   subía tal cual. Dos POST medidos en el log de Railway tardaron 12.753 ms y
+   8.822 ms. El servidor nunca se quedó sin memoria (pico de 261 MB sobre un
+   límite de 1024) — el que se quedaba sin memoria era Chrome en Android,
+   reteniendo el archivo entero y re-subiéndolo en cada reintento, hasta que
+   Android lo mataba. Y al morir Chrome se perdía la cookie de sesión, que no
+   es persistente: eso era el "se cerró la sesión".
+
+   El PHP viejo también redimensiona a 1000x1000, pero DEL LADO DEL SERVIDOR,
+   así que igual se come la subida completa. Hacerlo acá es lo único que ataca
+   la causa.
+
+   Reglas que se respetan sí o sí:
+     - si algo falla, se sube el archivo ORIGINAL. Nunca se bloquea el envío
+       por no haber podido reducir.
+     - no se toca nada que no sea una imagen. #}
+(function () {
+  var LADO_MAX = 1600;      // suficiente para ver un rayón; el PHP usa 1000
+  var CALIDAD = 0.8;
+  var MINIMO = 300 * 1024;  // por debajo de esto no vale la pena
+
+  // Sin DataTransfer no se puede reemplazar el archivo elegido, así que ni se
+  // intenta: se sube el original como siempre.
+  if (typeof DataTransfer === 'undefined' || !window.HTMLCanvasElement) { return; }
+
+  var enCurso = 'data-reduciendo';
+
+  function aviso(input, texto) {
+    var etiqueta = input.closest('label') || input.parentNode;
+    if (!etiqueta) { return null; }
+    var p = etiqueta.querySelector('[data-aviso-foto]');
+    if (!p) {
+      p = document.createElement('small');
+      p.setAttribute('data-aviso-foto', '');
+      etiqueta.appendChild(p);
+    }
+    p.textContent = texto || '';
+    return p;
+  }
+
+  function dibujar(fuente, ancho, alto) {
+    var escala = Math.min(1, LADO_MAX / Math.max(ancho, alto));
+    var lienzo = document.createElement('canvas');
+    lienzo.width = Math.round(ancho * escala);
+    lienzo.height = Math.round(alto * escala);
+    lienzo.getContext('2d').drawImage(fuente, 0, 0, lienzo.width, lienzo.height);
+    return lienzo;
+  }
+
+  /* createImageBitmap con imageOrientation respeta el EXIF, que es lo que
+     evita que las fotos verticales del celular se suban acostadas. Cuando no
+     está, se cae a un <img>, que en los navegadores actuales ya aplica la
+     orientación solo. */
+  function cargar(archivo) {
+    if (window.createImageBitmap) {
+      try {
+        return createImageBitmap(archivo, { imageOrientation: 'from-image' })
+          .then(function (bm) { return { fuente: bm, ancho: bm.width, alto: bm.height }; });
+      } catch (e) { /* sigue por el camino del <img> */ }
+    }
+    return new Promise(function (ok, falla) {
+      var url = URL.createObjectURL(archivo);
+      var img = new Image();
+      img.onload = function () {
+        URL.revokeObjectURL(url);
+        ok({ fuente: img, ancho: img.naturalWidth, alto: img.naturalHeight });
+      };
+      img.onerror = function () { URL.revokeObjectURL(url); falla(); };
+      img.src = url;
+    });
+  }
+
+  function reducir(input) {
+    var archivo = input.files && input.files[0];
+    if (!archivo) { return; }
+    if (!/^image\//.test(archivo.type)) { return; }
+    if (archivo.size < MINIMO) { aviso(input, ''); return; }
+    if (input.hasAttribute(enCurso)) { return; }
+
+    input.setAttribute(enCurso, '');
+    var original = Math.round(archivo.size / 1024);
+    aviso(input, 'Preparando la foto…');
+
+    cargar(archivo).then(function (r) {
+      var lienzo = dibujar(r.fuente, r.ancho, r.alto);
+      if (r.fuente.close) { r.fuente.close(); }
+      return new Promise(function (ok) {
+        lienzo.toBlob(function (blob) { ok(blob); }, 'image/jpeg', CALIDAD);
+      });
+    }).then(function (blob) {
+      // Si por lo que sea quedó más pesada, se deja la original.
+      if (!blob || blob.size >= archivo.size) {
+        aviso(input, ''); input.removeAttribute(enCurso); return;
+      }
+      var nombre = (archivo.name || 'foto').replace(/\.[^.]+$/, '') + '.jpg';
+      var dt = new DataTransfer();
+      dt.items.add(new File([blob], nombre, { type: 'image/jpeg' }));
+      // Asignar .files por código NO dispara 'change', así que no hay bucle.
+      input.files = dt.files;
+      aviso(input, 'Foto lista: ' + original + ' KB → ' +
+                   Math.round(blob.size / 1024) + ' KB');
+      input.removeAttribute(enCurso);
+    }).catch(function () {
+      // Se sube la original: que no se pueda reducir no puede impedir cargar
+      // el daño, que es el dato que importa y que no se puede volver a sacar
+      // porque la unidad ya no está delante.
+      aviso(input, 'No se pudo reducir; se sube la foto original.');
+      input.removeAttribute(enCurso);
+    });
+  }
+
+  // Delegado en document: las filas de daño se agregan clonando, así que un
+  // listener por input se perdería en las filas nuevas.
+  document.addEventListener('change', function (e) {
+    var t = e.target;
+    if (t && t.tagName === 'INPUT' && t.type === 'file') { reducir(t); }
+  });
+})();

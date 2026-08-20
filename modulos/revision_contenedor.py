@@ -643,19 +643,47 @@ def evidencia(id_contenedor, id_unidad):
     return _pintar_evidencia(cont, unidad)
 
 
-def _pintar_evidencia(cont, unidad, errores=None, codigo=200, diferencias=None):
+def diferencias_de(unidad, modelo_obs, color_obs):
+    """Que campos observados NO coinciden con el packing list.
+
+    El campo vacio significa 'coincide' -- es la deduccion que evita que el
+    movilizador tenga que escribir nada en el caso normal."""
+    fuera = []
+    if modelo_obs and not _coincide(unidad["modelo"], modelo_obs):
+        fuera.append(("modelo", normalizar(unidad["modelo"]), modelo_obs.upper()))
+    if color_obs and not _coincide(unidad["color"], color_obs):
+        fuera.append(("color", normalizar(unidad["color"]), color_obs.upper()))
+    return fuera
+
+
+def _pintar_evidencia(cont, unidad, errores=None, codigo=200):
+    # Las diferencias se RECALCULAN acá, del formulario que llego, en vez de
+    # recibirlas del que llama. Esto arregla un bucle sin salida que se comio
+    # una prueba entera desde el celular:
+    #
+    #   el POST con foto se rechazaba por la diferencia de color -> el
+    #   re-render vaciaba el input de archivo -> el reenvio sin foto se
+    #   rechazaba por "falta la foto", y ESE camino repintaba sin las
+    #   diferencias, asi que el checkbox de confirmacion desaparecia de la
+    #   pantalla mientras `v=request.form` seguia reponiendo el color
+    #   observado. El siguiente envio volvia a detectar la diferencia, otra vez
+    #   sin confirmar, y de ahi no se salia salvo borrando el campo de color.
+    #
+    # Calculandolas acá, el bloque de confirmacion sobrevive a CUALQUIER
+    # motivo de re-render, que es la unica forma de que no se pueda volver a
+    # desincronizar del campo que las dispara.
+    es_post = request.method == "POST"
+    v = request.form if es_post else {}
     pagina = render_template(
         "contenedor_evidencia.html", c=cont, u=unidad,
         piezas=piezas(), tipos=tipos_de_dano(), niveles=niveles_de_dano(),
-        filas_danos=_filas_de_danos() if request.method == "POST" else [
+        filas_danos=_filas_de_danos() if es_post else [
             {"i": 0, "pieza": "", "tipo": "", "nivel": ""}],
         encargado=nombre_actual(),
         validacion=validacion_de(unidad["vin"], cont["id"]),
-        # Cuando la deduccion encontro una diferencia se vuelve a pintar
-        # pidiendo confirmacion explicita: es el unico caso en que se le pide
-        # al movilizador que confirme algo.
-        diferencias=diferencias or [],
-        errores=errores or [], v=request.form if request.method == "POST" else {})
+        diferencias=diferencias_de(unidad, (v.get("modelo_observado") or "").strip(),
+                                   (v.get("color_observado") or "").strip()),
+        errores=errores or [], v=v)
     return (pagina, codigo) if codigo != 200 else pagina
 
 
@@ -684,15 +712,14 @@ def guardar_evidencia(id_contenedor, id_unidad):
 
     # Deduccion: el campo vacio significa 'coincide'. Solo si el movilizador
     # escribio algo distinto se le pide confirmar, y solo entonces sale el
-    # correo de diferencia.
-    diferencias = []
-    if modelo_obs and not _coincide(unidad["modelo"], modelo_obs):
-        diferencias.append(("modelo", normalizar(unidad["modelo"]), modelo_obs.upper()))
-    if color_obs and not _coincide(unidad["color"], color_obs):
-        diferencias.append(("color", normalizar(unidad["color"]), color_obs.upper()))
-
+    # correo de diferencia. En el navegador esto ya se resolvio sin recargar
+    # (ver el JS de la pantalla); acá se revalida igual, porque el cliente
+    # puede no tener JS y porque nada que llegue en un POST se da por bueno.
+    diferencias = diferencias_de(unidad, modelo_obs, color_obs)
     if diferencias and not request.form.get("confirmar_diferencia"):
-        return _pintar_evidencia(cont, unidad, codigo=400, diferencias=diferencias)
+        return _pintar_evidencia(cont, unidad, codigo=400, errores=[
+            "Hay una diferencia con el packing list: confirmala para poder "
+            "guardar."])
 
     danos = _leer_danos(unidad["vin"])
     if danos["faltan_fotos"]:

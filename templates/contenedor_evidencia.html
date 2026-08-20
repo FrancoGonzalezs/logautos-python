@@ -49,36 +49,48 @@
           <label>
             <span>Modelo observado</span>
             <input type="text" name="modelo_observado" style="text-transform:uppercase"
+                   data-observado="modelo" data-informado="{{ u['modelo'] | mostrar }}"
                    placeholder="{{ u['modelo'] | mostrar }}"
                    value="{{ v.get('modelo_observado') or '' }}">
           </label>
           <label>
             <span>Color observado</span>
             <input type="text" name="color_observado" style="text-transform:uppercase"
+                   data-observado="color" data-informado="{{ u['color'] | mostrar }}"
                    placeholder="{{ u['color'] | mostrar }}"
                    value="{{ v.get('color_observado') or '' }}">
           </label>
         </div>
       {% endif %}
 
-      {% if diferencias %}
-        {# Único punto donde se le pide una confirmación explícita: se detectó
-           una diferencia real y de acá sale un correo al cliente. #}
-        <div class="aviso aviso-malo">
-          <strong>Hay diferencia con el packing list.</strong>
-          <ul class="lista-errores">
-            {% for campo, informado, observado in diferencias %}
-              <li>{{ campo | capitalize }}: figura <strong>{{ informado }}</strong>
-                  y cargaste <strong>{{ observado }}</strong>.</li>
-            {% endfor %}
-          </ul>
-          <label>
-            <input type="checkbox" name="confirmar_diferencia" value="1">
-            Confirmo que lo que tengo delante es lo que cargué. Se va a avisar
-            al cliente por correo.
-          </label>
-        </div>
-      {% endif %}
+      {# Único punto donde se le pide una confirmación explícita: se detectó una
+         diferencia real y de acá sale un correo al cliente.
+
+         El bloque está SIEMPRE en el DOM y el JS lo muestra al escribir, sin
+         ir al servidor. Antes esto era un round-trip, y ese round-trip era el
+         bug: el re-render vaciaba el input de archivo (los inputs de archivo
+         no se pueden repoblar por código) y obligaba a volver a subir una foto
+         de varios MB desde el celular.
+
+         Se pinta abierto desde el servidor cuando la diferencia ya vino
+         detectada, para que siga funcionando sin JS. El servidor revalida
+         igual: esto es comodidad, no la validación. #}
+      <div class="aviso aviso-malo" id="confirmar-diferencia"
+           {% if not diferencias %}hidden{% endif %}>
+        <strong>Hay diferencia con el packing list.</strong>
+        <ul class="lista-errores" data-lista-diferencias>
+          {% for campo, informado, observado in diferencias %}
+            <li>{{ campo | capitalize }}: figura <strong>{{ informado }}</strong>
+                y cargaste <strong>{{ observado }}</strong>.</li>
+          {% endfor %}
+        </ul>
+        <label>
+          <input type="checkbox" name="confirmar_diferencia" value="1"
+                 {% if v.get('confirmar_diferencia') %}checked{% endif %}>
+          Confirmo que lo que tengo delante es lo que cargué. Se va a avisar
+          al cliente por correo.
+        </label>
+      </div>
     </section>
 
     <section class="grupo">
@@ -97,5 +109,68 @@
 
   <script>
     {% include "_filas_dano_js.html" %}
+    {% include "_reducir_fotos_js.html" %}
+
+    /*
+     * Confirmación de modelo/color EN EL NAVEGADOR, sin recargar.
+     *
+     * Replica `_coincide` del servidor: normaliza igual que
+     * `catalogos.normalizar` (sin tildes, mayúsculas, espacios colapsados) y
+     * trata el campo vacío como "coincide". El servidor revalida lo mismo, así
+     * que esto no relaja ninguna regla — solo evita el round-trip que hacía
+     * perder la foto ya elegida.
+     */
+    (function () {
+      var caja = document.getElementById('confirmar-diferencia');
+      if (!caja) { return; }
+      var lista = caja.querySelector('[data-lista-diferencias]');
+      var tilde = caja.querySelector('input[type=checkbox]');
+      var campos = document.querySelectorAll('[data-observado]');
+      if (!campos.length) { return; }
+
+      function normalizar(v) {
+        return (v || '')
+          .replace(/[\r\n]/g, ' ')
+          .trim().replace(/^[|/-]+|[|/-]+$/g, '').trim()
+          .replace(/\s+/g, ' ')
+          .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+          .toUpperCase();
+      }
+
+      function revisar() {
+        var fuera = [];
+        Array.prototype.forEach.call(campos, function (c) {
+          var observado = normalizar(c.value);
+          var informado = normalizar(c.getAttribute('data-informado'));
+          // Vacío = coincide, igual que en el servidor. Y sin valor informado
+          // no hay con qué comparar, así que tampoco es diferencia.
+          if (!observado || !informado) { return; }
+          if (observado !== informado) {
+            fuera.push({ campo: c.getAttribute('data-observado'),
+                         informado: informado, observado: observado });
+          }
+        });
+
+        if (!fuera.length) {
+          caja.hidden = true;
+          tilde.checked = false;
+          return;
+        }
+        lista.innerHTML = '';
+        fuera.forEach(function (d) {
+          var li = document.createElement('li');
+          li.textContent = d.campo.charAt(0).toUpperCase() + d.campo.slice(1) +
+            ': figura ' + d.informado + ' y cargaste ' + d.observado + '.';
+          lista.appendChild(li);
+        });
+        caja.hidden = false;
+      }
+
+      Array.prototype.forEach.call(campos, function (c) {
+        c.addEventListener('input', revisar);
+        c.addEventListener('blur', revisar);
+      });
+      revisar();
+    })();
   </script>
 {% endblock %}
