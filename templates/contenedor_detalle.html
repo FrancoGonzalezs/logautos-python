@@ -22,7 +22,15 @@
   {% if correo == 'auto' %}
     <div class="aviso">
       Se completaron las {{ c['cantidad_unidades'] }} unidades declaradas, así
-      que el contenedor <strong>se cerró solo</strong> y se mandó el informe.
+      que el contenedor <strong>se cerró solo</strong>. El informe se está
+      enviando.
+    </div>
+  {% elif correo == 'encolado' %}
+    {# El envío va en segundo plano, así que al responder todavía no se sabe
+       si salió. El cierre —que es el dato— ya está escrito; el resultado del
+       correo queda en el log. #}
+    <div class="aviso">
+      Contenedor cerrado. El informe se está enviando.
     </div>
   {% elif correo == 'enviado' %}
     <div class="aviso">Contenedor cerrado y correo enviado.</div>

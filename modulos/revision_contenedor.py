@@ -57,14 +57,13 @@ contenedor que ya existia.
 """
 
 import os
-import smtplib
+import sqlite3
+import threading
 from datetime import datetime
-from email.message import EmailMessage
-from email.utils import formataddr
 
 from flask import Blueprint, redirect, render_template, request, url_for
 
-from core import consultar, get_db
+from core import DB_PATH, consultar, get_db
 from modulos.acceso import id_actual, nombre_actual
 from modulos.catalogos import normalizar
 # Se reusan las piezas del check list a proposito: son el mismo dato con los
@@ -444,51 +443,113 @@ def guardar_validacion(unidad, id_contenedor, modelo_obs, color_obs):
 # nadie los configura no se manda nada y queda anotado. En el PHP estan en
 # texto plano dentro del codigo, que es justamente lo que no hay que replicar.
 
-def _config_correo(clave_destinatarios):
-    destinatarios = [d.strip() for d in
-                     os.environ.get(clave_destinatarios, "").split(",") if d.strip()]
-    return {
-        "host": os.environ.get("SMTP_HOST"),
-        "puerto": int(os.environ.get("SMTP_PORT", "465")),
-        "usuario": os.environ.get("SMTP_USER"),
-        "clave": os.environ.get("SMTP_PASSWORD"),
-        "remitente": os.environ.get("SMTP_FROM") or os.environ.get("SMTP_USER"),
-        "destinatarios": destinatarios,
-    }
+# Por que Resend y no SMTP
+# ------------------------
+# Porque desde Railway el SMTP no sale. Verificado desde el contenedor: los
+# puertos 25, 465, 587 y 2525 dan timeout contra CUALQUIER proveedor -- el
+# propio, Gmail y SendGrid --, mientras `mail.logautos.cl` responde en 0,2 s
+# por 80 y 443 y el HTTPS a Internet sale al instante. O sea que el bloqueo es
+# por puerto y no por destino: es la politica antispam de la red saliente de
+# Railway. Resend manda por HTTPS, que es justo lo unico que si sale.
+#
+# Ademas arregla de raiz el 500 del cierre automatico: la conexion SMTP se
+# colgaba 20 s y, sumada a la subida de la foto, pasaba el timeout del worker
+# de Gunicorn, que moria antes de que ningun try/except llegara a actuar.
+# Contra HTTPS no hay nada que esperar, y encima el envio va diferido.
+
+# El dominio verificado en Resend es la RAIZ, logautos.cl -- no send.logautos.cl.
+# Es facil equivocarse leyendo el DNS y ya paso una vez: `send.logautos.cl`
+# tiene SPF (include:amazonses.com) y MX (feedback-smtp.sa-east-1.amazonses.com),
+# lo que lo hace PARECER el dominio de envio, pero eso es el subdominio de
+# REBOTES -- el Return-Path que Resend pide crear al verificar la raiz. La
+# firma que dice cual es el dominio de envio es el DKIM, y esta en
+# `resend._domainkey.logautos.cl`.
+#
+# Mandar desde @send.logautos.cl da: "The send.logautos.cl domain is not
+# verified".
+REMITENTE = os.environ.get("RESEND_FROM", "REGLA <notificaciones@logautos.cl>")
 
 
-def _mandar(cfg, asunto, texto, html, adjuntos=()):
-    """Devuelve (estado, detalle) y NUNCA levanta: el correo es una
-    notificacion, y que el servidor de mail este caido no puede hacer perder
-    la revision que el operario acaba de cargar."""
-    if not cfg["host"] or not cfg["destinatarios"]:
-        return "no_configurado", "Falta configurar SMTP_HOST y los destinatarios."
+def _destinatarios(clave):
+    return [d.strip() for d in os.environ.get(clave, "").split(",") if d.strip()]
 
-    mensaje = EmailMessage()
-    mensaje["Subject"] = asunto
-    mensaje["From"] = formataddr(("REGLA", cfg["remitente"] or ""))
-    mensaje["To"] = ", ".join(cfg["destinatarios"])
-    mensaje.set_content(texto)
-    mensaje.add_alternative(html, subtype="html")
 
+def _mandar(destinatarios, asunto, texto, html, adjuntos=()):
+    """Manda por la API de Resend. Devuelve (estado, detalle) y NUNCA levanta.
+
+    El correo es una notificacion: que el proveedor este caido no puede hacer
+    perder la revision que el operario acaba de cargar, ni tumbar el cierre de
+    un contenedor que ya quedo escrito."""
+    clave = os.environ.get("RESEND_API_KEY")
+    if not clave:
+        _log("no_configurado", asunto, "falta RESEND_API_KEY")
+        return "no_configurado", "Falta RESEND_API_KEY."
+    if not destinatarios:
+        _log("no_configurado", asunto, "sin destinatarios configurados")
+        return "no_configurado", "No hay destinatarios configurados."
+
+    adjuntos_api = []
     for ruta in adjuntos:
         if not ruta or not os.path.exists(ruta):
             continue
-        with open(ruta, "rb") as f:
-            mensaje.add_attachment(f.read(), maintype="image", subtype="jpeg",
-                                   filename=os.path.basename(ruta))
+        try:
+            with open(ruta, "rb") as f:
+                adjuntos_api.append({
+                    "filename": os.path.basename(ruta),
+                    "content": list(f.read()),
+                })
+        except OSError:
+            # Una foto ilegible no puede impedir que salga el informe: el
+            # cuerpo con la tabla de VIN es lo que el cliente necesita.
+            continue
+
     try:
-        with smtplib.SMTP_SSL(cfg["host"], cfg["puerto"], timeout=20) as smtp:
-            if cfg["usuario"]:
-                smtp.login(cfg["usuario"], cfg["clave"] or "")
-            smtp.send_message(mensaje)
-        return "enviado", ", ".join(cfg["destinatarios"])
+        import resend
+        resend.api_key = clave
+        r = resend.Emails.send({
+            "from": REMITENTE,
+            "to": destinatarios,
+            "subject": asunto,
+            "text": texto,
+            "html": html,
+            "attachments": adjuntos_api,
+        })
+        id_correo = (r or {}).get("id") if isinstance(r, dict) else getattr(r, "id", None)
+        detalle = "id={} para {}".format(id_correo, ", ".join(destinatarios))
+        _log("enviado", asunto, detalle)
+        return "enviado", detalle
     except Exception as e:                       # noqa: BLE001 -- ver docstring
-        return "error", str(e)
+        # El error REAL de Resend, no un "correo fallo" generico: sin esto hubo
+        # que entrar al contenedor a diagnosticar a mano por que no salia.
+        detalle = "{}: {}".format(type(e).__name__, e)
+        _log("error", asunto, detalle)
+        return "error", detalle
+
+
+def _log(estado, asunto, detalle):
+    print("[correo] {} | {} | {}".format(estado, asunto, detalle), flush=True)
+
+
+def _en_segundo_plano(funcion, *args):
+    """Manda el correo fuera del request.
+
+    Cerrar un contenedor o guardar una diferencia tiene que responderle al
+    movilizador de inmediato: el correo es para otra persona y puede tardar lo
+    que tarde. El hilo es `daemon` para que no retenga el proceso al apagarse,
+    y todo lo que hace adentro ya esta envuelto en su propio try."""
+    hilo = threading.Thread(target=funcion, args=args, daemon=True)
+    hilo.start()
+    return hilo
 
 
 def enviar_correo_diferencia(unidad, validacion, cont):
-    cfg = _config_correo("VALIDACION_DIFERENCIA_DESTINATARIOS")
+    """Arma el correo de diferencia y lo manda EN SEGUNDO PLANO.
+
+    El armado va acá, dentro del request, porque necesita leer la unidad y la
+    validacion. Al hilo solo se le pasan valores ya resueltos: `get_db()`
+    cuelga de `g`, que es del request, asi que un hilo que lo llamara se
+    quedaria sin conexion."""
+    destinatarios = _destinatarios("VALIDACION_DIFERENCIA_DESTINATARIOS")
     filas = ""
     if not validacion["modelo_coincide"]:
         filas += "<tr><td>MODELO</td><td>{}</td><td>{}</td></tr>".format(
@@ -505,22 +566,40 @@ def enviar_correo_diferencia(unidad, validacion, cont):
         "<p>Este mail fue enviado automaticamente por sistema REGLA</p>"
     ).format(vin=unidad["vin"] or "", cont=cont["nombre_contenedor"] or "",
              filas=filas, quien=validacion["usuario_nombre"] or "")
-    estado, detalle = _mandar(
-        cfg, "Diferencia de unidad VIN: {}".format(unidad["vin"] or ""),
-        "Diferencia detectada en el VIN {}.".format(unidad["vin"] or ""), html)
-    if estado == "enviado":
-        db = _db()
+    _en_segundo_plano(
+        _mandar_diferencia,
+        destinatarios,
+        "Diferencia de unidad VIN: {}".format(unidad["vin"] or ""),
+        "Diferencia detectada en el VIN {}.".format(unidad["vin"] or ""),
+        html,
+        validacion["id"])
+    return "encolado", "se manda en segundo plano"
+
+
+def _mandar_diferencia(destinatarios, asunto, texto, html, id_validacion):
+    """Lo que corre en el hilo: mandar y, si salio, marcarlo.
+
+    La conexion a SQLite se abre acá y no se reusa la del request: las
+    conexiones de sqlite3 no se comparten entre hilos, y la del request ya no
+    existe cuando esto corre."""
+    estado, _detalle = _mandar(destinatarios, asunto, texto, html)
+    if estado != "enviado":
+        return
+    try:
+        db = sqlite3.connect(DB_PATH, timeout=10)
         db.execute("UPDATE validacion_color_regla SET correo_enviado = 1, "
                    "fecha_correo = ? WHERE id = ?",
-                   (datetime.now().isoformat(timespec="seconds"), validacion["id"]))
+                   (datetime.now().isoformat(timespec="seconds"), id_validacion))
         db.commit()
-    return estado, detalle
+        db.close()
+    except Exception as e:                       # noqa: BLE001
+        _log("aviso", asunto, "se envio pero no se pudo marcar: {}".format(e))
 
 
 def enviar_correo_cierre(cont, unidades):
     """El informe de cierre, con el mismo formato del PHP: encabezado con la
     guia y una tabla VIN / OBSERVACION con todas las unidades."""
-    cfg = _config_correo("REVISION_CONTENEDOR_DESTINATARIOS")
+    destinatarios = _destinatarios("REVISION_CONTENEDOR_DESTINATARIOS")
     filas = "".join(
         "<tr><td>{}</td><td>{}</td></tr>".format(
             (u["revision"]["vin"] or ""), (u["revision"]["observacion"] or ""))
@@ -542,10 +621,15 @@ def enviar_correo_cierre(cont, unidades):
             if rel:
                 adjuntos.append(os.path.join(CARPETA_FOTOS, rel.replace("/", os.sep)))
 
-    return _mandar(
-        cfg, "Check List Revision Transporte {}".format(cont["guia_ingreso"] or ""),
+    # Diferido: cerrar un contenedor tiene que responderle al movilizador de
+    # inmediato. El informe es para el cliente, no para el que aprieta el
+    # boton, asi que puede tardar lo que tarde sin bloquear la pantalla.
+    _en_segundo_plano(
+        _mandar, destinatarios,
+        "Check List Revision Transporte {}".format(cont["guia_ingreso"] or ""),
         "Informe de revisión de transporte con {} unidades.".format(len(unidades)),
         html, adjuntos)
+    return "encolado", "se manda en segundo plano"
 
 
 # ---------------------------------------------------------------------------
@@ -823,15 +907,29 @@ def cerrar_contenedor(id_contenedor):
         return "ya_cerrado"
 
     unidades = unidades_del_contenedor(id_contenedor)
-    estado, _detalle = enviar_correo_cierre(cont, unidades)
 
+    # PRIMERO se cierra, DESPUES se manda el informe. El orden estaba al reves
+    # y era el problema de fondo: el correo tarda -- hoy ni siquiera conecta,
+    # porque Railway bloquea la salida SMTP --, asi que cualquier cosa que
+    # fallara ahi se llevaba puesto el cierre, que ya estaba decidido y no
+    # dependia del correo. El cierre es el dato; el informe es una
+    # notificacion.
     db = _db()
     db.execute("UPDATE contenedor_regla SET estado = ?, fecha_completa_fin = ? "
                "WHERE id = ?",
                (ESTADO_CERRADO, datetime.now().isoformat(timespec="seconds"),
                 id_contenedor))
     db.commit()
-    return estado
+
+    # `_mandar` ya atrapa lo suyo, pero el armado del mensaje queda afuera de
+    # ese try: leer los adjuntos, componer el HTML. Un except propio acá cierra
+    # el hueco -- y sobre todo garantiza que este return no pueda tumbar el
+    # cierre que ya quedo escrito arriba.
+    try:
+        estado, _detalle = enviar_correo_cierre(cont, unidades)
+        return estado
+    except Exception:                            # noqa: BLE001 -- ver arriba
+        return "error"
 
 
 @bp.route("/contenedores/<int:id_contenedor>/cerrar", methods=["POST"])
