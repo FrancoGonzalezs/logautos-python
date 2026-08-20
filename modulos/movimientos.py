@@ -28,10 +28,17 @@ operacion. Lo que se le pide es el motivo, para que el desvio quede medido.
 
 Donde termina este modulo
 -------------------------
-En ZONA DE DESPACHO. El paso a DESPACHADO lo escribe Ingreso/Despacho >
-Despacho DT, no esta pantalla -- por eso figura como paso de solo lectura y no
-como boton. Lo mismo con el ciclo PDI/DYP de CIDEF, que lo mueven Actualizar
-PDI y Actualizar DYP.
+En ZONA DE DESPACHO. El paso a DESPACHADO esta en la matriz porque es parte
+del proceso, pero lo escribe Ingreso/Despacho > Despacho VIN y no esta
+pantalla -- por eso es de solo lectura y la tarjeta lleva alla en vez de
+ofrecer una confirmacion. Lo mismo con el ciclo PDI/DYP de CIDEF, que lo mueven
+Actualizar PDI y Actualizar DYP.
+
+Que DESPACHADO no lo escriba Crear Guia esta verificado: `creaguia()` solo
+carga una vista y `creagd_proces.php` emite el documento en facto.cl, inserta
+en `guias_despacho` y estampa `guia_desp` en la unidad, sin tocar el estado ni
+registrar movimiento. El dato lo confirma: hay 51.575 unidades con folio de
+guia contra 69.825 despachadas, o sea ~18.000 despachadas sin guia.
 
 Donde se guardan los movimientos
 --------------------------------
@@ -224,11 +231,22 @@ ESTADOS = {
     "FR - MECANICA": {
         "origen": MODULO, "modulo": "Derivación a falla/reparación mecánica",
         "cliente": "CIDEF"},
-    # El documento no lo clasifica: aparece en la matriz de CARFLEX (4.1) y en
-    # el anexo A.1, pero no esta ni en 3.1 ni en 3.2. Queda marcado para que la
-    # validacion operativa lo resuelva, en vez de inventarle un origen.
+    # El documento no lo clasificaba: aparece en la matriz de CARFLEX (4.1) y
+    # en el anexo A.1, pero no estaba ni en 3.1 ni en 3.2, asi que quedo con
+    # origen None en vez de inventarle uno.
+    #
+    # Resuelto contra el codigo real: es SELECCION MANUAL. Sale del endpoint
+    # AJAX `modelos()` (Pedido.php:10583), que devuelve la lista de calles
+    # segun el patio elegido, y figura como <option> de la lista de PATIO 2 --
+    # junto con 'Falla Mecanica', 'Lavando', 'Vulcanizacion' y las 'Dyp *'. La
+    # procesa el `case 'Servicios Generales'` del switch de PATIO 2, con estado
+    # por defecto SERVICIOS GENERALES y sin escribir ninguna columna fecha_*.
+    #
+    # El dato acompaña: 150 movimientos, TODOS en PATIO 2; 148 quedaron en
+    # SERVICIOS GENERALES y 2 en ZONA DE LAVADO por override del POST.
     "SERVICIOS GENERALES": {
-        "origen": None, "modulo": None, "cliente": "CARFLEX"},
+        "origen": MANUAL, "modulo": "Mover Unidades › PATIO 2",
+        "cliente": "CARFLEX"},
     "STOCK": {
         "origen": MANUAL, "modulo": None, "cliente": "ambos"},
     "STOCK CON DAÑO NO AUTORIZADO": {
@@ -243,8 +261,23 @@ ESTADOS = {
         "origen": AMBOS, "modulo": "Control de calidad de terminación", "cliente": "ambos"},
     "ZONA DE DESPACHO": {
         "origen": MANUAL, "modulo": None, "cliente": "ambos"},
+    # El despacho real es SIEMPRE por VIN, en portería: uno solo, o varios VIN
+    # pegados separados por espacio cuando la grúa se lleva más de una unidad,
+    # más el RUT del transportista. El "Despacho DT" existe en el codigo
+    # (`despacho_dt_process()`, despacha en bloque todos los VIN de un DT) pero
+    # en la practica no se uso nunca, asi que no se ofrece ni se nombra: dar
+    # como destino una pantalla que nadie usa manda al operario al lugar
+    # equivocado.
+    #
+    # El nombre del modulo lleva pegado que ademas manda el informe: la
+    # tarjeta muestra `modulo` pero no el detalle del estado, y sin esa
+    # aclaracion alguien puede entrar esperando un boton de "marcar como
+    # despachado". Verificado en `inicio_proces()`, que adjunta los nueve
+    # archivos de `inspeccion_despacho` -- guia firmada y fotos del scanner.
     "DESPACHADO": {
-        "origen": MODULO, "modulo": "Ingreso/Despacho › Despacho DT, VIN o PATENTE",
+        "origen": MODULO,
+        "modulo": "Ingreso/Despacho › Despacho VIN "
+                  "(registra la salida y manda el informe de inspección)",
         "cliente": "ambos"},
 }
 
@@ -273,6 +306,23 @@ EQUIVALENCIAS = {
     # Anexo A.1: 6 apariciones de la forma corta.
     "EN ESPERA CHECK MECANICA": "EN ESPERA CHECK LIST MECANICA",
     "STOCK SIN PDI": "STOCK",
+    # El nombre viejo del control de calidad de despacho, 9.280 movimientos
+    # entre 2022-08 y 2025-04. Va acá y NO como estado propio de la matriz
+    # porque es el mismo paso renombrado, verificado por cinco lados:
+    #
+    #   - el relevo es limpio: el viejo muere en 2025 (3 registros) justo
+    #     cuando el nuevo arranca (2024-11), y 2024 es el unico año en que
+    #     conviven;
+    #   - los producen las MISMAS acciones, 'CC' y 'Cc';
+    #   - tienen los mismos vecinos: entran desde INGRESO A TALLER, ZONA DE
+    #     LAVADO y STOCK, y salen a ZONA DE DESPACHO y DESPACHADO, con el
+    #     mismo auto-bucle de re-control y la misma vuelta a taller;
+    #   - el codigo de hoy NO puede escribirlo: el unico `case 'Cc'` y las
+    #     seis ramas del motor de Lavado escriben todas la forma larga. Las
+    #     cinco apariciones de la forma corta en `Examples.php` son
+    #     `$crud->where(...)` de grillas de solo lectura, no asignaciones;
+    #   - hoy no hay ninguna unidad en ninguno de los dos estados.
+    "CONTROL DE CALIDAD": "CONTROL DE CALIDAD DESPACHO",
 }
 
 # Hallazgo 6: el proveedor esta modelado como estado. Para la matriz todos son
@@ -341,9 +391,9 @@ TRANSICIONES = {
          "Posicionamiento para carga", True),
         ("ZONA DE DESPACHO", "CONTROL DE CALIDAD DESPACHO",
          "Control de calidad previo (opcional)", False),
-        ("ZONA DE DESPACHO", "DESPACHADO", "Emisión de DT y salida del recinto", True),
+        ("ZONA DE DESPACHO", "DESPACHADO", "Salida del recinto, por portería contra VIN y RUT", True),
         ("CONTROL DE CALIDAD DESPACHO", "DESPACHADO",
-         "Emisión de DT y salida del recinto", True),
+         "Salida del recinto, por portería contra VIN y RUT", True),
     ],
     "CIDEF": [
         ("NAVEGANDO", "INGRESADO", "Recepción física de la nave", True),
@@ -372,7 +422,7 @@ TRANSICIONES = {
         ("CONTROL DE CALIDAD DESPACHO", "ZONA DE DESPACHO", "Calidad aprobada", True),
         ("CONTROL DE CALIDAD DESPACHO", "INGRESO A TALLER",
          "Rechazo de calidad, retrabajo", False),
-        ("ZONA DE DESPACHO", "DESPACHADO", "Emisión de DT y salida del recinto", True),
+        ("ZONA DE DESPACHO", "DESPACHADO", "Salida del recinto, por portería contra VIN y RUT", True),
     ],
 }
 
@@ -518,9 +568,15 @@ TEXTO_DE_ESTADO = {
     "ZONA DE DESPACHO": (
         "Zona de Despacho",
         "Unidad aprobada y posicionada para carga."),
+    # No es un "marcar como despachado": la misma pantalla arma y manda el
+    # informe de inspección de despacho. Verificado en `inicio_proces()`, que
+    # lee los nueve archivos de `inspeccion_despacho` (guía firmada y fotos del
+    # scanner) y los adjunta al correo. Decirlo en la tarjeta evita que alguien
+    # entre esperando un botón de un solo click.
     "DESPACHADO": (
         "Despachado",
-        "Emisión de DT y salida del recinto."),
+        "Salida por portería: se registra contra el VIN y el RUT del "
+        "transportista, y se manda el informe de inspección de despacho."),
 }
 
 
@@ -538,7 +594,7 @@ TEXTO_DE_ESTADO = {
 #   EN ESPERA DYP CONSOLIDADO        -> Actualizar PDI          falta
 #   SALIDA DYP                       -> Actualizar DYP          falta
 #   FR - MECANICA                    -> derivación a mecánica   falta
-#   DESPACHADO                       -> Despacho DT             falta
+#   DESPACHADO                       -> Despacho VIN            falta
 #
 # Ocho de los nueve todavia no tienen su formulario en Python: sus modulos no
 # estan migrados. Para esos la tarjeta dice que modulo lo hace y que todavia no
@@ -1103,7 +1159,7 @@ def registrar_movimiento(id_unidad):
         return redirect(url_for("movimientos.unidad", id_unidad=id_unidad))
 
     # Un estado que escribe otro modulo (cap. 3.2) no se confirma desde aca:
-    # la unidad llega a el cuando Actualizar DYP, el check list o Despacho DT
+    # la unidad llega a el cuando Actualizar DYP, el check list o Despacho VIN
     # lo ejecutan. Dejar el boton activo seria prometer un movimiento que esta
     # pantalla no puede hacer.
     if PASOS[paso].get("solo_lectura"):
