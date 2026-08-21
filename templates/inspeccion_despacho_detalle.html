@@ -1,0 +1,81 @@
+{% extends "base.html" %}
+{% block titulo %}Inspección {{ i['vin'] | mostrar }}{% endblock %}
+
+{% block contenido %}
+  <p class="volver">
+    <a href="{{ url_for('movimientos.unidad', id_unidad=i['unidad_id']) }}">‹ volver a la unidad</a>
+  </p>
+
+  <h1>Inspección de Despacho</h1>
+  <p class="subtitulo">
+    {{ i['vin'] | mostrar }}
+    · {{ i['marca'] | mostrar }} {{ i['modelo'] | mostrar }}
+    · guía {{ i['guia_despacho'] | mostrar }}
+    · destino {{ i['destino'] | mostrar }}
+  </p>
+
+  {% if errores %}
+    <div class="aviso aviso-malo">
+      <ul class="lista-errores">{% for e in errores %}<li>{{ e }}</li>{% endfor %}</ul>
+    </div>
+  {% endif %}
+
+  {% if request.args.get('agregada') %}
+    <div class="aviso">Foto {{ request.args.get('agregada') }} agregada.</div>
+  {% endif %}
+
+  <section class="grupo">
+    <h2>Datos de la entrega</h2>
+    <dl class="campos">
+      <div><dt>Fecha de despacho</dt><dd>{{ i['fecha_despacho'] | mostrar }}</dd></div>
+      <div><dt>Cliente</dt><dd>{{ i['cliente'] | mostrar }}</dd></div>
+      <div><dt>Patente</dt><dd>{{ i['patente'] | mostrar }}</dd></div>
+      <div><dt>Estanque</dt><dd>{{ i['estanque'] | mostrar }}</dd></div>
+      <div><dt>Kilometraje</dt><dd>{{ i['kilometraje'] | mostrar }}</dd></div>
+      <div><dt>Llaves</dt><dd>{{ i['llaves'] | mostrar }}</dd></div>
+      <div><dt>Encargado</dt><dd>{{ i['encargado'] | mostrar }}</dd></div>
+    </dl>
+  </section>
+
+  <section class="grupo">
+    <h2>
+      Fotos
+      <span class="cuenta">{{ cargadas }} de {{ max_archivos }}</span>
+    </h2>
+
+    {% if not fotos %}
+      <p class="vacio">Todavía no se cargó ninguna foto.</p>
+    {% else %}
+      <div class="fotos" data-galeria>
+        {% for slot, url in fotos %}
+          <a href="{{ url }}" target="_blank" rel="noopener" title="{{ slot }}"
+             data-lightbox data-indice="{{ loop.index0 }}">
+            <img src="{{ url }}" loading="lazy" alt="{{ slot }}">
+          </a>
+        {% endfor %}
+      </div>
+    {% endif %}
+
+    {# Una foto por envío, igual que el sistema anterior: cada una ocupa el
+       siguiente slot libre de archivo1..archivo9. El tope no es una decisión
+       de esta pantalla — la ficha tiene nueve columnas y no más. #}
+    {% if completo %}
+      <p class="vacio">
+        Ya están cargadas las {{ max_archivos }} fotos que admite la ficha.
+      </p>
+    {% else %}
+      <form method="post" enctype="multipart/form-data" class="form-paso"
+            action="{{ url_for('inspeccion_despacho.agregar_foto', id_inspeccion=i['id']) }}">
+        <label class="campo-ancho">
+          <span>Agregar foto {{ cargadas + 1 }}</span>
+          <input type="file" name="imagen" accept="image/*" capture="environment">
+        </label>
+        <button type="submit" class="boton">Agregar foto</button>
+      </form>
+    {% endif %}
+  </section>
+
+  <script>
+    {% include "_reducir_fotos_js.html" %}
+  </script>
+{% endblock %}

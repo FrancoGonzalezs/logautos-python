@@ -1,0 +1,95 @@
+{% extends "base.html" %}
+{% block titulo %}Inspección de Despacho — {{ u['vin'] | mostrar }}{% endblock %}
+
+{% block contenido %}
+  <p class="volver">
+    <a href="{{ url_for('movimientos.unidad', id_unidad=u['id']) }}">‹ volver a la unidad</a>
+  </p>
+
+  <h1>Inspección de Despacho</h1>
+  <p class="subtitulo">
+    {{ u['vin'] | mostrar }}
+    · {{ u['marca'] | mostrar }} {{ u['modelo'] | mostrar }}
+    · {{ u['color'] | mostrar }}
+    · patente {{ u['patente'] | mostrar }}
+    · <strong>{{ u['clientecompleto'] | mostrar }}</strong>
+  </p>
+
+  {% if despachada %}
+    {# El mismo rechazo del sistema anterior, con sus palabras: la inspección
+       documenta cómo sale la unidad, y una vez que salió no hay nada que
+       documentar. #}
+    <div class="aviso aviso-malo">
+      Esta unidad ya está <strong>DESPACHADA</strong>. No se le puede hacer la
+      inspección de despacho.
+    </div>
+  {% endif %}
+
+  {% if errores %}
+    <div class="aviso aviso-malo">
+      <strong>No se guardó nada.</strong>
+      <ul class="lista-errores">{% for e in errores %}<li>{{ e }}</li>{% endfor %}</ul>
+      <p class="nota-errores">La foto hay que volver a elegirla.</p>
+    </div>
+  {% endif %}
+
+  {% if previas %}
+    <div class="aviso">
+      Esta unidad tiene <strong>{{ previas | length }}</strong>
+      inspección{{ 'es' if previas|length != 1 }} en el sistema anterior.
+      La que se cargue acá es nueva y no las pisa.
+    </div>
+  {% endif %}
+
+  <form method="post" enctype="multipart/form-data" class="form-paso"
+        action="{{ url_for('inspeccion_despacho.crear', id_unidad=u['id']) }}">
+
+    <div class="campos-paso">
+      <label>
+        <span>Guía de despacho</span>
+        <input type="text" name="guia_despacho" value="{{ v.get('guia_despacho') or '' }}">
+      </label>
+      <label>
+        <span>Destino</span>
+        <input type="text" name="destino" style="text-transform:uppercase"
+               value="{{ v.get('destino') or u['destino'] | mostrar }}">
+      </label>
+      <label>
+        <span>Fecha de despacho</span>
+        <input type="date" name="fecha_despacho" value="{{ v.get('fecha_despacho') or hoy }}">
+      </label>
+      <label>
+        <span>Estanque</span>
+        <input type="text" name="estanque" value="{{ v.get('estanque') or '' }}"
+               placeholder="ej. 1/4">
+      </label>
+      <label>
+        <span>Kilometraje</span>
+        <input type="text" name="kilometraje" value="{{ v.get('kilometraje') or '' }}">
+      </label>
+      <label>
+        <span>Llaves</span>
+        <input type="text" name="llaves" value="{{ v.get('llaves') or '' }}"
+               placeholder="cuántas se entregan">
+      </label>
+    </div>
+
+    {# Marca, modelo, color, patente y cliente NO se piden: salen de la unidad.
+       En el original viajan como campos del POST y por eso se pueden editar
+       antes de mandarlos; acá se copian de la ficha, que es la fuente. #}
+    <p class="vacio">
+      Marca, modelo, color, patente y cliente se toman de la unidad.
+    </p>
+
+    <label class="campo-ancho">
+      <span>Foto de la unidad</span>
+      <input type="file" name="unidad" accept="image/*" capture="environment">
+      <small>Es la foto general. Las de detalle se agregan después, hasta 9.</small>
+    </label>
+
+    <p class="firma">La registra <strong>{{ encargado }}</strong></p>
+    <button type="submit" class="boton" {% if despachada %}disabled{% endif %}>
+      Crear inspección de despacho
+    </button>
+  </form>
+{% endblock %}

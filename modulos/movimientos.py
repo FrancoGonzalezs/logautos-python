@@ -134,6 +134,18 @@ PASOS = {
         "estado_destino": "ZONA DE LAVADO",
         "pide": [],
     },
+    "inspeccion_despacho": {
+        "titulo": "Inspección de Despacho",
+        "detalle": "Registrar cómo sale la unidad: guía, destino, estanque, "
+                   "kilometraje, llaves y fotos.",
+        "estado_destino": "ZONA DE DESPACHO",
+        "pide": [],
+        # Como el check list y la revision de contenedor: son ~13 campos mas
+        # una foto general mas hasta nueve de detalle, que no entran en la
+        # tarjeta. El estado destino es el MISMO de origen porque la inspeccion
+        # no mueve la unidad -- es un hito, no un arco.
+        "formulario": "inspeccion_despacho.entrada",
+    },
     "check_mecanica": {
         "titulo": "Check de Mecánica",
         "detalle": "Revisión mecánica (alimenta check_list_mecanica).",
@@ -730,6 +742,15 @@ def _tiene_contenedor(vin):
     return fila is not None
 
 
+def _tiene_inspeccion_despacho(vin):
+    """Import diferido a proposito: `inspeccion_despacho` importa de este
+    modulo (registrar, recomendar, estado_fisico), asi que hacerlo arriba seria
+    un import circular. Es el unico lugar donde el motor necesita algo de ese
+    modulo."""
+    from modulos.inspeccion_despacho import tiene_inspeccion
+    return tiene_inspeccion(vin)
+
+
 def es_retorno(unidad):
     """True si este VIN ya pasó antes por el sistema.
 
@@ -851,6 +872,21 @@ def recomendar(unidad):
         return _reco("revision_contenedor",
                      "Primera vez de esta unidad en el sistema y es CIDEF: "
                      "corresponde revisión de contenedor antes del check list.",
+                     desde=estado)
+
+    # La inspeccion de despacho tampoco es un estado del documento: la unidad
+    # entra y sale de ella en ZONA DE DESPACHO. Por eso va antes de la matriz,
+    # por el mismo motivo que la revision de contenedor -- si se dejara decidir
+    # a la matriz, ZONA DE DESPACHO derivaria directo a DESPACHADO y este paso
+    # no se ofreceria nunca.
+    #
+    # Y el orden importa de verdad: la inspeccion documenta COMO sale la
+    # unidad, asi que tiene que hacerse antes de que salga. Despues ya no hay
+    # nada que documentar, y el propio sistema viejo la rechaza.
+    if estado == "ZONA DE DESPACHO" and not _tiene_inspeccion_despacho(unidad["vin"]):
+        return _reco("inspeccion_despacho",
+                     "Está en ZONA DE DESPACHO y todavía no tiene inspección "
+                     "de despacho: se registra antes de que la unidad salga.",
                      desde=estado)
 
     por_matriz = _reco_por_matriz(cliente, estado, hitos)

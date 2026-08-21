@@ -16,6 +16,7 @@ from modulos.acceso import bp as bp_acceso, registrar_guardia, usuario_actual
 from modulos.catalogos import bp as bp_catalogos
 from modulos.check_list import bp as bp_check_list
 from modulos.facturacion import bp as bp_facturacion
+from modulos.inspeccion_despacho import bp as bp_inspeccion_despacho
 from modulos.kpis import bp as bp_kpis
 from modulos.movimientos import bp as bp_movimientos
 from modulos.ot import bp as bp_ot
@@ -57,6 +58,7 @@ def crear_app():
     app.register_blueprint(bp_movimientos)
     app.register_blueprint(bp_check_list)
     app.register_blueprint(bp_revision_contenedor)
+    app.register_blueprint(bp_inspeccion_despacho)
     app.register_blueprint(bp_ot)
     app.register_blueprint(bp_catalogos)
     app.register_blueprint(bp_facturacion)
