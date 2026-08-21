@@ -1,0 +1,132 @@
+{% extends "base.html" %}
+{% block titulo %}PDI — {{ u['vin'] | mostrar }}{% endblock %}
+
+{% block contenido %}
+  <p class="volver">
+    <a href="{{ url_for('movimientos.unidad', id_unidad=u['id']) }}">‹ volver a la unidad</a>
+  </p>
+
+  <h1>PDI</h1>
+  <p class="subtitulo">
+    {{ u['vin'] | mostrar }}
+    · {{ u['marca'] | mostrar }} {{ u['modelo'] | mostrar }}
+    · <strong>{{ u['clientecompleto'] | mostrar }}</strong>
+    · está en {{ estado_actual }}
+  </p>
+
+  {% if solo_cidef %}
+    <div class="aviso aviso-malo">
+      La PDI es del proceso <strong>CIDEF</strong>. Esta unidad es
+      {{ u['clientecompleto'] | mostrar }}, y su proceso no la incluye.
+    </div>
+  {% endif %}
+
+  {% if ya_tiene %}
+    {# Se avisa ANTES y sin fingir una falla. El sistema anterior guardaba,
+       registraba el movimiento, y recién ahí mostraba un cartel rojo diciendo
+       que ya tenía PDI — o sea que llamaba error a algo que había funcionado. #}
+    <div class="aviso">
+      Esta unidad <strong>ya tiene una PDI</strong> registrada. Se puede cargar
+      otra si corresponde; queda como una PDI más en el historial.
+    </div>
+  {% endif %}
+
+  {% if paso_dyp %}
+    {# Es la regla que se replica del original: una unidad con proveedor DYP ya
+       asignado no vuelve atrás desde esta pantalla. #}
+    <div class="aviso">
+      Esta unidad ya tiene proveedor DYP asignado, así que <strong>el estado no
+      se va a mover</strong>: se queda en {{ estado_actual }}. El tilde de
+      FR - MECÁNICA no aplica en este caso.
+    </div>
+  {% endif %}
+
+  {% if errores %}
+    <div class="aviso aviso-malo">
+      <strong>No se guardó nada.</strong>
+      <ul class="lista-errores">{% for e in errores %}<li>{{ e }}</li>{% endfor %}</ul>
+    </div>
+  {% endif %}
+
+  <form method="post" class="form-paso"
+        action="{{ url_for('taller.guardar_pdi', id_unidad=u['id']) }}">
+
+    {# De dónde se vino, para saber a dónde volver al guardar. #}
+    <input type="hidden" name="volver" value="{{ volver }}">
+
+    <div class="campos-paso">
+      <label>
+        <span>Fecha de la PDI</span>
+        <input type="date" name="fecha" value="{{ v.get('fecha') or hoy }}">
+      </label>
+      <label>
+        <span>Tipo de combustible</span>
+        <select name="tipo_combu">
+          <option value="">— elegir —</option>
+          {% for c in combustibles %}
+            <option value="{{ c }}" {% if v.get('tipo_combu') == c %}selected{% endif %}>{{ c }}</option>
+          {% endfor %}
+        </select>
+      </label>
+      <label>
+        <span>Batería</span>
+        <select name="bateria">
+          <option value="">— elegir —</option>
+          {% for r in resultados %}
+            <option value="{{ r }}" {% if v.get('bateria') == r %}selected{% endif %}>{{ r }}</option>
+          {% endfor %}
+        </select>
+      </label>
+      <label>
+        <span>Scanner</span>
+        <select name="scanner">
+          <option value="">— elegir —</option>
+          {% for r in resultados %}
+            <option value="{{ r }}" {% if v.get('scanner') == r %}selected{% endif %}>{{ r }}</option>
+          {% endfor %}
+        </select>
+      </label>
+      <label>
+        <span>Aire acondicionado</span>
+        <select name="a_c">
+          <option value="">— elegir —</option>
+          {% for r in resultados %}
+            <option value="{{ r }}" {% if v.get('a_c') == r %}selected{% endif %}>{{ r }}</option>
+          {% endfor %}
+        </select>
+      </label>
+    </div>
+
+    <label class="campo-ancho">
+      <span>Observación mecánica</span>
+      <textarea name="ob_mecanica" rows="3">{{ v.get('ob_mecanica') or '' }}</textarea>
+    </label>
+
+    <fieldset class="grupo">
+      <legend>Resultado</legend>
+      <label>
+        <input type="checkbox" name="fr_mecanica" value="1"
+               {% if v.get('fr_mecanica') %}checked{% endif %}
+               {% if paso_dyp %}disabled{% endif %}>
+        La unidad debe quedar en <strong>FR - MECÁNICA</strong> (espera repuesto)
+      </label>
+      <p class="vacio">
+        Sin tildar, la unidad pasa a <strong>EN ESPERA DYP CONSOLIDADO</strong>.
+        Si se tilda, la observación mecánica es obligatoria.
+      </p>
+    </fieldset>
+
+    {# Las cuatro revisiones que el PDI sella con la fecha de hoy no se piden:
+       se completan solas al guardar, igual que en el sistema anterior. Se dice
+       para que nadie las busque en el formulario. #}
+    <p class="vacio">
+      Al guardar se registran con la fecha de hoy: aceite coco, sistema de
+      audio, AdBlue y aceite diferencial.
+    </p>
+
+    <p class="firma">La registra <strong>{{ encargado }}</strong></p>
+    <button type="submit" class="boton" {% if solo_cidef %}disabled{% endif %}>
+      Guardar PDI
+    </button>
+  </form>
+{% endblock %}

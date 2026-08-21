@@ -48,6 +48,23 @@
          class="{{ 'activo' if seccion in ('movimientos', 'check_list') }}">
         <span class="num">01</span> Movimientos
       </a>
+      {# PDI e IT tienen entrada propia además de la tarjeta de Movimientos.
+         No es un duplicado: el guardado es el mismo, cambia por dónde se
+         entra. El movilizador escanea de a una unidad en el patio; el jefe de
+         mecánicos junta VIN en papel durante el día y los pasa de a uno desde
+         la notebook, y para eso conviene una pantalla que quede lista para el
+         VIN siguiente en vez de mandarlo de vuelta a la ficha.
+
+         Los nombres son los mismos del sistema anterior, para que se
+         reconozcan sin explicación. #}
+      <a href="{{ url_for('taller.lista_pdi') }}"
+         class="{{ 'activo' if request.endpoint in ('taller.lista_pdi', 'taller.pdi') }}">
+        <span class="num">01a</span> Actualizar PDI
+      </a>
+      <a href="{{ url_for('taller.lista_it') }}"
+         class="{{ 'activo' if request.endpoint in ('taller.lista_it', 'taller.it') }}">
+        <span class="num">01b</span> Resultado de revisión IT
+      </a>
       <a href="{{ url_for('ot.listado') }}" class="{{ 'activo' if seccion == 'ot' }}">
         <span class="num">02</span> Órdenes de Trabajo
       </a>

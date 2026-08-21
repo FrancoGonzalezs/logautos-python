@@ -1,0 +1,41 @@
+{% extends "base.html" %}
+{% block titulo %}{{ titulo }}{% endblock %}
+
+{% block contenido %}
+  <h1>{{ titulo }}</h1>
+  <p class="subtitulo">{{ bajada }}</p>
+
+  {% if hecho %}
+    {# Se confirma lo recién cargado y el campo queda vacío y con foco para el
+       VIN siguiente. Es el caso real de esta pantalla: el jefe de mecánicos
+       pasa una lista de VIN anotados en papel, uno atrás del otro. #}
+    <div class="aviso">
+      Cargado <strong>{{ hecho }}</strong>{% if quedo %} — quedó en
+      <strong>{{ quedo }}</strong>{% endif %}. Seguí con el siguiente VIN.
+    </div>
+  {% endif %}
+
+  {# El mismo buscador del resto del sistema: se reusa el componente, no se
+     hace uno nuevo. Acá pesa más el texto que el QR — el jefe de taller está
+     en su notebook con una lista escrita, no en el patio con el celular —,
+     pero el escáner viene incluido y no molesta. #}
+  {% with destino_buscador = url_for(endpoint_lista) %}
+    {% include "_buscador_unidad.html" %}
+  {% endwith %}
+
+  <div data-resultados>{% include "_resultados_taller.html" %}</div>
+
+  <script>
+    {% with destino_buscador = url_for(endpoint_lista) %}
+      {% include "_buscador_unidad_js.html" %}
+    {% endwith %}
+
+    /* Tras guardar, el foco va al campo de búsqueda vacío: encadenar VIN es
+       el motivo de existir de esta pantalla. */
+    (function () {
+      var campo = document.querySelector('input[type=search]');
+      if (!campo) { return; }
+      if (!campo.value) { campo.focus(); }
+    })();
+  </script>
+{% endblock %}

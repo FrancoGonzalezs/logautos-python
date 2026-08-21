@@ -1,0 +1,92 @@
+{% extends "base.html" %}
+{% block titulo %}Resultado IT — {{ u['vin'] | mostrar }}{% endblock %}
+
+{% block contenido %}
+  <p class="volver">
+    <a href="{{ url_for('movimientos.unidad', id_unidad=u['id']) }}">‹ volver a la unidad</a>
+  </p>
+
+  <h1>Resultado de revisión IT</h1>
+  <p class="subtitulo">
+    {{ u['vin'] | mostrar }}
+    · {{ u['marca'] | mostrar }} {{ u['modelo'] | mostrar }}
+    · <strong>{{ u['clientecompleto'] | mostrar }}</strong>
+    · está en {{ estado_actual }}
+  </p>
+
+  {# El destino depende del cliente y se dice de entrada, para que el operario
+     sepa a dónde va a quedar la unidad antes de guardar. #}
+  <div class="aviso">
+    Al guardar, la unidad queda en <strong>{{ destino }}</strong>.
+  </div>
+
+  {% if previo %}
+    <div class="aviso">
+      Ya hay una revisión IT registrada para esta unidad
+      ({{ previo['estado_it'] | mostrar }}, {{ previo['creado_en'][:10] }}).
+      Se puede cargar otra si corresponde.
+    </div>
+  {% endif %}
+
+  {% if errores %}
+    <div class="aviso aviso-malo">
+      <strong>No se guardó nada.</strong>
+      <ul class="lista-errores">{% for e in errores %}<li>{{ e }}</li>{% endfor %}</ul>
+    </div>
+  {% endif %}
+
+  <form method="post" class="form-paso"
+        action="{{ url_for('taller.guardar_it', id_unidad=u['id']) }}">
+
+    {# De dónde se vino, para saber a dónde volver al guardar. #}
+    <input type="hidden" name="volver" value="{{ volver }}">
+
+    <div class="campos-paso">
+      <label>
+        <span>Estado IT</span>
+        <select name="estado_it" data-estado-it>
+          <option value="">— elegir —</option>
+          {% for r in resultados %}
+            <option value="{{ r }}" {% if v.get('estado_it') == r %}selected{% endif %}>{{ r }}</option>
+          {% endfor %}
+        </select>
+        <small>Alimenta el KPI de incidentes mecánicos.</small>
+      </label>
+    </div>
+
+    <label class="campo-ancho">
+      <span>Observación IT</span>
+      <textarea name="observacion_it" rows="3"
+                data-observacion-it>{{ v.get('observacion_it') or '' }}</textarea>
+      <small data-nota-obligatoria hidden>
+        Obligatoria porque la unidad presenta fallas.
+      </small>
+    </label>
+
+    <p class="firma">La registra <strong>{{ encargado }}</strong></p>
+    <button type="submit" class="boton">Guardar resultado IT</button>
+  </form>
+
+  <script>
+    /*
+     * Marca la observación como obligatoria en cuanto se elige PRESENTA
+     * FALLAS, sin esperar al envío. El servidor valida lo mismo igual: esto es
+     * comodidad, no la validación.
+     */
+    (function () {
+      var estado = document.querySelector('[data-estado-it]');
+      var obs = document.querySelector('[data-observacion-it]');
+      var nota = document.querySelector('[data-nota-obligatoria]');
+      if (!estado || !obs || !nota) { return; }
+
+      function revisar() {
+        var hace_falta = estado.value === 'PRESENTA FALLAS';
+        nota.hidden = !hace_falta;
+        obs.required = hace_falta;
+      }
+
+      estado.addEventListener('change', revisar);
+      revisar();
+    })();
+  </script>
+{% endblock %}

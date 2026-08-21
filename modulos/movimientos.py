@@ -117,16 +117,15 @@ PASOS = {
     },
     "pdi": {
         "titulo": "PDI",
-        "detalle": "Inspección de preentrega.",
-        "estado_destino": "STOCK",
+        "detalle": "Inspección de preentrega: combustible, batería, scanner y "
+                   "aire acondicionado.",
+        # Destino NOMINAL. El real lo decide el formulario y queda en el
+        # `estado_hacia` del movimiento: FR - MECANICA si el jefe de taller
+        # tilda que espera repuesto, y el estado actual sin mover si la unidad
+        # ya tiene proveedor DYP asignado. Ver modulos/taller.py.
+        "estado_destino": "EN ESPERA DYP CONSOLIDADO",
         "pide": [],
-        # La PDI es el unico paso con resultado: no cambia cual es el siguiente
-        # paso recomendado, pero si queda registrado cual de los tres fue.
-        "resultados": [
-            ("sin_novedad", "Sin novedad, nunca fue a taller"),
-            ("taller_completado", "Fue a taller, reparación completada"),
-            ("taller_no_completado", "Fue a taller, reparación no se completó"),
-        ],
+        "formulario": "taller.pdi",
     },
     "lavado_produccion": {
         "titulo": "Lavado Producción",
@@ -490,9 +489,24 @@ def motivo_obligatorio(desde, hacia):
 PASOS_INDEPENDIENTES = {"ingreso", "revision_contenedor"}
 
 
+# Estados que produce un paso cuyo nombre no coincide con el del estado. La
+# PDI es el caso: el motor recomienda el ESTADO al que hay que llegar
+# ('espera_dyp_consolidado' o 'fr_mecanica', segun el tilde del jefe de
+# taller), pero el movimiento se registra como el paso 'pdi', que es el nombre
+# con el que el resto del motor lo conoce -- entre otras cosas, es su clave de
+# hito. Sin esta equivalencia, hacer la PDI justo cuando el motor la pedia
+# figuraria como desvio.
+PASO_QUE_PRODUCE = {
+    "espera_dyp_consolidado": "pdi",
+    "fr_mecanica": "pdi",
+}
+
+
 def es_desvio(recomendado, elegido):
     """Si elegir `elegido` teniendo `recomendado` cuenta como desvio."""
     if elegido == recomendado:
+        return False
+    if PASO_QUE_PRODUCE.get(recomendado) == elegido:
         return False
     if recomendado in PASOS_INDEPENDIENTES and elegido in PASOS_INDEPENDIENTES:
         return False
@@ -619,6 +633,13 @@ TEXTO_DE_ESTADO = {
 FORMULARIO_DE_ESTADO = {
     "EN ESPERA DE CHECK LIST INGRESO": ("check_list.formulario",
                                         "Check List de Ingreso"),
+    # Los dos destinos de la PDI llevan al mismo formulario: cual de los dos
+    # queda lo decide el tilde de FR - MECANICA adentro.
+    "EN ESPERA DYP CONSOLIDADO": ("taller.pdi", "PDI"),
+    "FR - MECANICA": ("taller.pdi", "PDI"),
+    # Y los dos del IT, que se reparten por cliente.
+    "INGRESO A TALLER": ("taller.it", "Resultado de revisión IT"),
+    "INSPECCION MECANICA DESPACHO": ("taller.it", "Resultado de revisión IT"),
 }
 
 
@@ -724,10 +745,27 @@ def estado_efectivo(unidad):
     lo hay, y si no el de la replica."""
     if unidad["vin"]:
         ultimo = consultar(
-            "SELECT paso FROM movimientos_regla WHERE vin = ? "
+            "SELECT paso, estado_hacia FROM movimientos_regla WHERE vin = ? "
             "ORDER BY id DESC LIMIT 1", (unidad["vin"],), una=True)
-        if ultimo and ultimo["paso"] in PASOS:
-            return PASOS[ultimo["paso"]]["estado_destino"], True
+        if ultimo:
+            # `estado_hacia` es donde la unidad quedo DE VERDAD, y manda sobre
+            # el `estado_destino` del paso. Dos razones:
+            #
+            #   - hay pasos con destino condicional. La PDI termina en
+            #     FR - MECANICA o en EN ESPERA DYP CONSOLIDADO segun el tilde
+            #     del jefe de taller, y si la unidad ya tiene proveedor DYP no
+            #     se mueve de donde esta: un solo valor fijo no puede
+            #     representar eso.
+            #   - los pasos que son hito -- check list, revision de contenedor,
+            #     inspeccion de despacho -- declaran como destino el estado en
+            #     que suelen ocurrir. Derivar de ahi hacia que una unidad que
+            #     recibio el check list estando en STOCK pasara a figurar en
+            #     ZONA DE RECEPCION, que es falso. El arco guardado no miente.
+            if ultimo["estado_hacia"]:
+                return ultimo["estado_hacia"], True
+            # Movimientos viejos, anteriores a que se guardara el arco.
+            if ultimo["paso"] in PASOS:
+                return PASOS[ultimo["paso"]]["estado_destino"], True
     return unidad["despachado"], False
 
 
