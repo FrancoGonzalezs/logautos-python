@@ -188,7 +188,16 @@
    * con recarga: por eso el `action` y el botón submit siguen en el HTML.
    */
   (function () {
-    var ESPERA = 800;
+    // 300 ms, no 800. Los 800 vienen de cuando cada búsqueda era una
+    // navegación completa: el número existía para que la página no se
+    // recargara con cada tecla. Ese motivo desapareció con el rediseño — hoy
+    // es un fetch que no toca el campo ni la página —, así que lo único que
+    // hacía era que la búsqueda se sintiera lenta.
+    //
+    // El valor sale de comparar con Talca (taller-inventario), que usa entre
+    // 250 y 400 ms para sus búsquedas contra el servidor. Con la petición
+    // anterior cancelada en cada tecla, escribir rápido no genera una cola.
+    var ESPERA = 300;
     // Con menos de esto no se busca solo. Igual se puede forzar con Enter o
     // con el botón: el mínimo gobierna el disparo automático, no la voluntad
     // explícita del usuario.
