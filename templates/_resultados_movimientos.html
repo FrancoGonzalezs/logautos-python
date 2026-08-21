@@ -1,0 +1,30 @@
+{% from "_macros.html" import badge_estado %}
+{# Resultados de la búsqueda de Movimientos. Vive aparte porque la
+   búsqueda en vivo lo pide suelto por fetch y lo inyecta sin recargar
+   la página: la vista devuelve SOLO este parcial cuando le llega
+   `fragmento=1`. #}
+  {% if texto %}
+    {% if not resultados %}
+      <div class="aviso">Ninguna unidad coincide con <strong>{{ texto }}</strong>.</div>
+    {% else %}
+      <p class="resumen">{{ resultados|length }} unidad{{ 'es' if resultados|length != 1 }}</p>
+      <div class="tabla-scroll">
+        <table>
+          <thead><tr><th>id</th><th>VIN</th><th>Patente</th><th>Marca</th><th>Modelo</th><th>Cliente</th><th>Estado</th></tr></thead>
+          <tbody>
+            {% for r in resultados %}
+              <tr>
+                <td><a href="{{ url_for('movimientos.unidad', id_unidad=r['id']) }}">{{ r['id'] }}</a></td>
+                <td><a href="{{ url_for('movimientos.unidad', id_unidad=r['id']) }}">{{ r['vin'] | mostrar }}</a></td>
+                <td>{{ r['patente'] | mostrar }}</td>
+                <td>{{ r['marca'] | mostrar }}</td>
+                <td>{{ r['modelo'] | mostrar }}</td>
+                <td>{{ r['clientecompleto'] | mostrar }}</td>
+                <td>{{ badge_estado(r['despachado']) }}</td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    {% endif %}
+  {% endif %}

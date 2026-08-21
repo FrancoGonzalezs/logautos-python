@@ -95,32 +95,7 @@
         {% include "_buscador_unidad.html" %}
       {% endwith %}
 
-      {% if texto %}
-        {% if not resultados %}
-          <div class="aviso">Ninguna unidad coincide con <strong>{{ texto }}</strong>.</div>
-        {% else %}
-          <div class="tabla-scroll">
-            <table>
-              <thead><tr><th>VIN</th><th>Patente</th><th>Marca</th><th>Modelo</th><th>Cliente</th><th></th></tr></thead>
-              <tbody>
-                {% for r in resultados %}
-                  <tr>
-                    <td>{{ r['vin'] | mostrar }}</td>
-                    <td>{{ r['patente'] | mostrar }}</td>
-                    <td>{{ r['marca'] | mostrar }}</td>
-                    <td>{{ r['modelo'] | mostrar }}</td>
-                    <td>{{ r['clientecompleto'] | mostrar }}</td>
-                    <td>
-                      <a class="boton" href="{{ url_for('revision_contenedor.evidencia', id_contenedor=c['id'], id_unidad=r['id']) }}">
-                        Agregar</a>
-                    </td>
-                  </tr>
-                {% endfor %}
-              </tbody>
-            </table>
-          </div>
-        {% endif %}
-      {% endif %}
+      <div data-resultados>{% include "_resultados_contenedor.html" %}</div>
     </section>
 
     {# OJO CON EL NOMBRE: en el sistema anterior este botón se llama "Finalizar

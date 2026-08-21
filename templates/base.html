@@ -140,40 +140,130 @@
   })();
 
   /*
-   * Búsqueda en vivo. Como la app renderiza en el servidor, "en vivo" es
-   * enviar el formulario con un debounce; sin él saldría una consulta por
-   * tecla contra las 71.546 filas.
+   * Búsqueda en vivo, SIN recargar la página.
    *
-   * Al recargar hay que devolver el foco al campo Y poner el cursor al final:
-   * con autofocus solo, el cursor queda al principio del texto y la siguiente
-   * letra se escribiría al revés. Sin esto la búsqueda en vivo es inusable.
+   * Por qué se rediseñó
+   * -------------------
+   * Antes "en vivo" era `form.submit()` con debounce, o sea una navegación
+   * completa por búsqueda. Eso produjo tres bugs distintos, uno atrás del
+   * otro, y los dos primeros parches no llegaron al fondo:
+   *
+   *   1. VENTANA CIEGA. Entre el submit y la página nueva, todo lo tecleado
+   *      caía en un DOM que ya se estaba descartando. Medido: 72 ms de ida y
+   *      vuelta en local pero 300-434 ms contra Railway, con picos de 693.
+   *   2. SALTO PREMATURO. El servidor entraba directo a la unidad con
+   *      cualquier búsqueda de un solo resultado — escribiendo un VIN, al
+   *      sexto carácter ya no quedaba más que una y la pantalla se iba sola.
+   *   3. CARRERA ENTRE NAVEGACIONES. Dos búsquedas en vuelo y la que
+   *      contestaba última pisaba el campo, aunque fuera la más vieja.
+   *
+   * Sin navegación, (1) y (3) dejan de ser posibles: el campo nunca se
+   * reemplaza, así que no hay nada que perder ni que pisar. (2) se resuelve
+   * del lado del servidor, que no entra solo cuando la petición trae
+   * `fragmento=1`.
+   *
+   * Qué navega y qué no
+   * -------------------
+   * La página entera se carga SOLO cuando el usuario lo pide: Enter, el botón
+   * Buscar, el escáner de QR, o un clic en un resultado. Tipear nunca navega.
+   *
+   * Sin JavaScript el formulario sigue siendo un GET normal y funciona igual,
+   * con recarga: por eso el `action` y el botón submit siguen en el HTML.
    */
   (function () {
-    var ESPERA = 300;
+    var ESPERA = 800;
+    // Con menos de esto no se busca solo. Igual se puede forzar con Enter o
+    // con el botón: el mínimo gobierna el disparo automático, no la voluntad
+    // explícita del usuario.
+    var MINIMO = 3;
+
+    // Sin fetch o sin AbortController no se intenta nada raro: se deja el
+    // formulario como GET normal, que es exactamente el comportamiento viejo.
+    var puede = typeof window.fetch === 'function' &&
+                typeof window.AbortController === 'function';
 
     Array.prototype.forEach.call(
       document.querySelectorAll('form[data-buscar-vivo]'),
       function (form) {
         var campo = form.querySelector('input[type=search]');
+        var destino = form.querySelector('[data-resultados]') ||
+                      document.querySelector('[data-resultados]');
         if (!campo) { return; }
+        if (!puede || !destino) { return; }
+
         var timer = null;
         var ultimo = campo.value;
+        var enVuelo = null;
+
+        function url(fragmento) {
+          var datos = new URLSearchParams(new FormData(form));
+          // Una búsqueda nueva empieza en la página 1.
+          datos.delete('pagina');
+          if (fragmento) { datos.set('fragmento', '1'); }
+          var base = form.getAttribute('action') || location.pathname;
+          return base + '?' + datos.toString();
+        }
+
+        function buscar() {
+          var pedido = campo.value;
+
+          // Cancelar la anterior es lo que mata la condición de carrera de
+          // raíz: si el usuario sigue escribiendo, la respuesta vieja ya no
+          // interesa y no queremos ni que llegue.
+          if (enVuelo) { enVuelo.abort(); }
+          var control = new AbortController();
+          enVuelo = control;
+
+          form.setAttribute('data-buscando', '');
+
+          fetch(url(true), {
+            signal: control.signal,
+            headers: {'X-Requested-With': 'fetch'}
+          }).then(function (res) {
+            // El servidor redirige cuando lo tipeado ES el VIN completo de
+            // una unidad: ahí sí terminó de escribir, y corresponde entrar.
+            if (res.redirected) { location.href = res.url; return null; }
+            return res.text();
+          }).then(function (html) {
+            if (html === null) { return; }
+            // Segunda red de seguridad, además del abort: si mientras volvía
+            // la respuesta el campo cambió, esta ya no corresponde. Descartar
+            // es obligatorio -- pintarla sería mostrar resultados de algo que
+            // el usuario ya no tiene escrito.
+            if (campo.value !== pedido) { return; }
+            destino.innerHTML = html;
+            // La barra de direcciones acompaña, para que recargar o compartir
+            // el link devuelva lo mismo que se está viendo. `replaceState` y
+            // no `pushState`: cada tecla no es un paso del historial.
+            try { history.replaceState(null, '', url(false)); } catch (e) {}
+            form.removeAttribute('data-buscando');
+          }).catch(function (e) {
+            if (e && e.name === 'AbortError') { return; }
+            // Si la búsqueda en vivo falla no se rompe nada: queda lo que se
+            // estaba mostrando y el usuario puede apretar Buscar.
+            form.removeAttribute('data-buscando');
+          });
+        }
 
         campo.addEventListener('input', function () {
           clearTimeout(timer);
           timer = setTimeout(function () {
             if (campo.value === ultimo) { return; }
+            // El campo VACÍO sí dispara, aunque no llegue al mínimo: borrar lo
+            // escrito es pedir volver al listado completo.
+            var texto = campo.value.trim();
+            if (texto.length > 0 && texto.length < MINIMO) { return; }
             ultimo = campo.value;
-            // Una búsqueda nueva empieza en la página 1.
-            var pagina = form.querySelector('[name=pagina]');
-            if (pagina) { pagina.value = ''; }
-            form.submit();
+            buscar();
           }, ESPERA);
         });
 
-        // Enter no tiene por qué esperar el debounce.
-        campo.addEventListener('keydown', function (e) {
-          if (e.key === 'Enter') { clearTimeout(timer); }
+        // Enter y el botón Buscar navegan de verdad: son la confirmación
+        // explícita. Se cancela el debounce para no dejar un fetch colgado
+        // mientras la página se va.
+        form.addEventListener('submit', function () {
+          clearTimeout(timer);
+          if (enVuelo) { enVuelo.abort(); }
         });
 
         if (campo.value) {

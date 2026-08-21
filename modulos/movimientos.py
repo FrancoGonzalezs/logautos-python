@@ -1094,10 +1094,39 @@ def buscar():
     texto = request.args.get("q", "").strip()
     resultados = _buscar(texto)
 
-    # Un solo resultado: se entra directo, que es lo que pasa siempre que se
-    # escanea un QR. Hacer clickear una lista de uno sería un paso al pedo.
+    # Entrar directo a la unidad cuando hay un solo resultado es lo correcto
+    # para el escaner y para el VIN escrito entero. Pero antes se disparaba con
+    # CUALQUIER busqueda de un resultado, y eso rompia el tipeo:
+    #
+    #   escribiendo el VIN LVVDB21B1PD036098, al sexto caracter -- '036098' --
+    #   ya no queda mas que una unidad en la replica, asi que la pantalla se
+    #   iba sola a la ficha con el usuario a mitad de camino. Visto en video,
+    #   cuadro por cuadro. Y explica el otro sintoma que parecia aparte: entrar
+    #   por "buscar otra unidad", borrar y reescribir, y que "no tome el
+    #   texto" -- no es que no lo tome, es que volvio a saltar.
+    #
+    # Por eso ahora hace falta una señal EXPLICITA de que el usuario termino.
+    # Son dos, y alcanza con una:
+    #
+    #   - el envio no vino de la busqueda en vivo (Enter, el boton Buscar o el
+    #     escaner, que arma la URL a mano): el usuario lo pidio;
+    #   - lo tipeado ES el VIN completo de esa unidad. Se compara contra el VIN
+    #     del resultado en vez de exigir 17 caracteres porque en la replica los
+    #     VIN validos miden entre 15 y 19 (ver RE_VIN en kpis.py), asi que una
+    #     regla de largo fijo dejaria unidades reales afuera.
+    #
+    # Sin señal, la lista se muestra igual aunque tenga un solo elemento: un
+    # click de mas es barato, perder lo que se venia escribiendo no.
+    # `fragmento=1` lo manda SOLO la busqueda en vivo, que pide el bloque de
+    # resultados por fetch. Es la señal de "esto no lo pidio el usuario":
+    # Enter, el boton Buscar y el escaner navegan de verdad y no lo llevan.
+    en_vivo = request.args.get("fragmento") == "1"
     if texto and len(resultados) == 1:
-        return redirect(url_for("movimientos.unidad", id_unidad=resultados[0]["id"]))
+        tipeado = vin_limpio(texto)
+        es_vin_completo = bool(tipeado and tipeado == vin_limpio(resultados[0]["vin"]))
+        if not en_vivo or es_vin_completo:
+            return redirect(url_for("movimientos.unidad",
+                                    id_unidad=resultados[0]["id"]))
 
     # La fecha se puede cambiar y no esta clavada en hoy. No es un capricho:
     # la ultima asignacion del dump es de 2025-06-17, asi que con "hoy" fijo
@@ -1105,6 +1134,12 @@ def buscar():
     usuario = usuario_actual()
     fecha = request.args.get("fecha") or date.today().isoformat()
     identidades = _identidades_del_movilizador()
+
+    if en_vivo:
+        # Solo el bloque de resultados: el JS lo inyecta en `data-resultados`
+        # sin tocar el resto de la pantalla.
+        return render_template("_resultados_movimientos.html",
+                               texto=texto, resultados=resultados)
 
     return render_template(
         "movimientos_buscar.html",

@@ -709,6 +709,12 @@ def detalle(id_contenedor):
         return render_template("no_encontrado.html", que="contenedor",
                                id=id_contenedor), 404
     texto = request.args.get("q", "").strip()
+
+    # Igual que en Movimientos: la busqueda en vivo pide solo sus resultados.
+    if request.args.get("fragmento") == "1":
+        return render_template("_resultados_contenedor.html", c=cont, texto=texto,
+                               resultados=_buscar(texto) if texto else [])
+
     return render_template(
         "contenedor_detalle.html", c=cont,
         unidades=unidades_del_contenedor(id_contenedor),

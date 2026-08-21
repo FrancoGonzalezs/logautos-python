@@ -80,31 +80,9 @@
 
   {% with destino_buscador = url_for("movimientos.buscar") %}{% include "_buscador_unidad.html" %}{% endwith %}
 
-  {% if texto %}
-    {% if not resultados %}
-      <div class="aviso">Ninguna unidad coincide con <strong>{{ texto }}</strong>.</div>
-    {% else %}
-      <p class="resumen">{{ resultados|length }} unidad{{ 'es' if resultados|length != 1 }}</p>
-      <div class="tabla-scroll">
-        <table>
-          <thead><tr><th>id</th><th>VIN</th><th>Patente</th><th>Marca</th><th>Modelo</th><th>Cliente</th><th>Estado</th></tr></thead>
-          <tbody>
-            {% for r in resultados %}
-              <tr>
-                <td><a href="{{ url_for('movimientos.unidad', id_unidad=r['id']) }}">{{ r['id'] }}</a></td>
-                <td><a href="{{ url_for('movimientos.unidad', id_unidad=r['id']) }}">{{ r['vin'] | mostrar }}</a></td>
-                <td>{{ r['patente'] | mostrar }}</td>
-                <td>{{ r['marca'] | mostrar }}</td>
-                <td>{{ r['modelo'] | mostrar }}</td>
-                <td>{{ r['clientecompleto'] | mostrar }}</td>
-                <td>{{ badge_estado(r['despachado']) }}</td>
-              </tr>
-            {% endfor %}
-          </tbody>
-        </table>
-      </div>
-    {% endif %}
-  {% endif %}
+  {# El contenedor queda fijo; la búsqueda en vivo le reemplaza el
+     contenido sin tocar el resto de la página. #}
+  <div data-resultados>{% include "_resultados_movimientos.html" %}</div>
 
   <script>
     {% with destino_buscador = url_for("movimientos.buscar") %}{% include "_buscador_unidad_js.html" %}{% endwith %}

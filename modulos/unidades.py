@@ -713,8 +713,7 @@ def listado():
 
     columnas = [(c, titulo_de(c)) for c in CAMPOS_LISTADO]
 
-    return render_template(
-        "unidades_listado.html",
+    contexto = dict(
         filas=filas, columnas=columnas, total=total,
         pagina=pagina, por_pagina=POR_PAGINA,
         paginas=max(1, (total + POR_PAGINA - 1) // POR_PAGINA),
@@ -724,6 +723,13 @@ def listado():
         hay_filtros_avanzados=bool(
             numerico["campo"] and (numerico["min"] or numerico["max"])
             or fechas["campo"] and (fechas["desde"] or fechas["hasta"])))
+
+    # La busqueda en vivo pide SOLO el bloque de resultados y lo inyecta sin
+    # recargar la pagina. Es el mismo contexto: cambia que se renderiza.
+    if request.args.get("fragmento") == "1":
+        return render_template("_resultados_unidades.html", **contexto)
+
+    return render_template("unidades_listado.html", **contexto)
 
 
 @bp.route("/<int:id_unidad>")
