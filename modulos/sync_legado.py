@@ -45,6 +45,22 @@ evidencia que la sostiene.
    200 en 191 ms y `REGLA-sync/1.0` responde 200 en 156 ms. Es el mismo
    comportamiento que documento el sync de Talca con Bluehosting.
 
+El desfase horario de 4 horas
+-----------------------------
+La replica se armo de un dump exportado con otra zona horaria que la del
+servidor vivo: los timestamps locales estan 4 horas adelante. Medido sobre
+200 filas, el desfase es de +4,0 h en las 200 -- uniforme, no ruido.
+
+DECISION: el pull los alinea. Manda el legado, asi que al traer una fila se
+reescriben `created_at` y `updated_at` con los de alla. Es un cambio visible
+en toda fila que se toque, y es deliberado.
+
+Esto ademas es la prueba de por que la nota 3 importa. La marca de agua es el
+reloj del legado comparado contra si mismo, asi que el desfase no la afecta.
+Si Python hubiera usado su propio reloj, 4 horas de diferencia habrian hecho
+que el sync se salteara registros en silencio -- que es exactamente el modo
+de fallar que no se nota hasta que faltan datos.
+
 Lo que esta etapa NO hace
 -------------------------
 No empuja nada. El push (Python -> legado) viene despues, con su cola y su
@@ -293,9 +309,27 @@ def sincronizar_entidad(entidad, dry_run=False, desde=None, limite=None,
         pagina = 1
         muestra = []
 
+        # Los ids ya vistos, para distinguir "hay mucho por traer" de "el
+        # endpoint esta repitiendo la misma pagina". Sin esto las dos cosas se
+        # ven igual desde acá: muchas vueltas.
+        vistos = set()
+
         while pagina <= MAX_PAGINAS:
             datos = cliente.cambios(conf["ruta"], marca, limite, pagina)
             filas = datos.get("filas") or []
+
+            # Una pagina con filas que no aporta NI UN id nuevo solo puede ser
+            # el endpoint devolviendo lo mismo: si de verdad hubiera mas datos,
+            # traeria ids distintos. Se corta acá y no al llegar al tope,
+            # porque son 500 vueltas de diferencia contra el servidor.
+            nuevos = {f.get("id") for f in filas if f.get("id") is not None} - vistos
+            if filas and not nuevos:
+                raise RuntimeError(
+                    "el endpoint devolvio la pagina {} con {} filas y ningun "
+                    "id nuevo: esta repitiendo la misma pagina. Revisar la "
+                    "paginacion de {}".format(pagina, len(filas), conf["ruta"]))
+            vistos |= nuevos
+
             recibidas += len(filas)
             if len(muestra) < 3:
                 muestra.extend(filas[:3 - len(muestra)])
@@ -311,9 +345,23 @@ def sincronizar_entidad(entidad, dry_run=False, desde=None, limite=None,
                 break
             pagina += 1
         else:
+            # Llegar al tope trayendo ids nuevos todo el tiempo no es un
+            # endpoint roto -- eso ya lo habria cortado el chequeo de arriba.
+            # Es que hay mas datos de los que entran con este limite.
+            #
+            # Paso de verdad: un dry-run de reconciliacion completa con
+            # --limite 20 son 3.578 paginas sobre 71.546 filas, y el mensaje
+            # viejo culpaba al endpoint. Mandaba a mirar el lugar equivocado, y
+            # de paso a hacerle 500 requests al servidor para nada.
             raise RuntimeError(
-                "se alcanzo el tope de {} paginas: el endpoint puede estar "
-                "devolviendo siempre la misma".format(MAX_PAGINAS))
+                "se alcanzo el tope de {tope} paginas con {filas:,} filas "
+                "traidas y limite={limite}. El endpoint pagina bien (cada "
+                "pagina trajo ids nuevos): hay mas datos de los que entran. "
+                "Subi --limite -- con {sugerido} alcanzaria -- o acota el "
+                "rango con --desde.".format(
+                    tope=MAX_PAGINAS, filas=recibidas, limite=limite,
+                    sugerido=max(limite * 2,
+                                 ((recibidas // MAX_PAGINAS) + 1) * 4)))
 
         if dry_run:
             db.rollback()

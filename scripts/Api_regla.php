@@ -59,8 +59,9 @@ class Api_regla extends CI_Controller
     }
 
     /**
-     * La API key viaja en X-API-Key y se compara con hash_equals para no
-     * filtrar informacion por el tiempo que tarda la comparacion.
+     * La API key viaja en X-API-Key y se compara en tiempo constante -- ver
+     * `claves_iguales` -- para no filtrar informacion por lo que tarda la
+     * comparacion.
      *
      * La clave sale del entorno o de config, NUNCA escrita aca: este archivo
      * se versiona, y ya hay dos credenciales en texto plano en el codigo del
@@ -70,27 +71,90 @@ class Api_regla extends CI_Controller
     private function exigir_api_key()
     {
         $esperada = getenv('REGLA_API_KEY');
+        $origen   = 'putenv/getenv';
         if (!$esperada) {
             $esperada = $this->config->item('regla_api_key');
+            $origen   = 'config.php';
         }
         if (!$esperada) {
-            $this->json(500, array('error' => 'REGLA_API_KEY no configurada en el servidor'));
+            // El detalle dice DONDE se busco, no solo que falto: es la
+            // diferencia entre "hay que arreglar putenv" y "hay que revisar
+            // otra cosa", y sin eso hay que salir a adivinar desde afuera.
+            $this->json(500, array(
+                'error'  => 'REGLA_API_KEY no configurada en el servidor',
+                'buscada_en' => array(
+                    'getenv(REGLA_API_KEY)'        => 'vacio',
+                    'config item regla_api_key'    => 'vacio',
+                ),
+                'php' => PHP_VERSION,
+            ));
         }
 
         $recibida = isset($_SERVER['HTTP_X_API_KEY']) ? $_SERVER['HTTP_X_API_KEY'] : '';
-        if (!is_string($recibida) || !hash_equals((string) $esperada, $recibida)) {
-            $this->json(401, array('error' => 'API key invalida o ausente'));
+        if (!is_string($recibida) || !$this->claves_iguales($esperada, $recibida)) {
+            // Se dice de donde salio la clave buena, pero NUNCA la clave: eso
+            // confirma que putenv tomo sin exponer nada.
+            $this->json(401, array(
+                'error'  => 'API key invalida o ausente',
+                'origen_de_la_clave' => $origen,
+            ));
         }
     }
 
+    /**
+     * OJO CON EL ECHO: es a proposito, y la version anterior de este metodo
+     * estaba mal.
+     *
+     * Decia `set_output(...)` y despues `exit()`. CodeIgniter no manda lo que
+     * le pasas a set_output() en ese momento -- lo guarda y lo vuelca al
+     * final, cuando el controlador retorna, desde CodeIgniter.php. El exit()
+     * se saltea ese volcado, asi que el header del status SI llegaba (es una
+     * llamada real a header()) pero el cuerpo se perdia entero.
+     *
+     * El sintoma era exactamente el que costo un rato entender: 500 con
+     * cuerpo vacio y Content-Type text/html, sin forma de saber que error
+     * era. El endpoint no podia contar lo que le pasaba.
+     *
+     * `echo` escribe directo al flujo de salida, asi que sobrevive al exit().
+     * Es ademas el patron que ya usa el resto de este proyecto: 37 lugares
+     * hacen `echo json_encode(...)` contra 5 que usan set_output().
+     */
     private function json($codigo, $cuerpo)
     {
-        $this->output
-            ->set_status_header($codigo)
-            ->set_content_type('application/json', 'utf-8')
-            ->set_output(json_encode($cuerpo, JSON_UNESCAPED_UNICODE));
+        $this->output->set_status_header($codigo);
+        header('Content-Type: application/json; charset=utf-8');
+        echo json_encode($cuerpo, JSON_UNESCAPED_UNICODE);
         // Se corta acá: los que llaman a json() asumen que no se sigue.
         exit();
+    }
+
+    /**
+     * Comparacion en tiempo constante, sin depender de hash_equals().
+     *
+     * hash_equals() existe desde PHP 5.6, y no hay forma de saber desde
+     * afuera que version corre este hosting: no expone X-Powered-By. Si
+     * fuera anterior, llamarla seria un fatal -- y un fatal aca se ve igual
+     * que cualquier otro error, o sea 500 sin cuerpo.
+     *
+     * Se usa hash_equals cuando esta y si no esta el equivalente a mano. La
+     * comparacion recorre la cadena entera igual (no corta en la primera
+     * diferencia) para no filtrar por tiempo cuantos caracteres coincidian.
+     */
+    private function claves_iguales($esperada, $recibida)
+    {
+        if (function_exists('hash_equals')) {
+            return hash_equals((string) $esperada, (string) $recibida);
+        }
+        $a = (string) $esperada;
+        $b = (string) $recibida;
+        if (strlen($a) !== strlen($b)) {
+            return FALSE;
+        }
+        $diferencia = 0;
+        for ($i = 0; $i < strlen($a); $i++) {
+            $diferencia |= ord($a[$i]) ^ ord($b[$i]);
+        }
+        return $diferencia === 0;
     }
 
     /**
