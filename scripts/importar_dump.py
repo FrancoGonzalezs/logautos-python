@@ -55,6 +55,12 @@ TABLAS_PRIORIDAD_1 = [
     "reparaciones_externas",
     "contenedor",
     "ot_contenedor",
+    # No es del motor de unidades, pero entra acá porque sin ella la replica
+    # no puede comparar contra produccion la validacion de modelo/color que
+    # hace la Revision de Contenedor. Es chica -- 47 filas -- y su ausencia ya
+    # obligo una vez a construir a ciegas: `validacion_color_regla` se diseño
+    # sin poder mirar como estaba poblada la original.
+    "validacion_color_unidad",
 ]
 
 

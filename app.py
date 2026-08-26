@@ -82,7 +82,39 @@ def crear_app():
     return app
 
 
+def _hilo_sync():
+    """El pull contra el legado, en segundo plano.
+
+    Solo arranca si SYNC_INTERVALO_SEGUNDOS esta definida y es > 0, asi que en
+    local no corre salvo que se lo pida explicitamente. Nunca levanta hacia
+    afuera: si una vuelta falla, la marca de agua no avanza y la siguiente
+    trae lo pendiente -- ese es justamente el motivo de que el sync sea un
+    pull y no un push."""
+    intervalo = float(os.environ.get("SYNC_INTERVALO_SEGUNDOS") or 0)
+    if intervalo <= 0:
+        return
+
+    import threading
+    import time
+
+    def vueltas():
+        from modulos.sync_legado import todo
+        while True:
+            time.sleep(intervalo)
+            try:
+                for r in todo():
+                    print("[sync] {} recibidas={} creadas={} actualizadas={}".format(
+                        r["entidad"], r["recibidas"], r["creadas"],
+                        r["actualizadas"]), flush=True)
+            except Exception as e:              # noqa: BLE001 -- ver docstring
+                print("[sync] error: {}: {}".format(type(e).__name__, e), flush=True)
+
+    threading.Thread(target=vueltas, daemon=True).start()
+    print("[sync] hilo activo, cada {:.0f}s".format(intervalo), flush=True)
+
+
 app = crear_app()
+_hilo_sync()
 
 
 if __name__ == "__main__":
