@@ -41,6 +41,31 @@
     {# De dónde se vino, para saber a dónde volver al guardar. #}
     <input type="hidden" name="volver" value="{{ volver }}">
 
+    {#- El motivo del desvío.
+        Si vino desde Movimientos viaja en la query string y hay que
+        reenviarlo en el cuerpo, o se pierde al guardar. Si la transición lo
+        exige y no vino — que es lo que pasa entrando por la puerta directa
+        del menú — se pide acá mismo, con la lista que corresponde. -#}
+    {% if lista_motivos %}
+      <label class="campo campo-motivo">
+        <span>Motivo del movimiento <em>(obligatorio)</em></span>
+        <select name="motivo" required>
+          <option value="">Elegí el motivo…</option>
+          {% for m in motivos[lista_motivos] %}
+            <option value="{{ m }}" {% if m == motivo_actual %}selected{% endif %}>{{ m }}</option>
+          {% endfor %}
+        </select>
+      </label>
+      <label class="campo">
+        <span>Detalle <em>(opcional)</em></span>
+        <input type="text" name="motivo_detalle" value="{{ motivo_detalle_actual }}"
+               maxlength="200" autocomplete="off">
+      </label>
+    {% elif motivo_actual %}
+      <input type="hidden" name="motivo" value="{{ motivo_actual }}">
+      <input type="hidden" name="motivo_detalle" value="{{ motivo_detalle_actual }}">
+    {% endif %}
+
     <div class="campos-paso">
       <label>
         <span>Estado IT</span>

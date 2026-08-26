@@ -65,8 +65,8 @@ from flask import Blueprint, redirect, render_template, request, url_for
 from core import consultar, get_db
 from modulos.acceso import id_actual, nombre_actual
 from modulos.catalogos import normalizar
-from modulos.movimientos import (_buscar, es_desvio, estado_fisico, recomendar,
-                                 registrar)
+from modulos.movimientos import (MOTIVOS, _buscar, es_desvio, estado_fisico,
+                                 motivo_obligatorio, recomendar, registrar)
 from modulos.push_legado import (asegurar_tablas, campos_it, disparar_push,
                                  encolar_it)
 from modulos.unidades import TABLA
@@ -155,6 +155,87 @@ def _texto(campo):
     return (request.form.get(campo) or "").strip()
 
 
+def _valor(campo):
+    """Como `_texto` pero mirando tambien la query string.
+
+    Hace falta para el motivo. Cuando se llega desde Movimientos, el motivo se
+    elige ALLA y `registrar_movimiento` redirige a este formulario con
+    `?motivo=...` en la URL -- no en el cuerpo. `_texto` lee solo
+    `request.form`, asi que ese motivo se perdia entero: Movimientos lo exigia,
+    el operario lo elegia, y al llegar aca no existia mas."""
+    return (request.values.get(campo) or "").strip()
+
+
+# ---------------------------------------------------------------------------
+# El motivo del desvio
+# ---------------------------------------------------------------------------
+#
+# PDI e IT no exigian motivo NUNCA, a diferencia del endpoint generico
+# `registrar_movimiento`, que corta con `error=falta_motivo` cuando la
+# transicion esta en DESVIOS_CON_MOTIVO. Son dos agujeros distintos y los dos
+# terminan en el mismo lugar -- un retrabajo indistinguible de un avance:
+#
+#   1. Viniendo DESDE Movimientos, el motivo se exige y se elige alla, pero se
+#      pierde al redirigir: viaja en la query string y estas pantallas leian
+#      solo el cuerpo del POST. Lo arregla `_valor` + el campo oculto.
+#   2. Entrando por la puerta directa del menu (lista_pdi / lista_it), nunca
+#      pasa por `registrar_movimiento`, asi que no hay quien lo exija. Lo
+#      arregla `_falta_motivo`.
+#
+# El criterio es el mismo del endpoint generico y no uno propio: se exige solo
+# en las transiciones de DESVIOS_CON_MOTIVO. NO se exige en todo desvio, y es
+# deliberado -- el modulo ya decidio que "un motivo que se pide siempre deja de
+# significar algo", y esas cuatro transiciones son las que miden retrabajo.
+
+def _falta_motivo(estado_desde, estado_hacia):
+    """La lista de motivos que hay que pedir, si falta el motivo. None si no
+    hace falta pedir nada o si ya vino."""
+    lista = motivo_obligatorio(estado_desde, estado_hacia)
+    if lista and not _valor("motivo"):
+        return lista
+    return None
+
+
+def _destinos_pdi(unidad):
+    """A donde puede terminar un PDI de esta unidad.
+
+    Son dos y no uno porque el destino depende del tilde de FR - MECANICA, que
+    recien se sabe al enviar el formulario. Para decidir si hay que PEDIR el
+    motivo se miran los dos: si cualquiera de los dos caminos lo exige, se pide
+    antes y no despues de un intento fallido."""
+    if _paso_asignacion_dyp(unidad):
+        # No se mueve: el unico "destino" es donde ya esta.
+        return [estado_fisico(unidad)]
+    return ["FR - MECANICA", "EN ESPERA DYP CONSOLIDADO"]
+
+
+def _contexto_motivo(unidad, destinos):
+    """Lo que el formulario necesita para el bloque del motivo."""
+    desde = estado_fisico(unidad)
+    lista = None
+    for hacia in destinos:
+        lista = _falta_motivo(desde, hacia)
+        if lista:
+            break
+    return {
+        "lista_motivos": lista,
+        "motivo_actual": _valor("motivo"),
+        "motivo_detalle_actual": _valor("motivo_detalle"),
+        "motivos": MOTIVOS,
+    }
+
+
+def _motivo_guardado(estado_desde, estado_hacia, hubo_desvio):
+    """El motivo a guardar. Se guarda cuando hubo desvio O cuando la transicion
+    es una de las que lo exigen -- igual que `registrar_movimiento`.
+
+    La segunda mitad importa: el paso puede ser el recomendado y aun asi ser un
+    retroceso de los que hay que medir."""
+    if hubo_desvio or motivo_obligatorio(estado_desde, estado_hacia):
+        return _valor("motivo") or None, _valor("motivo_detalle") or None
+    return None, None
+
+
 def pdi_de(vin):
     _db().commit()
     return consultar("SELECT * FROM pdi_regla WHERE vin = ? ORDER BY id DESC LIMIT 1",
@@ -202,7 +283,8 @@ def _pintar_pdi(unidad, errores=None, codigo=200):
         paso_dyp=_paso_asignacion_dyp(unidad),
         estado_actual=estado_fisico(unidad),
         volver=request.values.get("volver", ""),
-        errores=errores or [], v=request.form if es_post else {})
+        errores=errores or [], v=request.form if es_post else {},
+        **_contexto_motivo(unidad, _destinos_pdi(unidad)))
     return (pagina, codigo) if codigo != 200 else pagina
 
 
@@ -267,16 +349,25 @@ def guardar_pdi(id_unidad):
     for campo in FECHAS_AUTOMATICAS:
         datos[campo] = hoy
 
+    lista = _falta_motivo(estado_actual, estado_hacia)
+    if lista:
+        return _pintar_pdi(unidad, [
+            "Este movimiento va de {} a {}: hay que decir por que. Sin el "
+            "motivo, un retrabajo no se distingue de un avance normal."
+            .format(estado_actual, estado_hacia)], codigo=400)
+
     recomendado = recomendar(unidad)
     clave = recomendado["clave"] if recomendado else None
+    motivo, motivo_detalle = _motivo_guardado(estado_actual, estado_hacia,
+                                              es_desvio(clave, "pdi"))
     movimiento_id = registrar(unidad, {
         "paso": "pdi",
         "recomendado": clave,
         "es_desvio": es_desvio(clave, "pdi"),
         "estado_desde": estado_actual,
         "estado_hacia": estado_hacia,
-        "motivo": _texto("motivo") if es_desvio(clave, "pdi") else None,
-        "motivo_detalle": None,
+        "motivo": motivo,
+        "motivo_detalle": motivo_detalle,
         # La PDI es el unico paso con resultado en el motor; se conserva.
         "resultado_pdi": "taller_no_completado" if fr else "sin_novedad",
         "guia_ingreso": None,
@@ -325,7 +416,8 @@ def _pintar_it(unidad, errores=None, codigo=200):
         estado_actual=estado_fisico(unidad),
         previo=it_de(unidad["vin"]),
         volver=request.values.get("volver", ""),
-        errores=errores or [], v=request.form if es_post else {})
+        errores=errores or [], v=request.form if es_post else {},
+        **_contexto_motivo(unidad, [_destino_it(unidad)]))
     return (pagina, codigo) if codigo != 200 else pagina
 
 
@@ -358,6 +450,16 @@ def guardar_it(id_unidad):
     estado_actual = estado_fisico(unidad)
     estado_hacia = _destino_it(unidad)
 
+    # Mismo corte que `registrar_movimiento`: sin motivo no se guarda. Va
+    # DESPUES de validar el resultado del IT para no pedir dos cosas de a una,
+    # y antes de escribir nada.
+    lista = _falta_motivo(estado_actual, estado_hacia)
+    if lista:
+        return _pintar_it(unidad, [
+            "Este movimiento va de {} a {}: hay que decir por que. Sin el "
+            "motivo, un retrabajo no se distingue de un avance normal."
+            .format(estado_actual, estado_hacia)], codigo=400)
+
     # El paso que se registra es el del ESTADO al que se llega, no un nombre
     # propio: si fuera otro, hacer el IT cuando el motor lo recomendaba
     # figuraria como desvio, que es justo lo contrario de lo que paso.
@@ -366,14 +468,16 @@ def guardar_it(id_unidad):
 
     recomendado = recomendar(unidad)
     clave = recomendado["clave"] if recomendado else None
+    motivo, motivo_detalle = _motivo_guardado(estado_actual, estado_hacia,
+                                              es_desvio(clave, paso))
     movimiento_id = registrar(unidad, {
         "paso": paso,
         "recomendado": clave,
         "es_desvio": es_desvio(clave, paso),
         "estado_desde": estado_actual,
         "estado_hacia": estado_hacia,
-        "motivo": _texto("motivo") if es_desvio(clave, paso) else None,
-        "motivo_detalle": None,
+        "motivo": motivo,
+        "motivo_detalle": motivo_detalle,
         "resultado_pdi": None,
         "guia_ingreso": None,
         "fecha": datetime.now().date().isoformat(),

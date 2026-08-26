@@ -1297,3 +1297,44 @@ body.con-visor { overflow: hidden; }
   .lateral-pie { margin: 0; flex-direction: row; align-items: center; }
   .contenido { margin-left: 0; padding: 20px 16px 36px; }
 }
+
+/* ---------------------------------------------------------------------------
+   Los dos estados de la unidad
+   ---------------------------------------------------------------------------
+   La ficha muestra el estado de REGLA y el del sistema anterior, uno al lado
+   del otro. Que difieran es lo NORMAL mientras el envio automatico no cubra
+   ese paso, asi que el aviso usa el azul de informacion y no el ambar de
+   advertencia: si se pintara como un problema, en dos dias nadie lo leeria.
+   --------------------------------------------------------------------------- */
+.estados-unidad {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px 28px;
+  margin: 0 0 14px;
+}
+.estado-col {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.estado-rotulo {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: .04em;
+  color: var(--tinta-suave);
+}
+.estado-sin {
+  font-size: 12.5px;
+  color: var(--tinta-suave);
+  font-style: italic;
+}
+.estado-desfase {
+  background: var(--acento-suave);
+  border: 1px solid var(--acento-borde);
+  border-radius: var(--r-control);
+  color: var(--tinta-media);
+  padding: 9px 13px;
+  margin: 0 0 18px;
+  font-size: 12.5px;
+  max-width: 62ch;
+}
