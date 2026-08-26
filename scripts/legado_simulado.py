@@ -56,6 +56,21 @@ CLAVE = "x"
 CONTADORES = {"put": 0, "conflicto": 0, "idempotente": 0, "perdidas": 0}
 
 
+# Las columnas de la lista blanca de `Api_regla::columnas_permitidas`, con
+# valores como los de una unidad que todavia no paso por el IT.
+#
+# NO es decoracion: el 409 devuelve `datos_actuales` con estas columnas, y es
+# de ahi que sale el detalle del aviso de conflicto. Un doble que devolviera
+# solo `updated_at` -- como hacia este antes -- deja pasar un aviso vacio sin
+# que ninguna prueba se queje. Comprobado contra produccion: el 409 real trae
+# estado_it, observacion_it, despachado, calle y updated_by.
+def _unidad_nueva(legado_id, updated_at="2026-08-26 11:00:00"):
+    return {"id": legado_id, "updated_at": updated_at,
+            "estado_it": None, "observacion_it": None,
+            "despachado": "ZONA DE RECEPCION", "calle": "ZR",
+            "updated_by": "47"}
+
+
 def _reloj():
     """El reloj del legado. Los segundos avanzan de a uno por escritura y no
     con el reloj real: asi el updated_at cambia siempre entre dos PUT seguidos,
@@ -131,8 +146,7 @@ class Handler(BaseHTTPRequestHandler):
         if MODO == "caer":
             return self._json(500, {"error": "falla simulada"})
 
-        fila = UNIDADES.setdefault(legado_id, {"id": legado_id,
-                                               "updated_at": "2026-08-26 11:00:00"})
+        fila = UNIDADES.setdefault(legado_id, _unidad_nueva(legado_id))
 
         # -- locking optimista ------------------------------------------------
         conocido = datos.pop("legado_updated_at_conocido", "")
@@ -183,7 +197,7 @@ def main(argv=None):
     MODO = args.modo
     CLAVE = os.environ.get("LEGADO_API_KEY", "x")
     for uid in args.sembrar_id:
-        UNIDADES[uid] = {"id": uid, "updated_at": args.updated_at}
+        UNIDADES[uid] = _unidad_nueva(uid, args.updated_at)
 
     servidor = HTTPServer(("127.0.0.1", args.puerto), Handler)
     print("legado simulado en http://127.0.0.1:{}  modo={}  unidades={}"

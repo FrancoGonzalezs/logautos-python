@@ -58,7 +58,6 @@ contenedor que ya existia.
 
 import os
 import sqlite3
-import threading
 from datetime import datetime
 
 from flask import Blueprint, redirect, render_template, request, url_for
@@ -439,107 +438,16 @@ def guardar_validacion(unidad, id_contenedor, modelo_obs, color_obs):
 #     color fisico no coinciden con el packing list;
 #   - el de cierre del contenedor, con la tabla de todos sus VIN.
 #
-# Las credenciales salen del entorno y los destinatarios no tienen default: si
-# nadie los configura no se manda nada y queda anotado. En el PHP estan en
-# texto plano dentro del codigo, que es justamente lo que no hay que replicar.
-
-# Por que Resend y no SMTP
-# ------------------------
-# Porque desde Railway el SMTP no sale. Verificado desde el contenedor: los
-# puertos 25, 465, 587 y 2525 dan timeout contra CUALQUIER proveedor -- el
-# propio, Gmail y SendGrid --, mientras `mail.logautos.cl` responde en 0,2 s
-# por 80 y 443 y el HTTPS a Internet sale al instante. O sea que el bloqueo es
-# por puerto y no por destino: es la politica antispam de la red saliente de
-# Railway. Resend manda por HTTPS, que es justo lo unico que si sale.
+# El COMO se manda vive en `modulos/correo.py` desde que aparecio el segundo
+# consumidor (el aviso de conflicto del push). Aca queda el QUE se manda, que
+# es lo propio de este modulo: los dos cuerpos y sus destinatarios.
 #
-# Ademas arregla de raiz el 500 del cierre automatico: la conexion SMTP se
-# colgaba 20 s y, sumada a la subida de la foto, pasaba el timeout del worker
-# de Gunicorn, que moria antes de que ningun try/except llegara a actuar.
-# Contra HTTPS no hay nada que esperar, y encima el envio va diferido.
-
-# El dominio verificado en Resend es la RAIZ, logautos.cl -- no send.logautos.cl.
-# Es facil equivocarse leyendo el DNS y ya paso una vez: `send.logautos.cl`
-# tiene SPF (include:amazonses.com) y MX (feedback-smtp.sa-east-1.amazonses.com),
-# lo que lo hace PARECER el dominio de envio, pero eso es el subdominio de
-# REBOTES -- el Return-Path que Resend pide crear al verificar la raiz. La
-# firma que dice cual es el dominio de envio es el DKIM, y esta en
-# `resend._domainkey.logautos.cl`.
-#
-# Mandar desde @send.logautos.cl da: "The send.logautos.cl domain is not
-# verified".
-REMITENTE = os.environ.get("RESEND_FROM", "REGLA <notificaciones@logautos.cl>")
-
-
-def _destinatarios(clave):
-    return [d.strip() for d in os.environ.get(clave, "").split(",") if d.strip()]
-
-
-def _mandar(destinatarios, asunto, texto, html, adjuntos=()):
-    """Manda por la API de Resend. Devuelve (estado, detalle) y NUNCA levanta.
-
-    El correo es una notificacion: que el proveedor este caido no puede hacer
-    perder la revision que el operario acaba de cargar, ni tumbar el cierre de
-    un contenedor que ya quedo escrito."""
-    clave = os.environ.get("RESEND_API_KEY")
-    if not clave:
-        _log("no_configurado", asunto, "falta RESEND_API_KEY")
-        return "no_configurado", "Falta RESEND_API_KEY."
-    if not destinatarios:
-        _log("no_configurado", asunto, "sin destinatarios configurados")
-        return "no_configurado", "No hay destinatarios configurados."
-
-    adjuntos_api = []
-    for ruta in adjuntos:
-        if not ruta or not os.path.exists(ruta):
-            continue
-        try:
-            with open(ruta, "rb") as f:
-                adjuntos_api.append({
-                    "filename": os.path.basename(ruta),
-                    "content": list(f.read()),
-                })
-        except OSError:
-            # Una foto ilegible no puede impedir que salga el informe: el
-            # cuerpo con la tabla de VIN es lo que el cliente necesita.
-            continue
-
-    try:
-        import resend
-        resend.api_key = clave
-        r = resend.Emails.send({
-            "from": REMITENTE,
-            "to": destinatarios,
-            "subject": asunto,
-            "text": texto,
-            "html": html,
-            "attachments": adjuntos_api,
-        })
-        id_correo = (r or {}).get("id") if isinstance(r, dict) else getattr(r, "id", None)
-        detalle = "id={} para {}".format(id_correo, ", ".join(destinatarios))
-        _log("enviado", asunto, detalle)
-        return "enviado", detalle
-    except Exception as e:                       # noqa: BLE001 -- ver docstring
-        # El error REAL de Resend, no un "correo fallo" generico: sin esto hubo
-        # que entrar al contenedor a diagnosticar a mano por que no salia.
-        detalle = "{}: {}".format(type(e).__name__, e)
-        _log("error", asunto, detalle)
-        return "error", detalle
-
-
-def _log(estado, asunto, detalle):
-    print("[correo] {} | {} | {}".format(estado, asunto, detalle), flush=True)
-
-
-def _en_segundo_plano(funcion, *args):
-    """Manda el correo fuera del request.
-
-    Cerrar un contenedor o guardar una diferencia tiene que responderle al
-    movilizador de inmediato: el correo es para otra persona y puede tardar lo
-    que tarde. El hilo es `daemon` para que no retenga el proceso al apagarse,
-    y todo lo que hace adentro ya esta envuelto en su propio try."""
-    hilo = threading.Thread(target=funcion, args=args, daemon=True)
-    hilo.start()
-    return hilo
+# Los nombres privados se conservan como alias para no tocar el resto del
+# archivo -- lo que se movio es la implementacion, no el contrato.
+from modulos.correo import REMITENTE, en_segundo_plano as _en_segundo_plano  # noqa: E402,F401
+from modulos.correo import destinatarios as _destinatarios                    # noqa: E402
+from modulos.correo import log as _log                                        # noqa: E402
+from modulos.correo import mandar as _mandar                                  # noqa: E402
 
 
 def enviar_correo_diferencia(unidad, validacion, cont):

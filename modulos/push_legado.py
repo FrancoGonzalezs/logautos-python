@@ -179,6 +179,7 @@ import threading
 import uuid
 
 from core import conectar_db
+from modulos import correo
 
 try:
     import requests as _requests
@@ -674,6 +675,17 @@ def ejecutar_entrada(id_cola, cliente=None, db_path=None):
             _log.warning("push %s CONFLICTO legado_id=%s: el legado tiene "
                          "updated_at=%s, se registro para revision",
                          entidad, legado_id, resp.get("updated_at"))
+            # El aviso va DESPUES del commit y envuelto en su propio try: el
+            # conflicto ya esta guardado y es lo que no se puede perder. Que
+            # falle el correo -- Resend caido, sin destinatarios, sin clave --
+            # no puede convertir un conflicto registrado en una excepcion.
+            try:
+                _avisar_conflicto(db, entidad, espejo, legado_id, campos,
+                                  resp.get("datos_actuales") or {},
+                                  resp.get("updated_at") or "")
+            except Exception:                    # noqa: BLE001 -- ver arriba
+                _log.exception("no se pudo armar el aviso de conflicto de %s %s",
+                               entidad, legado_id)
             return "conflicto"
 
         # Exito. El `updated_at` que devuelve el legado se guarda en la
@@ -692,6 +704,173 @@ def ejecutar_entrada(id_cola, cliente=None, db_path=None):
         return "ok"
     finally:
         db.close()
+
+
+# ---------------------------------------------------------------------------
+# El aviso de conflicto
+# ---------------------------------------------------------------------------
+#
+# Un conflicto es el unico caso en que REGLA descarta un cambio que un operario
+# cargo a mano. No se pierde -- las dos versiones quedan en `sync_conflictos`
+# --, pero hasta ahora nadie se enteraba: habia que acordarse de correr
+# `python -m modulos.push_legado estado`.
+#
+# Deja de ser hipotetico desde que hay DOS replicas empujando al mismo legado
+# (la notebook y Railway): tocar la misma unidad desde las dos dentro de la
+# ventana del pull produce exactamente esto.
+#
+# El correo va donde ya se escribe el conflicto y no en un proceso que sondee
+# la tabla: un sondeo agrega una pieza que puede morirse sin que nadie lo note,
+# y ademas llegaria tarde por definicion.
+
+DESTINATARIOS_CONFLICTOS = "SYNC_CONFLICTOS_DESTINATARIOS"
+
+
+def _comparable(valor):
+    """Para decidir si dos valores son 'el mismo'. NULL y '' se colapsan, y
+    todo se mira como texto: el legado devuelve `updated_by` como '0' y
+    nosotros lo mandamos como 0, y esa no es una diferencia real."""
+    return "" if valor is None else str(valor).strip()
+
+
+# Campos que viajan pero NO son "lo que el operario quiso escribir": los sella
+# el sistema. `updated_by` difiere SIEMPRE -- es quien hizo cada cambio, y en
+# un conflicto por definicion fueron dos personas distintas --, asi que
+# contarlo como diferencia infla el numero y tapa las de verdad. En la primera
+# prueba contra produccion el aviso decia "3 campos con diferencia" cuando las
+# sustantivas eran dos.
+#
+# No se esconde: sube al encabezado, que es donde sirve. Saber QUIEN hizo el
+# cambio que gano es lo primero que uno necesita para resolver el conflicto.
+CAMPOS_METADATO = ("updated_by",)
+
+
+def diferencias(nuestra, del_legado):
+    """[(campo, lo_nuestro, lo_del_legado, difiere)] para los campos que el
+    operario intento escribir. Los de CAMPOS_METADATO quedan afuera.
+
+    Se listan TODOS los que viajaron, no solo los que difieren, y cada uno dice
+    si difiere. Ver solo las diferencias obliga a preguntarse que mas se estaba
+    mandando; verlas en contexto contesta esa pregunta sola."""
+    filas = []
+    for campo in sorted(nuestra):
+        if campo in CAMPOS_METADATO:
+            continue
+        a = _comparable(nuestra.get(campo))
+        b = _comparable(del_legado.get(campo))
+        # Un campo que el legado no devolvio no es una diferencia: es un campo
+        # del que no sabemos nada. Se marca como tal en vez de inventar un ''.
+        conocido = campo in del_legado
+        filas.append((campo, nuestra.get(campo),
+                      del_legado.get(campo) if conocido else None,
+                      conocido and a != b))
+    return filas
+
+
+def _quien(db, id_usuario):
+    """El nombre detras de un `updated_by`. `tbl_users` es la tabla de usuarios
+    del propio legado, traida en el dump, asi que el id de alla resuelve aca.
+
+    Si no resuelve se devuelve el id pelado: es preferible a no decir nada."""
+    crudo = _comparable(id_usuario)
+    if crudo == "":
+        return ""
+    try:
+        fila = db.execute("SELECT name FROM tbl_users WHERE userId = ?",
+                          (int(crudo),)).fetchone()
+        if fila is not None and fila["name"]:
+            return "{} (id {})".format(fila["name"], crudo)
+    except Exception:                            # noqa: BLE001
+        pass
+    return "id {}".format(crudo)
+
+
+def _avisar_conflicto(db, entidad, espejo, legado_id, campos, del_legado,
+                      legado_updated_at):
+    """Arma el correo y lo manda en segundo plano. No levanta."""
+    vin = ""
+    try:
+        fila = db.execute('SELECT vin FROM "{}" WHERE id = ?'.format(espejo),
+                          (legado_id,)).fetchone()
+        if fila is not None:
+            vin = fila["vin"] or ""
+    except Exception:                            # pragma: no cover
+        pass
+
+    filas = diferencias(campos, del_legado)
+    cuantas = sum(1 for f in filas if f[3])
+    de_donde = correo.origen()
+    # Quien hizo el cambio que gano, y quien el que se descarto. Es lo primero
+    # que hace falta para resolver un conflicto: con los dos nombres se sabe a
+    # quien preguntarle sin abrir la base.
+    gano = _quien(db, del_legado.get("updated_by"))
+    perdio = _quien(db, campos.get("updated_by"))
+
+    def celda(v):
+        return "<i>(vacío)</i>" if _comparable(v) == "" else str(v)
+
+    cuerpo_html = "".join(
+        '<tr{estilo}><td>{campo}</td><td>{nuestro}</td><td>{legado}</td>'
+        '<td>{marca}</td></tr>'.format(
+            estilo=' style="background:#fff3cd"' if difiere else "",
+            campo=campo, nuestro=celda(nuestro),
+            legado="<i>(no informado)</i>" if legado is None and not difiere
+                   else celda(legado),
+            marca="DIFIERE" if difiere else "")
+        for campo, nuestro, legado, difiere in filas)
+
+    asunto = "Conflicto de sync — unidad {}{}".format(
+        legado_id, " ({})".format(vin) if vin else "")
+
+    html = (
+        "<style>.tb {{ border-collapse: collapse; }}"
+        ".tb th, .tb td {{ padding: 5px; border: solid 1px #777; "
+        "font-family: sans-serif; font-size: 13px; }}"
+        ".tb th {{ background-color: lightblue; }}</style>"
+        "<h3><b>Conflicto al sincronizar con el sistema anterior</b></h3>"
+        "<p>El sistema anterior tenía un cambio más reciente que el nuestro, "
+        "así que <b>NO se sobrescribió</b>. Gana el sistema anterior: el dato "
+        "correcto va a llegar en la próxima vuelta del sync.</p>"
+        "<p>Unidad: <b>{uid}</b>{vin}<br>"
+        "Entidad: <b>{entidad}</b><br>"
+        "Empujado desde: <b>{origen}</b>{perdio}<br>"
+        "El sistema anterior fue modificado el <b>{cuando}</b>{gano}</p>"
+        '<table class="tb">'
+        "<tr><th>Campo</th><th>Lo que se quiso escribir</th>"
+        "<th>Lo que tiene el sistema anterior</th><th></th></tr>{filas}</table>"
+        "<p>Quedó guardado en <code>sync_conflictos</code> con las dos "
+        "versiones. No hace falta hacer nada para que el dato del sistema "
+        "anterior vuelva; si el cambio que se perdió era el correcto, hay que "
+        "volver a cargarlo.</p>"
+        "<p>Este mail fue enviado automaticamente por sistema REGLA</p>"
+    ).format(uid=legado_id, vin=" — VIN <b>{}</b>".format(vin) if vin else "",
+             entidad=entidad, origen=de_donde,
+             perdio=" por <b>{}</b>".format(perdio) if perdio else "",
+             cuando=legado_updated_at or "(sin fecha)",
+             gano=" por <b>{}</b>".format(gano) if gano else "",
+             filas=cuerpo_html)
+
+    texto = (
+        "Conflicto al sincronizar con el sistema anterior.\n\n"
+        "Unidad {uid}{vin} | entidad {entidad}\n"
+        "Lo que se descarto : desde {origen}{perdio}\n"
+        "Lo que gano        : del {cuando}{gano}\n\n"
+        "{cuantas} campo(s) con diferencia:\n{lista}\n"
+        "No se sobrescribio nada. Gana el sistema anterior."
+    ).format(uid=legado_id, vin=" (VIN {})".format(vin) if vin else "",
+             entidad=entidad, origen=de_donde,
+             perdio=", cargado por {}".format(perdio) if perdio else "",
+             cuando=legado_updated_at or "sin fecha",
+             gano=", hecho por {}".format(gano) if gano else "",
+             cuantas=cuantas,
+             lista="".join(
+                 "  - {}: se quiso escribir {!r}, el legado tiene {!r}\n".format(
+                     c, n, l)
+                 for c, n, l, d in filas if d) or "  (ninguno)\n")
+
+    correo.en_segundo_plano(
+        correo.mandar, correo.destinatarios(DESTINATARIOS_CONFLICTOS),
+        asunto, texto, html)
 
 
 # ---------------------------------------------------------------------------

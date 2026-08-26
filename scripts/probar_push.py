@@ -4,7 +4,7 @@ scripts/probar_push.py -- prueba el push de punta a punta contra el endpoint
 simulado, sobre una base descartable. NO toca local.db ni sale a produccion.
 
 Levanta `legado_simulado.py` en un puerto libre, arma una base con lo minimo
-(`newstocks_cidef` + `it_regla`), y corre los cinco casos que importan:
+(`newstocks_cidef` + `it_regla`), y corre los siete casos que importan:
 
     1. camino feliz         200, push_pendiente vuelve a 0, updated_at es el
                             del legado y la entrada queda resuelta
@@ -12,6 +12,9 @@ Levanta `legado_simulado.py` en un puerto libre, arma una base con lo minimo
     3. falla de red         500, la entrada sigue en cola con backoff
     4. respuesta perdida    el reintento NO inventa un conflicto (idempotencia)
     5. guarda del pull      una fila con push_pendiente=1 no se sobrescribe
+    6. aviso de conflicto   el 409 dispara el correo, con la unidad, el VIN,
+                            los campos que difieren y desde que replica salio
+    7. correo caido         si el aviso revienta, el conflicto se guarda igual
 
 El caso 4 es el que justifica la Idempotency-Key en un PUT y es el unico que
 no se puede probar contra el PHP real: hace falta un servidor que aplique el
@@ -322,6 +325,92 @@ def main():
         db.close()
     del id_cola
 
+    # ----------------------------------------------------------------- 6
+    paso("6. el conflicto avisa por correo")
+    from modulos import correo, push_legado
+
+    enviados = []
+    real_mandar, real_hilo = correo.mandar, correo.en_segundo_plano
+    correo.mandar = lambda dest, asunto, texto, html, adj=(): (
+        enviados.append({"dest": dest, "asunto": asunto, "texto": texto,
+                         "html": html}) or ("enviado", "prueba"))
+    # Sincronico para que la prueba sea determinista: lo que se verifica es el
+    # contenido del aviso, no que threading funcione.
+    correo.en_segundo_plano = lambda f, *a: f(*a)
+    os.environ["SYNC_CONFLICTOS_DESTINATARIOS"] = "jefe@logautos.cl, otro@logautos.cl"
+    os.environ["REGLA_ORIGEN"] = "notebook (prueba)"
+
+    puerto = puerto_libre()
+    base_nueva(ruta)
+    id_cola = encolar_un_it(ruta)
+    srv = levantar("conflicto", puerto)
+    try:
+        resultado = ejecutar_entrada(id_cola, cliente(puerto), db_path=ruta)
+        afirmar(resultado == "conflicto", "sigue devolviendo 'conflicto'", resultado)
+        afirmar(len(enviados) == 1, "se mando UN aviso", len(enviados))
+        if enviados:
+            e = enviados[0]
+            afirmar(e["dest"] == ["jefe@logautos.cl", "otro@logautos.cl"],
+                    "a los destinatarios de SYNC_CONFLICTOS_DESTINATARIOS", e["dest"])
+            afirmar(str(UNIDAD_ID) in e["asunto"] and "Conflicto" in e["asunto"],
+                    "el asunto nombra la unidad", e["asunto"])
+            afirmar("LVAV2AVB3TE316975" in e["asunto"],
+                    "y el VIN", e["asunto"])
+            afirmar("notebook (prueba)" in e["html"],
+                    "dice desde que replica salio el push")
+            afirmar("PRESENTA FALLAS" in e["html"],
+                    "muestra lo que se quiso escribir")
+            afirmar("DIFIERE" in e["html"],
+                    "marca los campos que difieren")
+            afirmar("estado_it" in e["texto"] and "PRESENTA FALLAS" in e["texto"],
+                    "la version de texto tambien lleva el detalle")
+        conf = leer(ruta, "SELECT COUNT(*) n FROM sync_conflictos")
+        afirmar(conf["n"] == 1, "y el conflicto quedo guardado igual", conf)
+    finally:
+        srv.kill()
+
+    # -- el diff, aparte: es la parte con logica -------------------------
+    filas = push_legado.diferencias(
+        {"estado_it": "OK", "despachado": "INGRESO A TALLER", "updated_by": 0,
+         "observacion_it": ""},
+        {"estado_it": "PRESENTA FALLAS", "despachado": "INGRESO A TALLER",
+         "updated_by": "0"})
+    por_campo = {f[0]: f[3] for f in filas}
+    afirmar(por_campo["estado_it"] is True, "detecta el campo que cambio")
+    afirmar(por_campo["despachado"] is False, "no marca el que es igual")
+    afirmar("updated_by" not in por_campo,
+            "updated_by no entra en la tabla: difiere siempre, es metadato")
+    afirmar(por_campo["observacion_it"] is False,
+            "un campo que el legado no devolvio no se marca como diferencia")
+    afirmar(len(filas) == 3, "lista los demas campos que viajaron", len(filas))
+    afirmar(push_legado._comparable(0) == push_legado._comparable("0"),
+            "0 y '0' se comparan iguales (el legado devuelve texto)")
+
+    # ----------------------------------------------------------------- 7
+    paso("7. si el correo falla, el conflicto se registra igual")
+
+    def _explota(*a, **k):
+        raise RuntimeError("Resend caido")
+    correo.destinatarios = _explota
+
+    puerto = puerto_libre()
+    base_nueva(ruta)
+    id_cola = encolar_un_it(ruta)
+    srv = levantar("conflicto", puerto)
+    try:
+        resultado = ejecutar_entrada(id_cola, cliente(puerto), db_path=ruta)
+        afirmar(resultado == "conflicto",
+                "devuelve 'conflicto' aunque el correo reviente", resultado)
+        conf = leer(ruta, "SELECT * FROM sync_conflictos ORDER BY id DESC LIMIT 1")
+        afirmar(conf is not None, "el conflicto quedo guardado")
+        fila = leer(ruta, "SELECT push_pendiente FROM newstocks_cidef WHERE id = ?",
+                    (UNIDAD_ID,))
+        afirmar(fila["push_pendiente"] == 0, "y el flag se limpio")
+    finally:
+        srv.kill()
+        correo.mandar, correo.en_segundo_plano = real_mandar, real_hilo
+        correo.destinatarios = push_legado.correo.destinatarios
+
     # ------------------------------------------------------------------
     print("\n" + "=" * 60)
     if fallos:
@@ -329,7 +418,7 @@ def main():
         for f in fallos:
             print("  - {}".format(f))
         return 1
-    print("las 5 pruebas pasaron")
+    print("las 7 pruebas pasaron")
     return 0
 
 
