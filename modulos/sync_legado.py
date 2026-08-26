@@ -45,11 +45,29 @@ evidencia que la sostiene.
    200 en 191 ms y `REGLA-sync/1.0` responde 200 en 156 ms. Es el mismo
    comportamiento que documento el sync de Talca con Bluehosting.
 
-El desfase horario de 4 horas
------------------------------
+El desfase horario del dump
+---------------------------
 La replica se armo de un dump exportado con otra zona horaria que la del
-servidor vivo: los timestamps locales estan 4 horas adelante. Medido sobre
-200 filas, el desfase es de +4,0 h en las 200 -- uniforme, no ruido.
+servidor vivo: los timestamps locales estan adelantados.
+
+CUIDADO, ESTO SE MIDIO MAL LA PRIMERA VEZ. Decia "+4,0 h en las 200 filas --
+uniforme, no ruido", y la muestra no daba para esa conclusion: las 200 caian
+en la misma epoca del ano. El 2026-08-26, comparando la replica contra
+produccion fila por fila, aparecio esto:
+
+    unidad 66504   2026-06-11    +4 h
+    unidad 67009   2025-07-02    +4 h
+    unidad 65021   2025-04-04    +3 h   <--
+
+No es un offset fijo: es una CONVERSION DE ZONA HORARIA, y Chile tiene
+horario de verano. El 4 de abril de 2025 todavia estaba en DST (UTC-3) y las
+otras dos fechas en horario normal (UTC-4). El desfase depende de en que lado
+del cambio de hora cae cada timestamp.
+
+Importa para lo que viene: cualquier arreglo del estilo "restarle 4 horas"
+esta mal medio ano. La reconciliacion completa (`--desde ""`), que hace que
+manden los valores del legado y no una cuenta nuestra, no tiene ese problema
+-- que es otro argumento para no hacer aritmetica de fechas de este lado.
 
 DECISION: el pull los alinea. Manda el legado, asi que al traer una fila se
 reescriben `created_at` y `updated_at` con los de alla. Es un cambio visible
@@ -61,16 +79,20 @@ Si Python hubiera usado su propio reloj, 4 horas de diferencia habrian hecho
 que el sync se salteara registros en silencio -- que es exactamente el modo
 de fallar que no se nota hasta que faltan datos.
 
-Lo que esta etapa NO hace
--------------------------
-No empuja nada. El push (Python -> legado) viene despues, con su cola y su
-locking optimista, y recien cuando el pull este probado contra produccion: al
-reves, una marca de agua sin probar puede ensuciar el legado.
+La guarda de `push_pendiente`
+-----------------------------
+Este modulo no empuja: eso es `push_legado.py`. Pero desde que el push existe,
+el pull tiene que mirar por donde pisa, y ese chequeo esta en `_upsert`.
 
-Por eso tampoco hay chequeo de `push_pendiente` todavia. Hoy no hace falta y
-seria codigo muerto: los modulos de REGLA escriben en sus tablas `_regla`
-propias y NINGUNO toca `newstocks_cidef`, asi que el pull no puede pisar nada
-nuestro. El dia que exista push, el chequeo va justo antes del UPSERT.
+Una fila con `push_pendiente = 1` tiene un cambio nuestro sin confirmar del
+otro lado. Lo que el legado devuelve de esa fila es la version vieja, asi que
+escribirla desharia en la replica lo que estamos por mandar. Se saltea entera
+hasta que el push la resuelva -- con exito o con conflicto, los dos bajan el
+flag.
+
+La columna se agrega sola (`push_legado.asegurar_tablas`) y la guarda se
+enciende cuando aparece, asi que una base que nunca vio un push sigue andando
+igual.
 
 Limitacion conocida
 -------------------
@@ -242,23 +264,43 @@ def _columnas(db, tabla):
 
 
 def _upsert(db, tabla, filas, columnas_validas):
-    """Inserta o actualiza por `id`. Devuelve (creadas, actualizadas).
+    """Inserta o actualiza por `id`. Devuelve (creadas, actualizadas, saltadas).
 
     Solo se escriben las columnas que EXISTEN en la replica: si el legado
     agrega una columna nueva, esto la ignora en vez de romper. La contraria --
     una columna que la replica tiene y el legado dejo de mandar -- se deja
-    como esta, sin pisarla con NULL."""
-    creadas = actualizadas = 0
+    como esta, sin pisarla con NULL.
+
+    LA GUARDA DE `push_pendiente`
+    -----------------------------
+    Una fila con push_pendiente=1 tiene un cambio nuestro todavia sin
+    confirmar del otro lado. Lo que el legado devuelve de esa fila es, por
+    definicion, la version VIEJA -- la de antes de nuestro cambio --, asi que
+    escribirla seria deshacer en la replica lo que estamos por mandar, y ademas
+    dejar la pantalla mostrando el estado anterior al que el usuario acaba de
+    guardar. Se saltea entera y se retoma cuando el push la resuelva (con exito
+    o con conflicto: los dos casos bajan el flag).
+
+    La columna puede no existir todavia -- la agrega push_legado.asegurar_tablas
+    y una base que nunca vio un push no la tiene --, asi que la guarda se
+    activa sola cuando aparece en vez de exigir una migracion previa."""
+    creadas = actualizadas = saltadas = 0
+    vigila_push = "push_pendiente" in columnas_validas
+    columna_estado = ("push_pendiente" if vigila_push else "1")
     for fila in filas:
         if "id" not in fila:
             continue
-        campos = [c for c in fila.keys() if c in columnas_validas and c != "id"]
+        campos = [c for c in fila.keys()
+                  if c in columnas_validas and c not in ("id", "push_pendiente")]
         if not campos:
             continue
-        existe = db.execute(
-            'SELECT 1 FROM "{}" WHERE id = ?'.format(tabla), (fila["id"],)
-        ).fetchone() is not None
-        if existe:
+        actual = db.execute(
+            'SELECT {} AS pendiente FROM "{}" WHERE id = ?'.format(
+                columna_estado, tabla), (fila["id"],)).fetchone()
+        if actual is not None and vigila_push and actual["pendiente"]:
+            saltadas += 1
+            continue
+        if actual is not None:
             db.execute(
                 'UPDATE "{}" SET {} WHERE id = ?'.format(
                     tabla, ", ".join('"{}" = ?'.format(c) for c in campos)),
@@ -271,7 +313,7 @@ def _upsert(db, tabla, filas, columnas_validas):
                     ", ".join("?" * (len(campos) + 1))),
                 [fila["id"]] + [fila[c] for c in campos])
             creadas += 1
-    return creadas, actualizadas
+    return creadas, actualizadas, saltadas
 
 
 # ---------------------------------------------------------------------------
@@ -303,7 +345,7 @@ def sincronizar_entidad(entidad, dry_run=False, desde=None, limite=None,
         limite = limite or LIMITE_DEFECTO
         cliente = cliente or Legado()
 
-        recibidas = creadas = actualizadas = 0
+        recibidas = creadas = actualizadas = saltadas = 0
         columnas = _columnas(db, conf["tabla"])
         marca_nueva = marca
         pagina = 1
@@ -334,9 +376,10 @@ def sincronizar_entidad(entidad, dry_run=False, desde=None, limite=None,
             if len(muestra) < 3:
                 muestra.extend(filas[:3 - len(muestra)])
             if not dry_run and filas:
-                c, a = _upsert(db, conf["tabla"], filas, columnas)
+                c, a, s_ = _upsert(db, conf["tabla"], filas, columnas)
                 creadas += c
                 actualizadas += a
+                saltadas += s_
             # El `hasta` del legado es la hora de SU servidor. Se guarda tal
             # cual: ver la nota 3 del encabezado.
             if datos.get("hasta"):
@@ -374,7 +417,7 @@ def sincronizar_entidad(entidad, dry_run=False, desde=None, limite=None,
                 "marca_agua_previa": marca, "marca_agua_nueva": marca_nueva,
                 "paginas": pagina, "recibidas": recibidas,
                 "creadas": creadas, "actualizadas": actualizadas,
-                "muestra": muestra}
+                "saltadas": saltadas, "muestra": muestra}
     except Exception as e:
         if not dry_run:
             try:
@@ -425,6 +468,11 @@ def main(argv=None):
         if not r["dry_run"]:
             print("  creadas       : {:,}".format(r["creadas"]))
             print("  actualizadas  : {:,}".format(r["actualizadas"]))
+            # Solo se nombra cuando hay: en la corrida normal es cero y una
+            # linea fija en cero es ruido que se deja de leer.
+            if r["saltadas"]:
+                print("  saltadas      : {:,}  (push_pendiente=1: hay un "
+                      "cambio nuestro sin confirmar)".format(r["saltadas"]))
         for fila in r["muestra"]:
             print("  muestra: id={} vin={} estado={}".format(
                 fila.get("id"), fila.get("vin"), fila.get("despachado")))

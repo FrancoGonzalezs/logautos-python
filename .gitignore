@@ -32,6 +32,17 @@ semilla*.sql.gz
 *.sql.gz
 *.zip
 
+# ... pero el DDL que el legado necesita SI va. `*.sql` esta pensado para
+# dumps y respaldos, y se estaba tragando en silencio los esquemas que son
+# codigo: `api_idempotency.sql` es lo que hay que correr del lado MySQL para
+# que funcione el push, y tiene que viajar con el cliente que lo consume --
+# el mismo argumento por el que `scripts/Api_regla.php` esta versionado aca
+# aunque corra en el otro proyecto.
+#
+# La excepcion es por archivo y no `!scripts/*.sql`: si manana alguien deja
+# un dump en scripts/, que lo siga ignorando.
+!scripts/api_idempotency.sql
+
 __pycache__/
 *.py[cod]
 .venv/

@@ -83,13 +83,17 @@ def crear_app():
 
 
 def _hilo_sync():
-    """El pull contra el legado, en segundo plano.
+    """El pull contra el legado, y despues el push, en segundo plano.
 
     Solo arranca si SYNC_INTERVALO_SEGUNDOS esta definida y es > 0, asi que en
     local no corre salvo que se lo pida explicitamente. Nunca levanta hacia
     afuera: si una vuelta falla, la marca de agua no avanza y la siguiente
     trae lo pendiente -- ese es justamente el motivo de que el sync sea un
-    pull y no un push."""
+    pull y no un push.
+
+    El push tiene ademas su propia compuerta, PUSH_LEGADO_ACTIVO, apagada por
+    defecto. Son dos llaves distintas a proposito: el pull lee y el push
+    escribe, y no tienen por que encenderse el mismo dia."""
     intervalo = float(os.environ.get("SYNC_INTERVALO_SEGUNDOS") or 0)
     if intervalo <= 0:
         return
@@ -98,16 +102,38 @@ def _hilo_sync():
     import time
 
     def vueltas():
+        from modulos.push_legado import procesar_pendientes, push_activo
         from modulos.sync_legado import todo
         while True:
             time.sleep(intervalo)
             try:
                 for r in todo():
-                    print("[sync] {} recibidas={} creadas={} actualizadas={}".format(
-                        r["entidad"], r["recibidas"], r["creadas"],
-                        r["actualizadas"]), flush=True)
+                    print("[sync] {} recibidas={} creadas={} actualizadas={}"
+                          "{}".format(
+                              r["entidad"], r["recibidas"], r["creadas"],
+                              r["actualizadas"],
+                              " saltadas={}".format(r["saltadas"])
+                              if r.get("saltadas") else ""), flush=True)
             except Exception as e:              # noqa: BLE001 -- ver docstring
                 print("[sync] error: {}: {}".format(type(e).__name__, e), flush=True)
+
+            # El push va DESPUES del pull de la misma vuelta, no antes. El
+            # UPSERT saltea las filas con push_pendiente=1; si el push corriera
+            # primero y limpiara el flag, el pull de esta misma vuelta podria
+            # sobrescribir la fila sin verla.
+            #
+            # Detras de PUSH_LEGADO_ACTIVO, que arranca apagado: mientras lo
+            # este, esto no manda un solo byte y la cola se vacia a mano.
+            if not push_activo():
+                continue
+            try:
+                r = procesar_pendientes()
+                if r["intentados"]:
+                    print("[push] intentados={intentados} ok={ok} "
+                          "conflictos={conflicto} errores={error}".format(**r),
+                          flush=True)
+            except Exception as e:              # noqa: BLE001
+                print("[push] error: {}: {}".format(type(e).__name__, e), flush=True)
 
     threading.Thread(target=vueltas, daemon=True).start()
     print("[sync] hilo activo, cada {:.0f}s".format(intervalo), flush=True)

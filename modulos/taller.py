@@ -67,6 +67,8 @@ from modulos.acceso import id_actual, nombre_actual
 from modulos.catalogos import normalizar
 from modulos.movimientos import (_buscar, es_desvio, estado_fisico, recomendar,
                                  registrar)
+from modulos.push_legado import (asegurar_tablas, campos_it, disparar_push,
+                                 encolar_it)
 from modulos.unidades import TABLA
 
 bp = Blueprint("taller", __name__)
@@ -379,7 +381,14 @@ def guardar_it(id_unidad):
     })
 
     db = _db()
-    db.execute("""
+
+    # Va ANTES del INSERT y no en el medio: `asegurar_tablas` usa
+    # executescript, que en sqlite3 cierra la transaccion en curso con un
+    # COMMIT implicito. Llamarlo despues del INSERT partiria en dos lo que
+    # tiene que ser atomico.
+    asegurar_tablas(db)
+
+    cur = db.execute("""
         INSERT INTO it_regla
           (unidad_id, movimiento_id, vin, estado_it, observacion_it,
            estado_desde, estado_hacia, encargado, usuario, creado_en)
@@ -387,7 +396,22 @@ def guardar_it(id_unidad):
         unidad["id"], movimiento_id, unidad["vin"], estado_it, observacion,
         estado_actual, estado_hacia, nombre_actual(), id_actual(),
         datetime.now().isoformat(timespec="seconds")))
+
+    # El push al legado. Las tres escrituras -- la fila de it_regla, el
+    # push_pendiente de la unidad y la entrada de cola -- caen en el mismo
+    # commit, que es lo que hace que el pull no pueda pisarnos: mientras el
+    # flag este en 1, el UPSERT saltea la fila.
+    #
+    # Encolar es local y no le manda nada a nadie. Lo que sale a la red es
+    # disparar_push, y eso ademas esta detras de PUSH_LEGADO_ACTIVO.
+    id_cola = encolar_it(db, unidad, cur.lastrowid,
+                         campos_it(estado_it, observacion, estado_hacia,
+                                   id_actual()))
     db.commit()
+
+    # Despues del commit, nunca antes: si el hilo saliera con la transaccion
+    # abierta podria pushear un dato que todavia puede no quedar guardado.
+    disparar_push(id_cola)
 
     return _volver(id_unidad, "taller.lista_it", "it",
                    unidad["vin"], estado_hacia)
