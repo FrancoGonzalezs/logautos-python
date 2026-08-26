@@ -329,6 +329,15 @@ def sincronizar_entidad(entidad, dry_run=False, desde=None, limite=None,
     if entidad not in ENTIDADES:
         raise ValueError("entidad desconocida: {}".format(entidad))
     conf = ENTIDADES[entidad]
+
+    # Los contadores nacen FUERA del try porque el manejador de error los lee:
+    # desde que se commitea por pagina, una corrida que se corta dejo filas
+    # escritas de verdad, y decir "0 filas" en el estado seria mentir sobre lo
+    # que hay en la base. Si se inicializaran adentro, una excepcion temprana
+    # -- una precondicion que falta, por ejemplo -- haria estallar el propio
+    # manejador con NameError y taparia el error original.
+    recibidas = creadas = actualizadas = saltadas = 0
+
     db = _conectar(db_path)
     try:
         for previa in conf["precondiciones"]:
@@ -345,7 +354,6 @@ def sincronizar_entidad(entidad, dry_run=False, desde=None, limite=None,
         limite = limite or LIMITE_DEFECTO
         cliente = cliente or Legado()
 
-        recibidas = creadas = actualizadas = saltadas = 0
         columnas = _columnas(db, conf["tabla"])
         marca_nueva = marca
         pagina = 1
@@ -380,6 +388,33 @@ def sincronizar_entidad(entidad, dry_run=False, desde=None, limite=None,
                 creadas += c
                 actualizadas += a
                 saltadas += s_
+                # UN COMMIT POR PAGINA, no uno solo al final.
+                #
+                # La marca de agua NO se toca acá: sigue avanzando una sola vez,
+                # al terminar bien. Lo que se hace durable es el dato, no el
+                # progreso. Si la corrida se corta en la pagina 200, las 199
+                # anteriores quedan escritas y la marca sigue donde estaba, asi
+                # que la proxima vuelta las vuelve a pedir y el UPSERT las pisa
+                # con lo mismo. Traer dos veces la misma fila es gratis; perder
+                # 199 paginas de trabajo, no.
+                #
+                # Antes esto era un solo commit despues del `while`, y las 358
+                # paginas de una reconciliacion completa vivian en UNA
+                # transaccion. Tres problemas, y el tercero es el que obligo:
+                #
+                #   1. Un corte en la pagina 350 tiraba las 349 anteriores.
+                #   2. La transaccion se queda con el lock de escritura toda la
+                #      corrida, asi que la app no puede escribir mientras dura.
+                #   3. El WAL tiene que retener cada pagina sucia hasta el
+                #      commit. Medido sobre la replica: 68 MB. El volumen de
+                #      Railway tiene 69 MB libres de 434 -- seis megas de
+                #      margen, que no es un margen. Commiteando por pagina,
+                #      SQLite puede hacer checkpoint entre una y otra y el WAL
+                #      se mantiene chico.
+                #
+                # Es el mismo criterio del pull entero: el trabajo hecho no se
+                # tira, y lo que se repara solo es el progreso, no el dato.
+                db.commit()
             # El `hasta` del legado es la hora de SU servidor. Se guarda tal
             # cual: ver la nota 3 del encabezado.
             if datos.get("hasta"):
@@ -409,6 +444,10 @@ def sincronizar_entidad(entidad, dry_run=False, desde=None, limite=None,
         if dry_run:
             db.rollback()
         else:
+            # Las filas ya estan commiteadas pagina por pagina; esto solo cierra
+            # una transaccion que haya quedado abierta por una pagina vacia.
+            # Lo que de verdad pasa acá es que la marca de agua avanza, y recien
+            # ahora: es el unico punto donde la corrida se declara completa.
             db.commit()
             _guardar_estado(db, entidad, marca_nueva, "ok", "",
                             recibidas, creadas, actualizadas)
@@ -421,9 +460,15 @@ def sincronizar_entidad(entidad, dry_run=False, desde=None, limite=None,
     except Exception as e:
         if not dry_run:
             try:
+                # Los contadores REALES, no ceros. Con el commit por pagina
+                # una corrida cortada deja filas escritas, y el estado tiene
+                # que decir cuantas: es la diferencia entre "fallo y no hizo
+                # nada" y "fallo en la pagina 200 de 358", que se atienden
+                # distinto. La marca de agua se reescribe con la GUARDADA, sin
+                # avanzar: el progreso no se conserva, el dato si.
                 _guardar_estado(db, entidad, estado_de(db, entidad)["marca_agua"],
                                 "error", "{}: {}".format(type(e).__name__, e),
-                                0, 0, 0)
+                                recibidas, creadas, actualizadas)
             except Exception:                    # pragma: no cover
                 pass
         raise
