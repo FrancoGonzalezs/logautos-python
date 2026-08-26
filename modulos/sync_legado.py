@@ -98,8 +98,36 @@ Limitacion conocida
 -------------------
 74 filas (0,1%, de las cuales 18 vivas) no tienen `created_at` NI
 `updated_at` usables. Un pull por marca de agua no las trae nunca. No se
-inventa una fecha para taparlo: se resuelve con una reconciliacion completa
-ocasional (`--desde ""`), que es barata porque son 358 paginas de 200.
+inventa una fecha para taparlo, y una reconciliacion completa TAMPOCO las trae:
+el endpoint las excluye con `WHERE {cambiado} IS NOT NULL` para que el orden
+sea estable entre paginas. Comprobado: la reconciliacion devuelve 71.472 de
+71.546, y la diferencia son exactamente esas 74.
+
+La reconciliacion completa: usar `--limite 500`
+-----------------------------------------------
+El encabezado decia que era "barata, 358 paginas de 200". Barata si, pero no
+inofensiva, y conviene correrla asi:
+
+    python -m modulos.sync_legado unidades --desde "" --limite 500
+
+Dos cosas medidas el 2026-08-26:
+
+1. El endpoint pagina con `LIMIT ? OFFSET ?` sobre un `ORDER BY
+   COALESCE(NULLIF(...))` que no puede usar indice, asi que en la pagina 358
+   MySQL ordena las 71.546 filas y descarta 71.400. El costo crece con la
+   profundidad.
+
+2. Con 200 por pagina, el hosting CORTO LA CONEXION en la pagina 117
+   (RemoteDisconnected). No fue el User-Agent -- era el correcto: son 358
+   viajes contra un hosting que ya sabemos delicado.
+
+Con `--limite 500` -- el tope que acepta el endpoint -- son 143 paginas en vez
+de 358: 2,5 veces menos viajes, misma latencia por pagina (1,1 s contra 1,2 s
+medidos), y termino en ~2,5 minutos.
+
+Que el corte no costara nada es merito del commit por pagina: las 117 paginas
+ya traidas quedaron escritas y la marca de agua no avanzo, asi que el reintento
+solo tuvo que rehacer trabajo, no recuperarlo.
 
 Como se corre
 -------------
