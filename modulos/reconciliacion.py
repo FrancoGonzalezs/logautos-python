@@ -130,6 +130,13 @@ def _clasificar_una(fila, normalizar_estado):
     if fila["push_confirmado"]:
         # Empujamos, el legado lo tomo, y despues se movio por su cuenta.
         return "legado_adelante", None
+    # Un estado que REGLA reconoce pero no enruta -- SOLICITUD DESPACHO, CC PDI,
+    # IT FALTA SEGUNDA PDI -- no es una contradiccion: es una zona del legado
+    # que REGLA todavia no maneja. Mezclarlo con las contradicciones haria que
+    # el reporte pida atencion humana para algo que no la necesita, y la
+    # categoria 3 vale justamente porque es corta.
+    if fila["reconocido_sin_ruta"]:
+        return "fuera_de_alcance", None
     return "contradiccion", {
         "unidad": fila["id"], "vin": fila["vin"],
         "legado": fila["despachado"], "regla": fila["estado_hacia"],
@@ -140,7 +147,8 @@ def _clasificar_una(fila, normalizar_estado):
 
 def comparar_estados(db):
     """Clasifica todas las unidades que REGLA toco."""
-    from modulos.movimientos import normalizar_estado
+    from modulos.movimientos import (RECONOCIDOS_SIN_RUTA,
+                                     normalizar_estado)
 
     filas = db.execute("""
         SELECT n.id, n.vin, n.despachado, n.push_pendiente,
@@ -155,7 +163,7 @@ def comparar_estados(db):
     """).fetchall()
 
     conteo = {"de_acuerdo": 0, "regla_adelante": 0, "legado_adelante": 0,
-              "contradiccion": 0, "sin_arco": 0}
+              "contradiccion": 0, "sin_arco": 0, "fuera_de_alcance": 0}
     detalles = []
     # Todos los `estado_desde` de cada unidad: el camino que REGLA ya recorrio.
     recorridos = {}
@@ -169,6 +177,8 @@ def comparar_estados(db):
         d = dict(f)
         d["push_confirmado"] = bool(f["empujes_ok"]) and not f["push_pendiente"]
         d["recorrido"] = recorridos.get(f["id"], set())
+        d["reconocido_sin_ruta"] = (
+            normalizar_estado(f["despachado"]) in RECONOCIDOS_SIN_RUTA)
         categoria, detalle = _clasificar_una(d, normalizar_estado)
         conteo[categoria] += 1
         if detalle:

@@ -11,6 +11,17 @@ y la unidad se queda muda.
 Las variantes no se inventan: salen de contar `registros`, que tiene 296.529
 movimientos con estado escritos por el legado a lo largo de cuatro años.
 
+Hay TRES cajones y la prueba los separa a proposito:
+
+  ESTADOS               nodos de la maquina: el motor enruta desde ellos
+  RECONOCIDOS_SIN_RUTA  existen, se muestran, la reconciliacion no los trata
+                        como desconocidos -- pero el motor NO enruta
+  NO_SON_ESTADO         eventos que pisan la columna sin mover la unidad
+
+Reconocer no es enrutar, y confundirlos fue justamente lo que habia que
+evitar: SOLICITUD DESPACHO pasa 4.344 veces en seis meses y el 21% de esas
+veces la unidad esta todavia navegando.
+
     python scripts/probar_estados.py
 """
 
@@ -22,7 +33,8 @@ RAIZ = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, RAIZ)
 os.environ.setdefault("SECRET_KEY", "prueba")
 
-from modulos.movimientos import ESTADOS, normalizar_estado   # noqa: E402
+from modulos.movimientos import (ESTADOS, RECONOCIDOS_SIN_RUTA,  # noqa: E402
+                                 conocido, normalizar_estado)
 
 fallos = []
 
@@ -36,22 +48,22 @@ def afirmar(condicion, descripcion, detalle=""):
         fallos.append(descripcion)
 
 
-# (crudo, a que estado del catalogo tiene que resolver, cuantos movimientos)
+# (crudo, a que estado del catalogo tiene que resolver)
 VARIANTES = [
-    ("EN ESPERA DYP",             "EN ESPERA DE ASIGNACION DYP", None),
-    ("EN ESPERA ASIGNACION DYP",  "EN ESPERA DE ASIGNACION DYP", 4062),
-    ("EN ESPERERA DYP",           "EN ESPERA DE ASIGNACION DYP", 108),
-    ("INGRESAO TALLER",           "INGRESO A TALLER",            11),
-    ("EN ESPERA CONSOLIDADO DYP", "EN ESPERA DYP CONSOLIDADO",   9),
-    ("EN ESPERA DE DYP CONSOLIDADO", "EN ESPERA DYP CONSOLIDADO", None),
-    ("FR",                        "FR - MECANICA",               None),
-    ("STOCK SIN PDI",             "STOCK",                       None),
+    ("EN ESPERA DYP",                "EN ESPERA DE ASIGNACION DYP"),
+    ("EN ESPERA ASIGNACION DYP",     "EN ESPERA DE ASIGNACION DYP"),   # 4.062
+    ("EN ESPERERA DYP",              "EN ESPERA DE ASIGNACION DYP"),   # 108
+    ("INGRESAO TALLER",              "INGRESO A TALLER"),              # 11
+    ("EN ESPERA CONSOLIDADO DYP",    "EN ESPERA DYP CONSOLIDADO"),     # 9
+    ("EN ESPERA DE DYP CONSOLIDADO", "EN ESPERA DYP CONSOLIDADO"),
+    ("FR",                           "FR - MECANICA"),
+    ("STOCK SIN PDI",                "STOCK"),
 ]
 
 
 def main():
     print("\n--- 1. las variantes resuelven al estado del catalogo ---")
-    for crudo, esperado, _ in VARIANTES:
+    for crudo, esperado in VARIANTES:
         obtenido = normalizar_estado(crudo)
         afirmar(obtenido == esperado,
                 "{!r} -> {}".format(crudo, esperado), obtenido)
@@ -63,7 +75,16 @@ def main():
         afirmar(normalizar_estado(crudo) == "NAVEGANDO",
                 "{!r} -> NAVEGANDO".format(crudo), normalizar_estado(crudo))
 
-    print("\n--- 3. cobertura sobre los datos reales ---")
+    print("\n--- 3. reconocer no es enrutar ---")
+    for crudo, esperado in (("SOLICTUD DESPACHO", True), ("CC PDI", True),
+                            ("IT FALTA SEGUNDA PDI", True),
+                            ("LAVADO KSM", False), ("CUALQUIER COSA", False)):
+        afirmar(conocido(crudo) is esperado,
+                "{!r} conocido = {}".format(crudo, esperado), conocido(crudo))
+    afirmar(all(e not in ESTADOS for e in RECONOCIDOS_SIN_RUTA),
+            "ninguno de los reconocidos es nodo de la maquina")
+
+    print("\n--- 4. cobertura sobre los datos reales ---")
     ruta = os.path.join(RAIZ, "local.db")
     if not os.path.exists(ruta):
         print("   (saltada: no hay replica en {})".format(ruta))
@@ -74,7 +95,7 @@ def main():
         for estado, n in db.execute(
                 "SELECT estado, COUNT(*) FROM registros "
                 "WHERE estado IS NOT NULL AND estado <> '' GROUP BY estado"):
-            if normalizar_estado(estado) in ESTADOS:
+            if conocido(estado):
                 dentro += n
             else:
                 fuera += n
@@ -84,12 +105,12 @@ def main():
         pct = 100.0 * dentro / total
         print("   {:,} de {:,} movimientos con estado conocido = {:.1f}%"
               .format(dentro, total, pct))
-        afirmar(pct >= 90.0,
-                "la cobertura no baja del 90%",
+        afirmar(pct >= 95.0, "la cobertura no baja del 95%",
                 "{:.1f}%".format(pct))
         # Los que faltan son estados que REGLA no modela, no variantes sueltas.
         # Si aparece uno NUEVO por debajo de este umbral, es una variante que
-        # se escapo y hay que agregarla, no un estado de negocio.
+        # se escapo y hay que agregarla, no un estado de negocio. Es la red por
+        # si LAVADO KSM -- que se dejo afuera a proposito -- reaparece.
         chicos = [(e, n) for e, n in huerfanos if n < 200]
         print("   sin equivalente y con menos de 200 usos: {}".format(len(chicos)))
         for e, n in sorted(chicos, key=lambda x: -x[1])[:8]:

@@ -293,11 +293,59 @@ ESTADOS = {
 }
 
 # Lo que NO es un estado fisico y por eso no es nodo de la maquina (cap. 7).
-# SOLICITUD DESPACHO es un evento comercial que hoy pisa la columna de estado
-# (857 casos con la unidad todavia navegando), y EDITAR es una edicion masiva
-# de Herramientas. Si se los tratara como estados, el motor recomendaria desde
-# ellos y perderia el estado fisico real de la unidad.
+# EDITAR es una edicion masiva de Herramientas.
+#
+# SOLICITUD DESPACHO SE MODELA COMO LO QUE ES: un evento comercial, no un
+# lugar. Es la unica forma de modelarlo de verdad, y los datos lo sostienen --
+# remedidos el 2026-08-27, y la premisa resulto MAS fuerte de lo que decia el
+# comentario viejo:
+#
+#   - 2.138 movimientos historicos a este estado ocurren con la unidad todavia
+#     NAVEGANDO o INGRESADA (el comentario decia 857);
+#   - en los ultimos 6 meses son 911 de 4.344, el 21%;
+#   - y HOY NO HAY NI UNA unidad parada en ese estado.
+#
+# O sea: es una marca transitoria que pisa la columna y que otra cosa
+# sobrescribe enseguida. Si fuera nodo de la maquina, el motor recomendaria
+# desde el a una unidad que fisicamente esta en el mar, y perderia su estado
+# real. Se reconoce, se muestra y la reconciliacion no lo trata como
+# desconocido -- pero no enruta.
 NO_SON_ESTADO = {"SOLICITUD DESPACHO", "EDITAR"}
+
+# Estados que EXISTEN en el legado y que REGLA reconoce, pero que no son nodos
+# de la maquina de transiciones: se muestran, no se tratan como desconocidos, y
+# el motor no recomienda desde ellos porque no estan en la matriz.
+#
+# Es una tercera categoria a proposito, distinta de ESTADOS y de NO_SON_ESTADO.
+# Sin ella habia solo dos cajones -- "enruta" o "no es un estado" -- y estos
+# tres no entran en ninguno: son estados de verdad, pasan de verdad, y el motor
+# no tiene reglas para ellos.
+#
+# Vigencia medida en los ultimos 6 meses (2026-02-27 en adelante):
+#   SOLICITUD DESPACHO      4.344   evento comercial, ver arriba
+#   CC PDI                     64   control de calidad de la PDI
+#   IT FALTA SEGUNDA PDI       45   la unidad necesita una segunda PDI
+#
+# LAVADO KSM (5 usos) queda deliberadamente afuera: la prueba de estados avisa
+# si un estado con menos de 200 usos crece, y esa es la red por si reaparece.
+RECONOCIDOS_SIN_RUTA = {
+    "SOLICITUD DESPACHO": "Evento comercial: se pidió el despacho. No mueve la "
+                          "unidad de lugar.",
+    "CC PDI": "Control de calidad de la PDI.",
+    "IT FALTA SEGUNDA PDI": "La unidad necesita una segunda PDI.",
+}
+
+
+def conocido(estado):
+    """Si REGLA sabe QUE es este estado, aunque no sepa enrutarlo.
+
+    Lo usa la reconciliacion: un estado reconocido y sin ruta no es una
+    contradiccion ni un desconocido, es una zona del legado que REGLA todavia
+    no maneja. Mezclarlos hace que el reporte pida atencion para algo que no
+    la necesita."""
+    canon = normalizar_estado(estado)
+    return bool(canon) and (canon in ESTADOS or canon in RECONOCIDOS_SIN_RUTA
+                            or canon in NO_SON_ESTADO)
 
 
 # Variantes que son el mismo estado escrito de otra forma (hallazgos 3, 4 y 5
