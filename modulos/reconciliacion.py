@@ -115,8 +115,17 @@ def _clasificar_una(fila, normalizar_estado):
         return "sin_arco", None
     if crudo == hacia:
         return "de_acuerdo", None
-    if desde and crudo == desde:
-        # El legado sigue donde la unidad estaba antes de que la movieramos.
+    # El legado sigue en algun punto del camino que REGLA ya recorrio: en el
+    # `estado_desde` del ultimo movimiento, o en el de cualquiera anterior.
+    #
+    # Mirar SOLO el ultimo estaba incompleto y lo destapo la medicion base: la
+    # unidad 91950 tiene `ingreso` (NAVEGANDO -> ZONA DE RECEPCION) y despues
+    # `revision_contenedor` (ZONA DE RECEPCION -> ZONA DE RECEPCION), y el
+    # legado sigue en 'Navegando'. Ninguno de los dos pasos empuja todavia, asi
+    # que es REGLA adelante de manual -- pero comparando solo contra el ultimo
+    # `estado_desde` caia en contradiccion. Una cadena de pasos deja al legado
+    # en el ARRANQUE de la cadena, no en el penultimo escalon.
+    if crudo and crudo in fila["recorrido"]:
         return "regla_adelante", None
     if fila["push_confirmado"]:
         # Empujamos, el legado lo tomo, y despues se movio por su cuenta.
@@ -148,9 +157,18 @@ def comparar_estados(db):
     conteo = {"de_acuerdo": 0, "regla_adelante": 0, "legado_adelante": 0,
               "contradiccion": 0, "sin_arco": 0}
     detalles = []
+    # Todos los `estado_desde` de cada unidad: el camino que REGLA ya recorrio.
+    recorridos = {}
+    for r in db.execute(
+            "SELECT unidad_id, estado_desde FROM movimientos_regla "
+            " WHERE estado_desde IS NOT NULL AND estado_desde <> ''"):
+        recorridos.setdefault(r["unidad_id"], set()).add(
+            normalizar_estado(r["estado_desde"]))
+
     for f in filas:
         d = dict(f)
         d["push_confirmado"] = bool(f["empujes_ok"]) and not f["push_pendiente"]
+        d["recorrido"] = recorridos.get(f["id"], set())
         categoria, detalle = _clasificar_una(d, normalizar_estado)
         conteo[categoria] += 1
         if detalle:
