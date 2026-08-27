@@ -31,7 +31,7 @@ from datetime import date, datetime
 
 from flask import Blueprint, render_template, request
 
-from core import DATA_DIR, consultar, peso
+from core import DATA_DIR, con_iva, consultar, peso
 from modulos.catalogos import normalizar
 
 bp = Blueprint("facturacion", __name__, url_prefix="/facturacion")
@@ -41,33 +41,61 @@ IVA = 1.19
 RUTA_CACHE_UF = os.path.join(DATA_DIR, "uf.json")
 URL_UF = "https://mindicador.cl/api/uf"
 
-# Los UNICOS cinco clientes que facturan acopio. No hay tarifa de fallback: si
-# un cliente no esta en esta tabla, sus unidades no aparecen en la seccion.
+# ---------------------------------------------------------------------------
+# Las tarifas de acopio
+# ---------------------------------------------------------------------------
 #
-# Es deliberado y corrige un problema real. Con fallback, 98 unidades de
-# clientes que no facturan acopio (GELLONA, ECARS, KSM, MAS AUTOS, unidades de
-# PRUEBA y una decena de particulares) entraban al total, y como muchas estan
-# estacionadas hace años sin fecha de despacho acumulaban dias sin techo:
-# ECARS aportaba $21 millones con 23 unidades ingresadas antes de 2026.
+# En una tabla con FECHA DE VIGENCIA, no como constantes sueltas. El motivo no
+# es estilo: el precio de la PDI ya cambio una vez -- era una formula sobre la
+# UF hasta el 2026-06-02 y desde ahi son $49.000 fijos -- y cuando eso pasa,
+# recalcular un mes viejo con la tarifa nueva da un numero que no es el que se
+# facturo. Con la vigencia, cada mes se calcula con lo que regia ese mes.
 #
-# CIDEF es un monto FIJO en pesos, no un multiplo de la UF -- el PHP tiene la
-# version en UF comentada al lado y usa el fijo.
-TARIFA_FIJA = {"CIDEF": 660}
-TARIFA_EN_UF = {
-    "CARFLEX": 0.022,
-    "PIAMONTE": 0.026,
-    "POMPEYO CARRASCO": 0.0219,
-    "POMPEYO CARRASCO USADOS": 0.0215,
+# Agregar una tarifa nueva es agregar una FILA, nunca editar una existente: la
+# fila vieja es la que explica las facturas ya emitidas.
+#
+# OJO CON EL VALOR DE CARFLEX. El legado tiene DOS implementaciones vivas del
+# acopio con tarifas distintas para el mismo cliente:
+#
+#     views/dash_acopio.php          $carflex = $uf * 0.022
+#     Examples.php::acopio_logautos  $carflex = $uf * 0.026
+#
+# REGLA replica la primera. Cual de las dos emite la factura NO se decide
+# leyendo el codigo -- que el legado tenga dos valores vivos significa que
+# nadie lo reviso en años, no que uno sea el bug. La fuente de verdad de una
+# tarifa es el contrato y el oraculo son las facturas emitidas, que estan
+# fuera del sistema. Queda pendiente de resolver con una factura real.
+#
+# `CIDEF` es un monto FIJO en pesos, no un multiplo de la UF: en
+# dash_acopio.php la version en UF (`$uf * 0.0165`) esta COMENTADA y usa 660.
+
+# (desde, cliente, tipo, valor). `tipo` es 'pesos' o 'uf'.
+TARIFAS_ACOPIO = [
+    ("2000-01-01", "CIDEF",                   "pesos", 660),
+    ("2000-01-01", "CARFLEX",                 "uf",    0.022),
+    ("2000-01-01", "PIAMONTE",                "uf",    0.026),
+    ("2000-01-01", "POMPEYO CARRASCO",        "uf",    0.0219),
+    ("2000-01-01", "POMPEYO CARRASCO USADOS", "uf",    0.0215),
+    # CLIENTE PARTICULAR cobra la tarifa generica -- el ultimo `else` de la
+    # cadena por cliente del PHP, que alla se llama `$mas`.
+    ("2000-01-01", "CLIENTE PARTICULAR",      "uf",    0.017),
+]
+
+# Clientes que existen en los datos y que NO facturan acopio. Es una lista
+# EXPLICITA y no "todo lo que no este arriba", y esa es la diferencia que
+# importa: sin ella, un cliente nuevo cuyas unidades se cargan antes que su
+# tarifa desaparece del calculo en silencio y nadie se entera hasta la factura.
+#
+# Con estos afuera se corrige un problema real: 98 unidades de estos clientes
+# entraban al total, y como muchas estan estacionadas hace años sin fecha de
+# despacho acumulaban dias sin techo -- ECARS aportaba $21 millones con 23
+# unidades ingresadas antes de 2026.
+CLIENTES_SIN_ACOPIO = {
+    "GELLONA - LOGAUTOS", "GELLONA", "ECARS", "KSM", "MAS AUTOS",
+    "LOGAUTOS", "PRUEBA", "ASTARA", "POMPEYO CARRASCO FLOTA",
 }
 
-# CLIENTE PARTICULAR factura acopio pero no tiene tarifa propia: cae en el
-# fallback "MAS" del PHP, el ultimo `else` de la cadena de if/elseif por
-# cliente. No es una lista abierta -- sigue siendo lista blanca, solo que este
-# cliente cobra la tarifa generica.
-TARIFA_UF_FALLBACK = 0.017
-CLIENTES_ACOPIO_FALLBACK = {"CLIENTE PARTICULAR"}
 
-CLIENTES_ACOPIO = set(TARIFA_FIJA) | set(TARIFA_EN_UF) | CLIENTES_ACOPIO_FALLBACK
 
 # Dias de gracia que CIDEF no paga cuando la unidad viene de puerto.
 DIAS_GRACIA_CIDEF_PUERTO = 7
@@ -160,26 +188,54 @@ def obtener_uf(anio, mes):
     raise RuntimeError("No se encontro UF publicada para {}/{}".format(mes, anio))
 
 
-def tarifa_diaria(cliente, uf):
-    """Lo que cuesta un dia de acopio para ese cliente, o None si el cliente
-    no factura acopio."""
+def _tarifas_vigentes(fecha):
+    """{cliente: (tipo, valor)} con lo que regia en `fecha`."""
+    vigentes = {}
+    for desde, cliente, tipo, valor in sorted(TARIFAS_ACOPIO):
+        if desde <= fecha:
+            vigentes[cliente] = (tipo, valor)
+    return vigentes
+
+
+def clientes_con_tarifa(fecha):
+    return set(_tarifas_vigentes(fecha))
+
+
+def tarifa_diaria(cliente, uf, fecha=None):
+    """Lo que cuesta un dia de acopio para ese cliente en esa fecha.
+
+    Devuelve None si el cliente no tiene tarifa: el llamador tiene que
+    AVISAR, no seguir de largo. Ver `clientes_sin_tarifa`.
+
+    REDONDEADA AL PESO, las seis. El legado redondea las seis en
+    dash_acopio.php (`round($uf * ...)`), y mientras los dos sistemas convivan
+    coincidir vale mas que tener razon: cada diferencia que aparezca en la
+    reconciliacion es ruido que hay que explicar, y el ruido se lleva puesta la
+    señal. Mismo criterio que la asimetria G7/G9 del combustible. Se revisa
+    despues, en los dos sistemas a la vez.
+
+    `peso()` y no `round()`: ver la regla del dinero en core.py."""
     canon = normalizar(cliente)
-    if canon in TARIFA_FIJA:
-        return TARIFA_FIJA[canon]
-    if canon in TARIFA_EN_UF:
-        return uf * TARIFA_EN_UF[canon]
-    if canon in CLIENTES_ACOPIO_FALLBACK:
-        # OJO: esta va redondeada a peso y las de arriba no. Es asi por ahora
-        # a proposito, no es un descuido -- ver la nota del README sobre el
-        # redondeo: produccion redondea TODAS las tarifas, pero cambiar las
-        # otras mueve numeros que el personal ya esta mirando, asi que esa
-        # decision quedo pendiente. Cuando se tome, esto queda parejo solo.
-        #
-        # `peso()` y no `round()`: ver la regla del dinero en core.py. El
-        # legado usa `round()` de PHP, que redondea medio LEJOS DEL CERO; el
-        # de Python redondea AL PAR y da un peso menos en los .5 exactos.
-        return peso(uf * TARIFA_UF_FALLBACK)
-    return None
+    entrada = _tarifas_vigentes(fecha or date.today().isoformat()).get(canon)
+    if entrada is None:
+        return None
+    tipo, valor = entrada
+    return peso(valor if tipo == "pesos" else uf * valor)
+
+
+def clientes_sin_tarifa(db_filas, fecha):
+    """Los clientes que aparecen en los datos, no tienen tarifa y TAMPOCO
+    estan declarados como que no facturan acopio.
+
+    Es la señal que faltaba: hoy un cliente asi simplemente no aparecia en el
+    calculo, sin decir nada."""
+    conocidos = clientes_con_tarifa(fecha) | CLIENTES_SIN_ACOPIO
+    desconocidos = {}
+    for fila in db_filas:
+        canon = normalizar(fila["clientecompleto"])
+        if canon and canon not in conocidos:
+            desconocidos[canon] = desconocidos.get(canon, 0) + 1
+    return desconocidos
 
 
 # ---------------------------------------------------------------------------
@@ -283,6 +339,9 @@ def acopio_por_cliente(uf, hoy=None):
     por_cliente = {}
     unidades = []
     excluidas = {}
+    sin_tarifa = {}
+    fecha_calculo = hoy.isoformat()
+    con_tarifa = clientes_con_tarifa(fecha_calculo)
 
     for fila in filas:
         # Replica exacta del `despachado <> 'Navegando'` del PHP, que descarta
@@ -308,9 +367,17 @@ def acopio_por_cliente(uf, hoy=None):
         # cuentan aparte para poder decir en pantalla cuantas quedaron fuera,
         # en vez de hacerlas desaparecer sin dejar rastro.
         canon_cliente = normalizar(fila["clientecompleto"])
-        if canon_cliente not in CLIENTES_ACOPIO:
-            excluidas[canon_cliente or "(sin cliente)"] = \
-                excluidas.get(canon_cliente or "(sin cliente)", 0) + 1
+        if canon_cliente not in con_tarifa:
+            # Se separa el que NO FACTURA acopio -- decision declarada -- del
+            # que simplemente no tiene la tarifa cargada. Los dos salen del
+            # calculo, pero el segundo es un aviso y el primero no: un cliente
+            # nuevo cuyas unidades se cargan antes que su tarifa desaparecia
+            # del calculo sin que nadie se enterara hasta la factura.
+            if canon_cliente and canon_cliente not in CLIENTES_SIN_ACOPIO:
+                sin_tarifa[canon_cliente] = sin_tarifa.get(canon_cliente, 0) + 1
+            else:
+                excluidas[canon_cliente or "(sin cliente)"] = (
+                    excluidas.get(canon_cliente or "(sin cliente)", 0) + 1)
             continue
 
         ingreso = _fecha(fila["ingreso"])
@@ -322,7 +389,7 @@ def acopio_por_cliente(uf, hoy=None):
         dias = calcular_dias_acopio(
             ingreso, desp, inicio_mes, hoy, canon, normalizar(fila["origen"]))
 
-        tarifa = tarifa_diaria(canon, uf)
+        tarifa = tarifa_diaria(canon, uf, fecha_calculo)
         valor = dias * tarifa
 
         entrada = por_cliente.setdefault(canon, {
@@ -351,7 +418,8 @@ def acopio_por_cliente(uf, hoy=None):
 
     ordenado = sorted(por_cliente.values(), key=lambda e: -e["valor"])
     fuera = sorted(excluidas.items(), key=lambda kv: -kv[1])
-    return ordenado, unidades, fuera
+    faltantes = sorted(sin_tarifa.items(), key=lambda kv: -kv[1])
+    return ordenado, unidades, fuera, faltantes
 
 
 # ---------------------------------------------------------------------------
@@ -459,7 +527,7 @@ def dashboard():
         return render_template("facturacion.html", error_uf=str(error),
                                mes=hoy.strftime("%Y-%m"), hoy=hoy)
 
-    acopio, _unidades, acopio_fuera = acopio_por_cliente(uf, hoy)
+    acopio, _unidades, acopio_fuera, sin_tarifa = acopio_por_cliente(uf, hoy)
     ot_externas, ot_interna, ot_fuera = ot_cerradas_por_cliente(hoy)
     proyecciones = proyeccion_por_cliente(hoy)
 
@@ -472,11 +540,14 @@ def dashboard():
         "ot": total_ot,
         "acopio": total_acopio,
         "facturar": total_facturar,
-        "facturar_iva": total_facturar * IVA,
+        "facturar_iva": con_iva(total_facturar),
         "proyeccion": total_proyeccion,
-        "proyeccion_iva": total_proyeccion * IVA,
+        "proyeccion_iva": con_iva(total_proyeccion),
         "con_proyeccion": total_facturar + total_proyeccion,
-        "con_proyeccion_iva": (total_facturar + total_proyeccion) * IVA,
+        # Redondeados al peso, como el legado. Ver la nota de tarifa_diaria:
+        # mientras los dos sistemas convivan, coincidir vale mas que tener
+        # razon, porque cada diferencia es ruido en la reconciliacion.
+        "con_proyeccion_iva": con_iva(total_facturar + total_proyeccion),
     }
 
     return render_template(
@@ -484,7 +555,7 @@ def dashboard():
         uf=uf, origen_uf=origen_uf, mes=hoy.strftime("%Y-%m"), hoy=hoy,
         acopio=acopio, ot_externas=ot_externas, ot_interna=ot_interna,
         proyecciones=proyecciones, totales=totales,
-        acopio_fuera=acopio_fuera, ot_fuera=ot_fuera,
+        acopio_fuera=acopio_fuera, sin_tarifa=sin_tarifa, ot_fuera=ot_fuera,
         clientes_acopio=sorted(CLIENTES_ACOPIO), clientes_ot=sorted(CLIENTES_OT),
         total_unidades=sum(e["unidades"] for e in acopio),
         total_dias=sum(e["dias"] for e in acopio),

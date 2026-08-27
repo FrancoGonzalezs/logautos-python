@@ -206,18 +206,37 @@ def estados_sin_registro(db):
 # El sensor de plata
 # ---------------------------------------------------------------------------
 
+# Lo que vale una PDI hoy, para poder decir el monto y no solo el porcentaje.
+# Es el `$precio_pdi` del PHP, fijo desde el 2026-06-02 (antes variaba con la
+# UF). Si cambia alla, hay que cambiarlo aca -- por eso esta con su fecha.
+PRECIO_PDI = 49000
+PRECIO_PDI_VIGENTE_DESDE = "2026-06-02"
+
+
 def pdi_sin_ot(db, desde=DESDE_OT_AUTOMATICA):
     """PDI registradas en el legado que no tienen su OT de PDI.
 
-    Cada una es una PDI hecha y no cobrada."""
+    Cada una es una PDI hecha y no cobrada.
+
+    LA OT SE BUSCA POR VIN, NO POR unidad_id, Y ES CORRECTO ASI. Parece
+    contradecir la regla del proyecto -- "el match es por id, jamas por VIN" --
+    pero esa regla es sobre las tablas PROPIAS de REGLA. `orden_trabajo` es del
+    legado, y el legado la cuelga con `getidbyvin($vin)`, que devuelve la
+    pasada NO DESPACHADA del VIN: puede no ser la que se estaba procesando.
+
+    Buscar por `id_vehiculo = n.id` daba 88 unidades "sin cobrar" en 2026, o
+    sea del orden de 4,3 millones. Comprobado una por una: **87 de las 88
+    tenian su OT, colgada de otra pasada del mismo VIN**. Una sola era real.
+    Un sensor de plata con 99% de falsos positivos no se mira dos veces."""
     filas = db.execute("""
-        SELECT id, vin, clientecompleto, fecha_pdi
+        SELECT n.id, n.vin, n.clientecompleto, n.fecha_pdi
           FROM newstocks_cidef n
          WHERE n.fecha_pdi NOT IN ('', '0000-00-00') AND n.fecha_pdi IS NOT NULL
            AND n.fecha_pdi >= ?
-           AND NOT EXISTS (SELECT 1 FROM orden_trabajo o
-                            WHERE o.id_vehiculo = n.id
-                              AND o.requerimiento = 'PDI')
+           AND NOT EXISTS (
+                 SELECT 1 FROM orden_trabajo o
+                   JOIN newstocks_cidef x ON x.id = o.id_vehiculo
+                  WHERE x.vin = n.vin AND o.requerimiento = 'PDI')
          ORDER BY n.fecha_pdi DESC
     """, (desde,)).fetchall()
     con_pdi = db.execute(
@@ -228,6 +247,11 @@ def pdi_sin_ot(db, desde=DESDE_OT_AUTOMATICA):
         "desde": desde,
         "pdi_totales": con_pdi,
         "sin_ot": len(filas),
+        # El monto, no solo el porcentaje: un 1,3% no mueve a nadie y
+        # "$49.000 sin facturar" si. Es el piso -- no cuenta la OT de
+        # combustible, que va aparte y depende de marca y modelo.
+        "pesos": len(filas) * PRECIO_PDI,
+        "precio_pdi": PRECIO_PDI,
         "porcentaje": round(100.0 * len(filas) / con_pdi, 1) if con_pdi else 0.0,
         "detalle": [dict(f) for f in filas[:50]],
     }
@@ -325,7 +349,8 @@ def avisar(resumen):
         "el sistema anterior adelante: {la} · <b>contradicciones: {co}</b></p>"
         "{bloque_contra}"
         "<h4>PDI sin su OT — {sin_ot} de {tot} desde {desde} ({pct}%)</h4>"
-        "<p>Cada una es una PDI hecha y no cobrada.</p>"
+        "<p>Cada una es una PDI hecha y no cobrada: <b>${pesos}</b> como piso, "
+        "sin contar la OT de combustible.</p>"
         '<table class="tb"><tr><th>Unidad</th><th>VIN</th><th>Cliente</th>'
         "<th>Fecha PDI</th></tr>{filas_pdi}</table>"
         "<p>El detalle completo está en la pantalla de Reconciliación.</p>"
@@ -340,7 +365,9 @@ def avisar(resumen):
             .format(contra, filas_contra)) if contra else "",
         sin_ot=sin_ot, tot=resumen["pdi_sin_ot"]["pdi_totales"],
         desde=resumen["pdi_sin_ot"]["desde"],
-        pct=resumen["pdi_sin_ot"]["porcentaje"], filas_pdi=filas_pdi)
+        pct=resumen["pdi_sin_ot"]["porcentaje"],
+        pesos="{:,}".format(resumen["pdi_sin_ot"]["pesos"]).replace(",", "."),
+        filas_pdi=filas_pdi)
 
     texto = (
         "Reconciliacion con el sistema anterior — {cuando} — {origen}\n\n"
@@ -353,11 +380,14 @@ def avisar(resumen):
              la=c["legado_adelante"], co=c["contradiccion"],
              sin_ot=sin_ot, tot=resumen["pdi_sin_ot"]["pdi_totales"],
              desde=resumen["pdi_sin_ot"]["desde"],
-             pct=resumen["pdi_sin_ot"]["porcentaje"])
+             pct=resumen["pdi_sin_ot"]["porcentaje"],
+             pesos="{:,}".format(resumen["pdi_sin_ot"]["pesos"]).replace(",", "."))
 
     correo.en_segundo_plano(
         correo.mandar, correo.destinatarios(DESTINATARIOS),
-        "Reconciliación — {} contradicciones, {} PDI sin OT".format(contra, sin_ot),
+        "Reconciliación — {} contradicciones, {} PDI sin OT (${})".format(
+            contra, sin_ot,
+            "{:,}".format(resumen["pdi_sin_ot"]["pesos"]).replace(",", ".")),
         texto, html)
     return "avisado"
 

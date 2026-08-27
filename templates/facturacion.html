@@ -2,6 +2,29 @@
 {% block titulo %}Facturación {{ mes }} — Logautos{% endblock %}
 
 {% block contenido %}
+  {#- Clientes que aparecen en los datos, no tienen tarifa cargada y tampoco
+      estan declarados como que no facturan acopio. Antes desaparecian del
+      calculo en silencio. Se avisa en ROJO y no en el azul informativo de
+      otras pantallas: esto no es un desfase esperado, es plata que no se esta
+      calculando y alguien tiene que cargar una tarifa. -#}
+  {% if sin_tarifa %}
+    <div class="aviso aviso-malo">
+      <strong>Hay {{ sin_tarifa|length }} cliente{{ 'es' if sin_tarifa|length != 1 }}
+      sin tarifa de acopio configurada.</strong>
+      Sus unidades <strong>no están</strong> en el cálculo de abajo.
+      <table class="mini">
+        <thead><tr><th>Cliente</th><th>Unidades fuera</th></tr></thead>
+        <tbody>
+          {% for cliente, n in sin_tarifa %}
+            <tr><td>{{ cliente }}</td><td>{{ n }}</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+      Cargá su tarifa en <code>TARIFAS_ACOPIO</code> (modulos/facturacion.py),
+      o declaralo en <code>CLIENTES_SIN_ACOPIO</code> si no factura acopio.
+    </div>
+  {% endif %}
+
   <h1>Facturación · {{ mes }}</h1>
 
   {% if error_uf %}
