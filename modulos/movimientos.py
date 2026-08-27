@@ -1227,8 +1227,52 @@ def registrar(unidad, datos):
         datos.get("guia_ingreso"), datos.get("fecha"), datos.get("responsable"),
         id_actual(), datetime.now().isoformat(timespec="seconds"),
         datos.get("estado_desde"), datos.get("estado_hacia")))
+    movimiento_id = cur.lastrowid
+
+    # El push al legado, en el MISMO commit que la fila del movimiento.
+    #
+    # Se engancha acá y no en cada pantalla a proposito: `registrar` es el
+    # unico camino por el que se escribe un movimiento -- lo llaman Movimientos,
+    # PDI, IT, check list, revision de contenedor e inspeccion de despacho --,
+    # asi que una sola linea cubre las seis. Engancharlo pantalla por pantalla
+    # habria dejado a la proxima sin push y sin que nadie lo note.
+    #
+    # `encolar_movimiento` devuelve None cuando el estado destino no se puede
+    # traducir a una calle (STOCK, DYP, SALIDA DYP, DESPACHADO): esos no se
+    # empujan, y NO es un error. Ver SIN_CALLE en push_legado.
+    #
+    # Import diferido: `push_legado` no importa `movimientos`, pero `taller` si
+    # importa los dos y el orden se vuelve fragil al hacerlo arriba.
+    # `empuja_movimiento=False` lo pasa la pantalla cuyo paso YA tiene su propia
+    # entidad de push. Hoy es una sola: el IT.
+    #
+    # No es para evitar un choque tecnico -- aunque tambien lo evita: las dos
+    # entradas saldrian con el mismo `legado_updated_at_conocido`, la primera
+    # avanzaria el `updated_at` del legado y la segunda chocaria contra su
+    # propia escritura con un 409 falso.
+    #
+    # El motivo de fondo es que EL LEGADO NO ESCRIBE ESA FILA. El bloque `It`
+    # de Pedido.php:9219 cambia el estado y NO llama a `registromov()` -- son 0
+    # llamadas, contadas --, que es la divergencia #1 que taller.py documento y
+    # decidio no imitar EN NUESTRA tabla. Pero empujarla al legado seria meterle
+    # a SU historial una fila que su propia pantalla nunca genera, y el
+    # historial del legado es de donde salen sus reportes.
+    #
+    # El PDI es al reves: su bloque llama a registromov() dos veces, asi que
+    # cuando entre esa entidad el movimiento SI se empuja.
+    from modulos.push_legado import asegurar_tablas, encolar_movimiento
+    asegurar_tablas(db)
+    id_cola = None
+    if datos.get("empuja_movimiento", True):
+        id_cola = encolar_movimiento(db, unidad, movimiento_id,
+                                     datos.get("estado_hacia"), id_actual())
     db.commit()
-    return cur.lastrowid
+
+    # Despues del commit, nunca antes, y detras de PUSH_LEGADO_ACTIVO.
+    if id_cola:
+        from modulos.push_legado import disparar_push
+        disparar_push(id_cola)
+    return movimiento_id
 
 
 # ---------------------------------------------------------------------------

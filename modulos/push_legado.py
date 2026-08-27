@@ -243,6 +243,14 @@ def now_iso():
 # `ruta`          el segmento de la URL: PUT /api_regla/<ruta>/<legado_id>.
 
 ENTIDADES = {
+    # Los movimientos. `operacion` es 'crear': un movimiento INSERTA una fila
+    # en `registros` del legado y ademas actualiza la unidad -- las dos cosas
+    # en la transaccion del endpoint, que es lo que el legado original no hace.
+    "movimientos": {
+        "tabla_origen": "movimientos_regla",
+        "tabla_espejo": "newstocks_cidef",
+        "ruta": "movimientos",
+    },
     "it": {
         "tabla_origen": "it_regla",
         "tabla_espejo": "newstocks_cidef",
@@ -277,6 +285,72 @@ CAMPOS_IT = ("estado_it", "observacion_it", "despachado", "calle")
 # MySQL compara sin distinguir mayusculas y no notaria la diferencia; PHP si.
 # Es la misma trampa que push_talca.py documento para los estados de Talca.
 CALLE_IT = "It"
+
+
+# ---------------------------------------------------------------------------
+# La traduccion de `calle` para los movimientos
+# ---------------------------------------------------------------------------
+#
+# El legado guarda en `registros.accion` y en `newstocks_cidef.calle` un
+# vocabulario propio de 88 valores que no es el catalogo de estados de REGLA.
+# Esta tabla lo traduce, y NO sale de leer las cadenas de if/else de
+# `actulocproccess` -- salen de contar lo que el sistema REALMENTE escribio.
+#
+# SE MIRARON SOLO LOS ULTIMOS 6 MESES, y eso no es un detalle. El historico
+# completo mezcla años de versiones distintas del PHP y da mayorias falsas: con
+# los 296.529 movimientos, INGRESO A TALLER daba 'IT' con 69,9% y 'It' con 30%,
+# como si convivieran. Con los recientes, 'IT' es el 97,8% -- una es la forma
+# vieja y la otra la de hoy. Misma leccion que el precio de la PDI, que parecia
+# variable hasta que se acoto al periodo del codigo actual.
+#
+# El porcentaje de cada linea es cuanto manda esa calle sobre ese estado en los
+# ultimos 6 meses. Se anota para que la proxima revision sepa cual estaba
+# floja.
+CALLE_POR_ESTADO = {
+    "ZONA DE RECEPCION":              "ZR",                   # 99,7%
+    "INGRESO A TALLER":               "IT",                   # 97,8%
+    "ZONA DE LAVADO":                 "Lavando",              # 97,3%
+    "CONTROL DE CALIDAD DESPACHO":    "Cc",                   # 94,2%
+    "EN ESPERA DYP CONSOLIDADO":      "PDI",                  # 86,6%
+    "FR - MECANICA":                  "Cmp3",                 # 86,4%
+    "ZONA DE DESPACHO":               "Zd",                   # 84,7%
+    "EN ESPERA DE ASIGNACION DYP":    "IT",                   # 100%
+    "EN ESPERA DE CHECK LIST INGRESO": "A",                   # 100%
+    "EN ESPERA CHECK LIST MECANICA":  "A",                    # 100%
+    "FALLA MECANICA":                 "Falla Mecanica",       # 100%
+    "INSPECCION MECANICA DESPACHO":   "It",                   # 100%
+    "SALIDA INSPECCION MECANICA":     "REVISION CLIENTE",     # 100%
+    "SERVICIOS GENERALES":            "Servicios Generales",  # 100%
+}
+
+# Estados a los que REGLA NO puede traducir la calle, y por que. Un movimiento
+# hacia uno de estos NO se encola: es preferible que el legado no se entere a
+# que se entere de una calle inventada, porque la calle es la UBICACION FISICA
+# y de ella salen los reportes de patio.
+#
+# No es una limitacion del push sino un dato que REGLA no pide todavia.
+SIN_CALLE = {
+    # STOCK se alcanza estacionando en una calle concreta -- A, B, C, D, F, ... --
+    # y ninguna manda: A 25%, B 21%, C 17%, F 15%. La calle ES el dato, y la
+    # pantalla de REGLA no la pregunta.
+    "STOCK": "la calle de patio (A, B, C...) es el dato y REGLA no la pide",
+    # DYP depende del proveedor asignado: B 48%, ENTREGADO DYP 38%, Dyp Autorep.
+    "DYP": "depende del proveedor DYP asignado, que REGLA no elige",
+    # 8 movimientos en 6 meses repartidos en tres formas. Muy poco para fijar
+    # una traduccion; se resuelve cuando haya volumen.
+    "SALIDA DYP": "solo 8 movimientos recientes, insuficiente para decidir",
+    # El despacho hace MUCHO mas que mover el estado: fechas, correo al cliente
+    # con la guia firmada, y OT. Empujar solo la columna dejaria un despacho a
+    # medias, que es peor que no empujarlo.
+    "DESPACHADO": "el despacho del legado tambien manda correo y crea OT",
+}
+
+
+def calle_para(estado):
+    """La calle que hay que mandarle al legado para ese estado destino, o None
+    si REGLA no puede traducirla. Ver SIN_CALLE."""
+    from modulos.movimientos import normalizar_estado
+    return CALLE_POR_ESTADO.get(normalizar_estado(estado))
 
 
 # ---------------------------------------------------------------------------
@@ -420,6 +494,77 @@ def encolar_it(db, unidad, it_id, campos):
         requiere_unidad=0)
 
 
+def encolar_movimiento(db, unidad, movimiento_id, estado_hacia, usuario):
+    """Encola un movimiento hacia el legado. Devuelve el id de cola, o None si
+    ese estado no se puede traducir a una calle.
+
+    DEVOLVER None NO ES UN ERROR: hay estados a los que REGLA no sabe ponerle
+    calle -- STOCK, DYP, SALIDA DYP, DESPACHADO. Ver SIN_CALLE. Preferimos que
+    el legado no se entere a que se entere de una calle inventada, porque la
+    calle es la ubicacion fisica y de ahi salen los reportes de patio. Esos
+    movimientos quedan igual en `movimientos_regla` y la reconciliacion los
+    cuenta como "REGLA adelante", que es exactamente lo que son.
+
+    Se llama con la transaccion del endpoint abierta, igual que `encolar_it`.
+
+    EL ORIGEN NO VIAJA. `newcalle`/`newestado`/`newpatio` los resuelve el
+    endpoint leyendo la fila dentro de su propia transaccion, justo antes del
+    UPDATE. Mandarlo desde aca seria mandar lo que REGLA CREE que el legado
+    tenia -- con hasta una vuelta de sync de atraso -- y quedaria escrito en el
+    historial del legado como si fuera un hecho.
+
+    EL PATIO TAMPOCO. El legado lo decide por rama (PATIO 1 / PATIO 2 segun
+    cliente, motonave y fecha_pdi) y REGLA no lo pregunta. El endpoint solo
+    escribe `patio` si viene con valor, asi que la unidad conserva el suyo.
+    Es preferible a inventarlo.
+
+    PENDIENTE, ANOTADO Y NO RESUELTO (2026-08-27). La consecuencia es que en la
+    fila de `registros` el patio DESTINO queda vacio, mientras el patio ORIGEN
+    (`newpatio`) si viene, porque ese lo lee el endpoint de la unidad. Se vio
+    en la fila 305637, verificada a mano en produccion:
+
+        accion='Cc'  estado='CONTROL DE CALIDAD DESPACHO'  patio=''
+        newcalle='C' newestado='STOCK'  newpatio='PATIO 5'
+
+    O sea: la fila dice de donde salio pero no adonde llego, y como la unidad
+    NO cambia de patio en estos movimientos, lo correcto seria repetir el
+    origen. Que quede vacio es distinto de que quede igual: un reporte que
+    agrupe el historial por `patio` no ve estas filas.
+
+    No se arregla desde Python: el `patio` destino lo escribe el endpoint, que
+    ya tiene el valor a mano dentro de su transaccion. Es una linea del PHP y
+    la decide Franco."""
+    calle = calle_para(estado_hacia)
+    if calle is None:
+        return None
+
+    legado_id = unidad["id"]
+    db.execute("UPDATE newstocks_cidef SET push_pendiente = 1 WHERE id = ?",
+               (legado_id,))
+    campos = {
+        # `accion` es la CALLE destino y `estado` el ESTADO destino: en
+        # `registros` las columnas sin prefijo son el destino y las `new*` el
+        # origen. El prefijo miente; ver el encabezado del endpoint.
+        "unidad_id": legado_id,
+        "accion": calle,
+        "estado": estado_hacia,
+        "clientemov": unidad["clientecompleto"] or "",
+    }
+    if usuario:
+        try:
+            campos["created_by"] = int(usuario)
+        except (TypeError, ValueError):
+            pass
+    return encolar_push(
+        db, "movimientos",
+        python_id=movimiento_id,
+        legado_id=legado_id,
+        operacion="crear",
+        campos=campos,
+        legado_updated_at_conocido=(unidad["updated_at"] or ""),
+        requiere_unidad=0)
+
+
 def campos_it(estado_it, observacion_it, estado_hacia, usuario):
     """El payload del IT, con los nombres del legado.
 
@@ -467,17 +612,13 @@ class ClientePushLegado(object):
         raise NotImplementedError
 
     def crear(self, ruta, campos, idem_key=""):
-        """POST /api_regla/<ruta>.
+        """POST /api_regla/<ruta>. Devuelve {"ok": True, "id": <int>,
+        "updated_at": <str>}.
 
-        NO IMPLEMENTADO Y ES DELIBERADO. Hoy ninguna entidad crea filas en el
-        legado: las unidades nacen alla y llegan por el pull, y el IT es un
-        UPDATE. Un POST hoy seria codigo muerto y ademas un endpoint de
-        escritura abierto sin nadie que lo use.
-
-        Se construye junto con movimientos, que es la primera entidad que si
-        inserta (una fila de `registros` por movimiento)."""
-        raise NotImplementedError(
-            "el push todavia no crea filas en el legado: ver el comentario")
+        Lo usa `movimientos`: un movimiento INSERTA una fila en `registros` del
+        legado, no actualiza una existente. El `id` que vuelve es el de esa
+        fila."""
+        raise NotImplementedError
 
 
 class ClientePushLegadoHTTP(ClientePushLegado):
@@ -511,6 +652,47 @@ class ClientePushLegadoHTTP(ClientePushLegado):
         if not self.api_key:
             raise PushLegadoError(
                 "falta LEGADO_API_KEY: el endpoint la exige en X-API-Key")
+
+    def crear(self, ruta, campos, idem_key=""):
+        self._verificar_config()
+        url = "{}/api_regla/{}".format(self.base_url, ruta)
+        try:
+            r = _requests.post(url, json=dict(campos),
+                               headers=self._cabeceras(idem_key),
+                               timeout=self.timeout)
+        except Exception as e:
+            raise PushLegadoError(
+                "no se pudo conectar con el legado ({}): {}".format(url, e))
+
+        # El 409 tambien existe en el POST: el endpoint compara
+        # `legado_updated_at_conocido` ANTES de insertar, asi que un conflicto
+        # no deja ni la fila de `registros` ni el UPDATE.
+        if r.status_code == 409:
+            try:
+                return r.json()
+            except ValueError:
+                raise PushLegadoError(
+                    "409 sin JSON valido ({}): {!r}".format(
+                        url, (r.text or "")[:200]))
+
+        if r.status_code not in (200, 201):
+            raise PushLegadoError(
+                "HTTP {} al crear en {}: {!r}".format(
+                    r.status_code, url, (r.text or "")[:200]))
+        try:
+            datos = r.json()
+        except ValueError:
+            raise PushLegadoError(
+                "el endpoint no devolvio JSON ({}): {!r}".format(
+                    url, (r.text or "")[:200]))
+        # Mismo motivo que en `actualizar`: en este sitio una ruta que no
+        # resuelve responde 200 con cuerpo vacio, asi que un 200 no alcanza.
+        if not datos.get("ok") or "id" not in datos:
+            raise PushLegadoError(
+                "respuesta 200 sin 'ok'/'id' ({}): {!r}. Si el cuerpo esta "
+                "vacio, la ruta no resolvio y cayo en el 404_override".format(
+                    url, (r.text or "")[:200]))
+        return datos
 
     def actualizar(self, ruta, legado_id, campos, legado_updated_at_conocido,
                    idem_key=""):
@@ -634,7 +816,7 @@ def ejecutar_entrada(id_cola, cliente=None, db_path=None):
         legado_id = entrada["legado_id"]
         campos = json.loads(entrada["campos_json"] or "{}")
 
-        if entrada["operacion"] != "actualizar":
+        if entrada["operacion"] not in ("actualizar", "crear"):
             _registrar_fallo(db, id_cola,
                              "operacion no soportada todavia: {}"
                              .format(entrada["operacion"]))
@@ -642,10 +824,19 @@ def ejecutar_entrada(id_cola, cliente=None, db_path=None):
             return "error"
 
         try:
-            resp = cliente.actualizar(
-                conf["ruta"], legado_id, campos,
-                entrada["legado_updated_at_conocido"] or "",
-                idem_key=entrada["idempotency_key"] or "")
+            if entrada["operacion"] == "crear":
+                # El conocido viaja DENTRO del cuerpo: el POST no tiene un id
+                # en la URL donde colgarlo, a diferencia del PUT.
+                cuerpo = dict(campos)
+                cuerpo["legado_updated_at_conocido"] = (
+                    entrada["legado_updated_at_conocido"] or "")
+                resp = cliente.crear(conf["ruta"], cuerpo,
+                                     idem_key=entrada["idempotency_key"] or "")
+            else:
+                resp = cliente.actualizar(
+                    conf["ruta"], legado_id, campos,
+                    entrada["legado_updated_at_conocido"] or "",
+                    idem_key=entrada["idempotency_key"] or "")
         except PushLegadoError as e:
             _registrar_fallo(db, id_cola, str(e))
             db.commit()

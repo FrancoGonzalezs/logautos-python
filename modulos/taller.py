@@ -496,6 +496,11 @@ def guardar_it(id_unidad):
         "es_desvio": es_desvio(clave, paso),
         "estado_desde": estado_actual,
         "estado_hacia": estado_hacia,
+        # El IT tiene su propia entidad de push, que ya manda calle y
+        # despachado. Y el legado NO escribe fila de `registros` en su bloque
+        # It, asi que empujar el movimiento le meteria a su historial algo que
+        # su pantalla nunca genera. Ver la nota en `registrar`.
+        "empuja_movimiento": False,
         "motivo": motivo,
         "motivo_detalle": motivo_detalle,
         "resultado_pdi": None,
