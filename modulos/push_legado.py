@@ -331,9 +331,16 @@ CALLE_POR_ESTADO = {
 # No es una limitacion del push sino un dato que REGLA no pide todavia.
 SIN_CALLE = {
     # STOCK se alcanza estacionando en una calle concreta -- A, B, C, D, F, ... --
-    # y ninguna manda: A 25%, B 21%, C 17%, F 15%. La calle ES el dato, y la
-    # pantalla de REGLA no la pregunta.
-    "STOCK": "la calle de patio (A, B, C...) es el dato y REGLA no la pide",
+    # y ninguna manda: A 25%, B 21%, C 17%, F 15%. La calle ES el dato, y hoy
+    # la pantalla de REGLA no la pregunta.
+    #
+    # DECIDIDO SACARLO (2026-08-27), FALTA IMPLEMENTARLO. La razon de arriba no
+    # se sostiene: el movilizador SI sabe patio y calle -- esta parado en el
+    # patio, el lo estaciono. El dato existe; lo que falta es preguntarlo. Y es
+    # el estado de mas volumen de los cuatro, asi que es el que mas historial le
+    # falta al legado hoy. Sacarlo de aca sin agregar antes el campo en la
+    # pantalla manda una calle inventada, que es peor que no mandar nada.
+    "STOCK": "PENDIENTE: falta el campo de calle en la pantalla, ver CLAUDE.md",
     # DYP depende del proveedor asignado: B 48%, ENTREGADO DYP 38%, Dyp Autorep.
     "DYP": "depende del proveedor DYP asignado, que REGLA no elige",
     # 8 movimientos en 6 meses repartidos en tres formas. Muy poco para fijar

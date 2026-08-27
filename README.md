@@ -3,18 +3,19 @@
 Reescritura en Python del sistema Logautos (CodeIgniter + MariaDB), siguiendo
 el mismo patrón que el proyecto de Talca: Flask + réplica local en SQLite.
 
-Estado actual: **login real contra `tbl_users`**, lectura sobre la réplica
-local y el módulo de Movimientos, que sí escribe — pero en tablas propias
-(`movimientos_regla`, `check_list_regla`), nunca sobre las tablas espejo del
-sistema viejo. Todavía no hay sincronización contra `claude.logautos.cl` ni
-restricción de pantallas por rol.
+> **El estado del proyecto está en [CLAUDE.md](CLAUDE.md)**, que es lo que hay
+> que leer primero: qué está cerrado, qué está en curso y por qué se decidió
+> cada cosa. Este README es el detalle largo — esquema, hallazgos sobre el dato
+> real, decisiones de cada módulo — y no se mantiene al día como resumen.
 
-Lo que bloquea el sync: falta confirmar si `claude.logautos.cl` ya expone
-endpoints de push (hay que mirarlo por FTP/cPanel del hosting). Si no existen,
-se calcan de `php_endpoints_push.php` del proyecto de Talca, que documenta el
-contrato completo: rutas explícitas en `routes.php`, autenticación por API key,
-body JSON leído de `raw_input_stream` (CodeIgniter 3 no lo parsea solo), y una
-tabla `api_idempotency` compartida entre entidades con una columna `entidad`.
+En corto, al 2026-08-27: login real contra `tbl_users`, la réplica local, y
+**sincronización automática de ida y vuelta** con `claude.logautos.cl` desde el
+2026-08-26 (pull cada 300 s; push con las entidades `it` y `movimientos`, las
+dos verificadas contra producción). REGLA sigue escribiendo solo en tablas
+propias (`movimientos_regla`, `it_regla`, `check_list_regla`): al legado se le
+llega por los endpoints, nunca tocando sus tablas espejo.
+
+Falta el push de PDI, y las pantallas todavía no están restringidas por rol.
 
 ## Variables de entorno
 
