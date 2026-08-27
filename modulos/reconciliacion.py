@@ -127,16 +127,23 @@ def _clasificar_una(fila, normalizar_estado):
     # en el ARRANQUE de la cadena, no en el penultimo escalon.
     if crudo and crudo in fila["recorrido"]:
         return "regla_adelante", None
+    # Un estado que REGLA reconoce pero no enruta -- SOLICITUD DESPACHO, CC PDI,
+    # IT FALTA SEGUNDA PDI -- no cae en ninguna de las tres categorias.
+    #
+    # VA ANTES DE `push_confirmado`, Y EL ORDEN ES EL ARREGLO. Estaba despues, y
+    # entonces una unidad con el push confirmado cuyo legado quedaba en
+    # SOLICITUD DESPACHO se contaba como "el legado adelante". Son ~150 por mes:
+    # habrian llenado de ruido justo la categoria que existe para detectar el
+    # trabajo de administracion, y una categoria con ruido deja de mirarse.
+    #
+    # Y es correcto ademas de conveniente: SOLICITUD DESPACHO no mueve la
+    # unidad de lugar, asi que el legado no esta "adelante" en ningun sentido
+    # util -- esta marcando otra cosa.
+    if fila["reconocido_sin_ruta"]:
+        return "fuera_de_alcance", None
     if fila["push_confirmado"]:
         # Empujamos, el legado lo tomo, y despues se movio por su cuenta.
         return "legado_adelante", None
-    # Un estado que REGLA reconoce pero no enruta -- SOLICITUD DESPACHO, CC PDI,
-    # IT FALTA SEGUNDA PDI -- no es una contradiccion: es una zona del legado
-    # que REGLA todavia no maneja. Mezclarlo con las contradicciones haria que
-    # el reporte pida atencion humana para algo que no la necesita, y la
-    # categoria 3 vale justamente porque es corta.
-    if fila["reconocido_sin_ruta"]:
-        return "fuera_de_alcance", None
     return "contradiccion", {
         "unidad": fila["id"], "vin": fila["vin"],
         "legado": fila["despachado"], "regla": fila["estado_hacia"],

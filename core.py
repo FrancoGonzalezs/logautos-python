@@ -81,6 +81,39 @@ def conectar_db(path=None):
 
 
 # ---------------------------------------------------------------------------
+# REGLA DEL PROYECTO: la clave de union cruza una frontera
+# ---------------------------------------------------------------------------
+#
+# "El match es por `id`, jamas por VIN" vale para las tablas PROPIAS de REGLA.
+# NO es una regla universal, y tratarla como universal ya produjo su propio bug.
+#
+# El motivo de la regla: `newstocks_cidef` tiene 71.546 filas para 61.447 VIN
+# porque cada fila es UNA PASADA del vehiculo por el patio -- el 14% son
+# reingresos. Nuestras tablas (`movimientos_regla`, `pdi_regla`, `it_regla`,
+# `check_list_regla`, `revision_unidad_regla`, `validacion_color_regla`)
+# cuelgan de `unidad_id`, asi que unirlas por VIN mezcla pasadas distintas.
+#
+# PERO LAS TABLAS DEL LEGADO USAN LA CLAVE QUE EL LEGADO USA. `orden_trabajo`
+# tiene `id_vehiculo`, y parece un id -- pero el legado lo llena con
+# `getidbyvin($vin)` (Pedido_model.php:841), que devuelve la pasada NO
+# DESPACHADA del VIN y puede no ser la que se estaba procesando. Buscar la OT
+# por `id_vehiculo = n.id` dio 88 "PDI sin cobrar" en 2026; comprobadas una por
+# una, 87 tenian su OT colgada de otra pasada. Una sola era real.
+#
+# ENTONCES: cada vez que una consulta cruza la frontera entre nuestras tablas y
+# las del legado, hay que PREGUNTAR QUE CLAVE USA ESE LADO. No heredar la
+# nuestra ni suponer que un campo que se llama `id_*` se comporta como un id.
+#
+# Esta confusion aparecio SEIS veces con caras distintas: `estado_efectivo`,
+# `estados_regla_de`, `pdi_de`, `it_de`, `_pasos_registrados` -- las cinco por
+# usar VIN donde iba id -- y el sensor de PDI sin OT, por usar id donde iba VIN.
+# Las dos direcciones del mismo error.
+#
+# Ayuda de lectura, ya aplicada al codigo: toda funcion que reciba un VIN lo
+# dice en su nombre (`check_lists_por_vin`, `movimientos_por_vin`). Si el
+# nombre no lo dice, no deberia recibir un VIN.
+
+# ---------------------------------------------------------------------------
 # La guarda de `unidad_id`
 # ---------------------------------------------------------------------------
 #
