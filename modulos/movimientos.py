@@ -313,6 +313,16 @@ EQUIVALENCIAS = {
     # Hallazgo 5: estados equivalentes duplicados.
     "EN ESPERA DE DYP CONSOLIDADO": "EN ESPERA DYP CONSOLIDADO",
     "EN ESPERA DYP": "EN ESPERA DE ASIGNACION DYP",
+    # La misma sin el "DE", que es la forma MAS usada de las dos: 4.062
+    # movimientos contra los que ya cubria la linea de arriba. Se escapaba por
+    # una preposicion.
+    "EN ESPERA ASIGNACION DYP": "EN ESPERA DE ASIGNACION DYP",
+    # Typos consolidados. No se corrigen en la base -- el legado sigue
+    # escribiendolos -- sino al leer, que es donde importa.
+    "EN ESPERERA DYP": "EN ESPERA DE ASIGNACION DYP",      # 108
+    "INGRESAO TALLER": "INGRESO A TALLER",                 # 11
+    # Mismo estado con las palabras al reves.
+    "EN ESPERA CONSOLIDADO DYP": "EN ESPERA DYP CONSOLIDADO",   # 9
     "FR": "FR - MECANICA",
     # Anexo A.1: 6 apariciones de la forma corta.
     "EN ESPERA CHECK MECANICA": "EN ESPERA CHECK LIST MECANICA",
