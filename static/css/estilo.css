@@ -1338,3 +1338,26 @@ body.con-visor { overflow: hidden; }
   font-size: 12.5px;
   max-width: 62ch;
 }
+
+/* Marca de divergencia en el listado y en el buscador de taller.
+   Mismo azul informativo que el aviso de la ficha: que REGLA y el sistema
+   anterior difieran es lo normal mientras el push no cubra ese paso. */
+.marca-regla, .estado-crudo {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 1px 7px;
+  border-radius: 20px;
+  font-size: 10.5px;
+  white-space: nowrap;
+  background: var(--acento-suave);
+  border: 1px solid var(--acento-borde);
+  color: var(--acento);
+}
+/* En el buscador de taller el que manda es el de REGLA, asi que el crudo va
+   en tono apagado: esta ahi como referencia, no como el dato principal. */
+.estado-crudo {
+  background: var(--tarjeta-alt);
+  border-color: var(--linea-fuerte);
+  color: var(--tinta-suave);
+}
+.celda-desfase { white-space: nowrap; }

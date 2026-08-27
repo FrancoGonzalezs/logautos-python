@@ -740,6 +740,59 @@ def _pasos_registrados(vin):
         "SELECT DISTINCT paso FROM movimientos_regla WHERE vin = ?", (vin,))}
 
 
+def estado_de_movimiento(paso, estado_hacia):
+    """El estado que declara UN movimiento, o None si no declara ninguno.
+
+    Vive aparte porque hay tres lugares que necesitan lo mismo -- la ficha, el
+    listado y el buscador de taller -- y con la regla copiada, la primera
+    correccion los desincroniza. Ya paso con la ficha y el listado mostrando
+    cosas distintas de la misma unidad; no vale la pena repetirlo dentro de un
+    solo modulo."""
+    # `estado_hacia` es donde la unidad quedo DE VERDAD, y manda sobre el
+    # `estado_destino` del paso. Ver la nota larga en estado_efectivo.
+    if estado_hacia:
+        return estado_hacia
+    # Movimientos viejos, anteriores a que se guardara el arco.
+    if paso in PASOS:
+        return PASOS[paso]["estado_destino"]
+    return None
+
+
+def estados_regla_de(vins):
+    """{vin: estado} con el ULTIMO movimiento de cada VIN, en UNA consulta.
+
+    Es para el listado, que pinta 50 filas por pagina: preguntando de a una
+    serian 50 consultas por pantalla. Los VIN vacios se descartan antes -- en
+    `newstocks_cidef` hay 3 filas con el VIN en blanco y agruparlas seria
+    mezclar unidades distintas."""
+    vins = [v for v in set(vins or ()) if v]
+    if not vins:
+        return {}
+    marcas = ", ".join("?" * len(vins))
+    filas = consultar(
+        "SELECT m.vin, m.paso, m.estado_hacia FROM movimientos_regla m "
+        "JOIN (SELECT vin, MAX(id) AS id FROM movimientos_regla "
+        "       WHERE vin IN ({0}) GROUP BY vin) u ON u.id = m.id"
+        .format(marcas), vins)
+    resuelto = {}
+    for f in filas:
+        estado = estado_de_movimiento(f["paso"], f["estado_hacia"])
+        if estado:
+            resuelto[f["vin"]] = estado
+    return resuelto
+
+
+def difieren_estados(crudo, de_regla):
+    """Si los dos estados de una unidad son distintos para el que mira.
+
+    Se compara normalizado: el sistema anterior escribe 'Navegando' y REGLA
+    guarda 'NAVEGANDO', y esa no es una divergencia -- es la misma palabra con
+    otra caja. Marcarla entrenaria a ignorar el aviso."""
+    if not de_regla:
+        return False
+    return normalizar_estado(crudo) != normalizar_estado(de_regla)
+
+
 def estado_efectivo(unidad):
     """El estado que corresponde mostrar: el ultimo registrado desde REGLA si
     lo hay, y si no el de la replica."""
@@ -761,11 +814,9 @@ def estado_efectivo(unidad):
             #     que suelen ocurrir. Derivar de ahi hacia que una unidad que
             #     recibio el check list estando en STOCK pasara a figurar en
             #     ZONA DE RECEPCION, que es falso. El arco guardado no miente.
-            if ultimo["estado_hacia"]:
-                return ultimo["estado_hacia"], True
-            # Movimientos viejos, anteriores a que se guardara el arco.
-            if ultimo["paso"] in PASOS:
-                return PASOS[ultimo["paso"]]["estado_destino"], True
+            declarado = estado_de_movimiento(ultimo["paso"], ultimo["estado_hacia"])
+            if declarado:
+                return declarado, True
     return unidad["despachado"], False
 
 

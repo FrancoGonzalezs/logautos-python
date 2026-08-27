@@ -68,7 +68,19 @@
               {% for campo, _ in columnas %}
                 {% if campo == 'id' %}
                   <td><a href="{{ url_for('unidades.ficha', id_unidad=f['id']) }}">{{ f['id'] }}</a></td>
-                {% else %}
+                {%- elif campo == 'despachado' and f['id'] in filas_que_difieren %}
+                  {#- La columna sigue siendo la cruda -- el filtro y el orden
+                      no cambian --, pero se agrega lo que REGLA sabe. Sin esto,
+                      un administrador que revisa el listado no ve rastro de un
+                      PDI o un IT que ya se cargo: es el escenario por el que se
+                      hizo esto. -#}
+                  <td class="celda-desfase">
+                    {{ f[campo] | mostrar }}
+                    <span class="marca-regla"
+                          title="REGLA la tiene en {{ estado_regla[f['vin']] }}; el sistema anterior todavía no lo confirmó">
+                      REGLA: {{ estado_regla[f['vin']] }}</span>
+                  </td>
+                {%- else %}
                   <td {% if f[campo] is vacio %}class="vacio"{% endif %}>{{ f[campo] | mostrar }}</td>
                 {% endif %}
               {% endfor %}

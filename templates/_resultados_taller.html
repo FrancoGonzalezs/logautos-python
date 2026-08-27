@@ -23,7 +23,23 @@
               <td>{{ r['marca'] | mostrar }}</td>
               <td>{{ r['modelo'] | mostrar }}</td>
               <td>{{ r['clientecompleto'] | mostrar }}</td>
-              <td>{{ r['despachado'] | mostrar }}</td>
+              {#- Acá manda el estado de REGLA, no el crudo, y va PRIMERO.
+                  Es la pantalla desde la que el jefe de taller encadena VIN de
+                  una lista en papel: despues de cargar el primer PDI, la
+                  columna cruda de esa unidad sigue diciendo lo de antes --
+                  su propio trabajo desactualizando la pantalla desde la que
+                  trabaja. El crudo se sigue mostrando, mas chico, porque es lo
+                  que va a ver el cliente del otro lado hasta que el push
+                  llegue. -#}
+              <td>
+                {% if r['id'] in filas_que_difieren %}
+                  {{ estado_regla[r['vin']] }}
+                  <span class="estado-crudo" title="Todavía no confirmado en el sistema anterior">
+                    sist. anterior: {{ r['despachado'] | mostrar }}</span>
+                {% else %}
+                  {{ r['despachado'] | mostrar }}
+                {% endif %}
+              </td>
               <td>
                 {# `volver=lista` es lo que hace que al guardar se vuelva acá y
                    no a la ficha de la unidad: el jefe de taller viene con una

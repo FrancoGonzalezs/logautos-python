@@ -713,8 +713,20 @@ def listado():
 
     columnas = [(c, titulo_de(c)) for c in CAMPOS_LISTADO]
 
+    # El estado de REGLA de las 50 filas de la pagina, en UNA consulta. El
+    # listado sigue FILTRANDO y ORDENANDO por la columna cruda -- eso no se
+    # toca acá --, pero al menos deja de esconder que REGLA sabe otra cosa.
+    #
+    # Import diferido por el mismo motivo que en la ficha: `movimientos`
+    # importa TABLA de este modulo.
+    from modulos.movimientos import difieren_estados, estados_regla_de
+    de_regla = estados_regla_de([f["vin"] for f in filas])
+    difieren = {f["id"] for f in filas
+                if difieren_estados(f["despachado"], de_regla.get(f["vin"]))}
+
     contexto = dict(
         filas=filas, columnas=columnas, total=total,
+        estado_regla=de_regla, filas_que_difieren=difieren,
         pagina=pagina, por_pagina=POR_PAGINA,
         paginas=max(1, (total + POR_PAGINA - 1) // POR_PAGINA),
         busqueda=busqueda, estado=estado, estados=estados,

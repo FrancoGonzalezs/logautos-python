@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """
-scripts/probar_ficha_estados.py -- que la ficha de la unidad muestre LOS DOS
-estados y no se contradiga con la pantalla de Movimientos.
+scripts/probar_ficha_estados.py -- que las tres pantallas que muestran el
+estado de una unidad -- ficha, listado y buscador de taller -- digan la verdad
+sobre los DOS estados y no se contradigan entre si.
 
 Existe por un caso real. La unidad 91953 tenia cuatro movimientos registrados
 en REGLA -- el ultimo un PDI -- y `/unidades/91953` seguia diciendo
@@ -10,7 +11,7 @@ en REGLA -- el ultimo un PDI -- y `/unidades/91953` seguia diciendo
 contradecian sobre la misma unidad y ninguna admitia que la otra existiera.
 Costo una investigacion entera averiguar que ninguna estaba rota.
 
-Los tres casos que hay que cubrir, sobre una base descartable:
+Los casos que hay que cubrir, sobre una base descartable:
 
     1. sin movimientos en REGLA   un solo estado, y se dice que REGLA no tiene
                                   nada registrado -- no se pintan dos badges
@@ -18,8 +19,14 @@ Los tres casos que hay que cubrir, sobre una base descartable:
     2. coinciden                  los dos rotulados, sin aviso de desfase
     3. difieren                   los dos rotulados MAS el aviso, y la ficha
                                   dice lo mismo que la pantalla de Movimientos
+    4. el listado                 marca la fila que diverge, SIN tocar el
+                                  filtro ni el orden (los dos siguen sobre la
+                                  columna cruda: eso se decidio medir aparte)
+    5. el buscador de taller      muestra el de REGLA PRIMERO -- es la pantalla
+                                  donde el movilizador encadena VIN y su propio
+                                  trabajo desactualiza la columna cruda
 
-La 3 es la que importa: es el caso que provoco la confusion.
+La 3 es la que importa para la ficha; la 5, para el trabajo diario.
 
     python scripts/probar_ficha_estados.py
 """
@@ -202,6 +209,44 @@ def main():
     afirmar("EN ESPERA DYP CONSOLIDADO" in visible_m,
             "Movimientos dice lo mismo que la ficha")
 
+    # ------------------------------------------------------------------ 4
+    paso("4. el listado marca la fila que diverge")
+    base_con(ruta, "Navegando", [("ingreso", "ZONA DE RECEPCION"),
+                                 ("pdi", "EN ESPERA DYP CONSOLIDADO")])
+    codigo, html = pedir(ruta, "/unidades/?q=VINDEPRUEBA123456&fragmento=1")
+    afirmar(codigo == 200, "el listado responde 200", codigo)
+    afirmar("marca-regla" in html, "la fila lleva la marca de divergencia")
+    afirmar("EN ESPERA DYP CONSOLIDADO" in html,
+            "y dice el estado de REGLA, no solo que difiere")
+    afirmar("Navegando" in html, "sin sacar el crudo, que es por lo que filtra")
+
+    # Con los dos iguales NO tiene que marcar nada: una marca que aparece
+    # siempre deja de significar algo.
+    base_con(ruta, "EN ESPERA DYP CONSOLIDADO",
+             [("pdi", "EN ESPERA DYP CONSOLIDADO")])
+    codigo, html = pedir(ruta, "/unidades/?q=VINDEPRUEBA123456&fragmento=1")
+    afirmar("marca-regla" not in html, "no marca cuando coinciden")
+
+    # ------------------------------------------------------------------ 5
+    paso("5. el buscador de taller muestra la verdad operativa")
+    base_con(ruta, "Navegando", [("ingreso", "ZONA DE RECEPCION"),
+                                 ("pdi", "EN ESPERA DYP CONSOLIDADO")])
+    codigo, html = pedir(ruta, "/taller/pdi?q=VINDEPRUEBA123456&fragmento=1")
+    afirmar(codigo == 200, "el buscador responde 200", codigo)
+    visible = texto_visible(html)
+    afirmar("EN ESPERA DYP CONSOLIDADO" in visible,
+            "muestra el estado de REGLA")
+    # El de REGLA va PRIMERO: es el que el movilizador tiene que leer.
+    afirmar(visible.find("EN ESPERA DYP CONSOLIDADO") < visible.find("Navegando"),
+            "y lo pone antes que el crudo", visible.strip()[:200])
+    afirmar("sist. anterior" in visible,
+            "el crudo queda como referencia, rotulado")
+
+    base_con(ruta, "STOCK", [])
+    codigo, html = pedir(ruta, "/taller/pdi?q=VINDEPRUEBA123456&fragmento=1")
+    afirmar("estado-crudo" not in html,
+            "sin movimientos en REGLA muestra el crudo a secas")
+
     shutil.rmtree(tmp, ignore_errors=True)
 
     print("\n" + "=" * 62)
@@ -210,7 +255,7 @@ def main():
         for f in fallos:
             print("  - {}".format(f))
         return 1
-    print("los 3 casos de la ficha pasaron")
+    print("los 5 casos de los dos estados pasaron")
     return 0
 
 
