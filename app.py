@@ -20,6 +20,7 @@ from modulos.inspeccion_despacho import bp as bp_inspeccion_despacho
 from modulos.kpis import bp as bp_kpis
 from modulos.movimientos import bp as bp_movimientos
 from modulos.ot import bp as bp_ot
+from modulos.reconciliacion import bp as bp_reconciliacion
 from modulos.revision_contenedor import bp as bp_revision_contenedor
 from modulos.taller import bp as bp_taller
 from modulos.unidades import bp as bp_unidades
@@ -71,6 +72,7 @@ def crear_app():
     app.register_blueprint(bp_catalogos)
     app.register_blueprint(bp_facturacion)
     app.register_blueprint(bp_kpis)
+    app.register_blueprint(bp_reconciliacion)
 
     registrar_guardia(app)
 
@@ -141,8 +143,55 @@ def _hilo_sync():
             except Exception as e:              # noqa: BLE001
                 print("[push] error: {}: {}".format(type(e).__name__, e), flush=True)
 
+            _reconciliar_si_toca()
+
     threading.Thread(target=vueltas, daemon=True).start()
     print("[sync] hilo activo, cada {:.0f}s".format(intervalo), flush=True)
+
+
+# La ultima fecha en que se reconcilio, en memoria del proceso. Se apoya ademas
+# en la tabla: si el proceso reinicia, `_reconciliar_si_toca` mira la ultima
+# corrida guardada y no repite la del dia.
+_ultima_reconciliacion = {"dia": None}
+
+
+def _reconciliar_si_toca():
+    """Una reconciliacion por dia, colgada del hilo que ya existe.
+
+    No hay un planificador aparte a proposito: el hilo del sync ya corre cada
+    300 s y sabe reintentar solo. Una pieza mas -- un cron externo -- es una
+    pieza mas que puede morirse sin que nadie lo note, que es justo lo que este
+    reporte existe para evitar.
+
+    Nunca levanta: si la reconciliacion falla, el sync tiene que seguir."""
+    from datetime import date
+
+    hoy = date.today().isoformat()
+    if _ultima_reconciliacion["dia"] == hoy:
+        return
+    try:
+        from core import conectar_db
+        from modulos.reconciliacion import avisar, correr, ultima
+        db = conectar_db()
+        try:
+            previa = ultima(db)
+        finally:
+            db.close()
+        if previa and (previa.get("corrida_en") or "")[:10] == hoy:
+            _ultima_reconciliacion["dia"] = hoy
+            return
+
+        r = correr()
+        c = r["estados"]["conteo"]
+        print("[reconciliacion] de_acuerdo={} regla_adelante={} "
+              "legado_adelante={} contradicciones={} pdi_sin_ot={}".format(
+                  c["de_acuerdo"], c["regla_adelante"], c["legado_adelante"],
+                  c["contradiccion"], r["pdi_sin_ot"]["sin_ot"]), flush=True)
+        print("[reconciliacion] correo: {}".format(avisar(r)), flush=True)
+        _ultima_reconciliacion["dia"] = hoy
+    except Exception as e:                       # noqa: BLE001 -- ver docstring
+        print("[reconciliacion] error: {}: {}".format(
+            type(e).__name__, e), flush=True)
 
 
 app = crear_app()

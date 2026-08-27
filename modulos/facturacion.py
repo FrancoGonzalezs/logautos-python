@@ -31,7 +31,7 @@ from datetime import date, datetime
 
 from flask import Blueprint, render_template, request
 
-from core import DATA_DIR, consultar
+from core import DATA_DIR, consultar, peso
 from modulos.catalogos import normalizar
 
 bp = Blueprint("facturacion", __name__, url_prefix="/facturacion")
@@ -174,7 +174,11 @@ def tarifa_diaria(cliente, uf):
         # redondeo: produccion redondea TODAS las tarifas, pero cambiar las
         # otras mueve numeros que el personal ya esta mirando, asi que esa
         # decision quedo pendiente. Cuando se tome, esto queda parejo solo.
-        return round(uf * TARIFA_UF_FALLBACK)
+        #
+        # `peso()` y no `round()`: ver la regla del dinero en core.py. El
+        # legado usa `round()` de PHP, que redondea medio LEJOS DEL CERO; el
+        # de Python redondea AL PAR y da un peso menos en los .5 exactos.
+        return peso(uf * TARIFA_UF_FALLBACK)
     return None
 
 

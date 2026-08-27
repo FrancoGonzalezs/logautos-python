@@ -1,0 +1,106 @@
+{% extends "base.html" %}
+{% block titulo %}Reconciliación — Logautos{% endblock %}
+{% block contenido %}
+  <h1>Reconciliación con el sistema anterior</h1>
+
+  {% if not r %}
+    <div class="aviso">
+      Todavía no corrió ninguna reconciliación. Se corre sola una vez por día,
+      o a mano con <code>python scripts/reconciliar.py</code>.
+    </div>
+  {% else %}
+    <p class="subtitulo">Última corrida: {{ r.corrida_en }}</p>
+
+    {#- Las tres categorías, y la 3 destacada: es la única que se mira a mano.
+        Las otras dos son esperadas -- la 1 mientras el push no cubra ese paso,
+        la 2 porque administración sigue trabajando en el sistema anterior. -#}
+    <h2>Estados <span class="cuenta">{{ r.estados.unidades_miradas }} unidades que REGLA tocó</span></h2>
+    <div class="kpis">
+      <div class="kpi"><span class="kpi-n">{{ r.estados.conteo.de_acuerdo }}</span>
+        <span class="kpi-t">de acuerdo</span></div>
+      <div class="kpi"><span class="kpi-n">{{ r.estados.conteo.regla_adelante }}</span>
+        <span class="kpi-t">REGLA adelante<br><small>tiene que caer con cada enlace</small></span></div>
+      <div class="kpi"><span class="kpi-n">{{ r.estados.conteo.legado_adelante }}</span>
+        <span class="kpi-t">el anterior adelante<br><small>trabajo de administración</small></span></div>
+      <div class="kpi {% if r.estados.conteo.contradiccion %}kpi-malo{% endif %}">
+        <span class="kpi-n">{{ r.estados.conteo.contradiccion }}</span>
+        <span class="kpi-t">contradicciones<br><small>lo único a mirar a mano</small></span></div>
+    </div>
+
+    {% if r.estados.contradicciones %}
+      <div class="tabla-scroll">
+        <table>
+          <thead><tr><th>Unidad</th><th>VIN</th><th>Sistema anterior</th><th>REGLA</th><th>Venía de</th><th>Paso</th></tr></thead>
+          <tbody>
+            {% for d in r.estados.contradicciones %}
+              <tr>
+                <td><a href="{{ url_for('unidades.ficha', id_unidad=d.unidad) }}">{{ d.unidad }}</a></td>
+                <td>{{ d.vin | mostrar }}</td>
+                <td>{{ d.legado | mostrar }}</td>
+                <td>{{ d.regla | mostrar }}</td>
+                <td>{{ d.desde | mostrar }}</td>
+                <td>{{ d.paso | mostrar }}</td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    {% endif %}
+
+    <h2>PDI sin su OT <span class="cuenta">{{ r.pdi_sin_ot.sin_ot }}</span></h2>
+    <p class="nota-avanzados">
+      Cada una es una PDI hecha y no cobrada. {{ r.pdi_sin_ot.sin_ot }} de
+      {{ "{:,}".format(r.pdi_sin_ot.pdi_totales).replace(",", ".") }} desde
+      {{ r.pdi_sin_ot.desde }} ({{ r.pdi_sin_ot.porcentaje }}%). Antes de esa
+      fecha la OT automática no existía, así que el histórico no cuenta.
+    </p>
+    {% if r.pdi_sin_ot.detalle %}
+      <div class="tabla-scroll">
+        <table>
+          <thead><tr><th>Unidad</th><th>VIN</th><th>Cliente</th><th>Fecha PDI</th></tr></thead>
+          <tbody>
+            {% for d in r.pdi_sin_ot.detalle %}
+              <tr>
+                <td><a href="{{ url_for('unidades.ficha', id_unidad=d.id) }}">{{ d.id }}</a></td>
+                <td>{{ d.vin | mostrar }}</td>
+                <td>{{ d.clientecompleto | mostrar }}</td>
+                <td>{{ d.fecha_pdi | mostrar }}</td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    {% endif %}
+
+    <h2>Estado sin fila en el historial</h2>
+    <p class="nota-avanzados">
+      Unidades cuyo estado en el sistema anterior no coincide con su propio
+      último movimiento: <strong>{{ "{:,}".format(r.sin_registro.estado_no_coincide).replace(",", ".") }}</strong>
+      de {{ "{:,}".format(r.sin_registro.con_historial).replace(",", ".") }}
+      ({{ r.sin_registro.porcentaje }}%). Son las 58 escrituras del sistema
+      anterior que cambian el estado sin registrar el movimiento — para esas,
+      la diferencia de columna es la única señal que existe.
+    </p>
+
+    {% if serie|length > 1 %}
+      <h2>Corridas anteriores</h2>
+      <div class="tabla-scroll">
+        <table>
+          <thead><tr><th>Cuándo</th><th>De acuerdo</th><th>REGLA adelante</th><th>Anterior adelante</th><th>Contradicciones</th><th>PDI sin OT</th></tr></thead>
+          <tbody>
+            {% for s in serie %}
+              <tr>
+                <td>{{ s.corrida_en }}</td>
+                <td>{{ s.conteo.de_acuerdo }}</td>
+                <td>{{ s.conteo.regla_adelante }}</td>
+                <td>{{ s.conteo.legado_adelante }}</td>
+                <td>{{ s.conteo.contradiccion }}</td>
+                <td>{{ s.sin_ot }}</td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    {% endif %}
+  {% endif %}
+{% endblock %}

@@ -10,6 +10,7 @@ regla que se sigue en el proyecto de Talca, donde separar un modulo sin esta
 capa aparte termino en un loop de imports.
 """
 
+import decimal
 import os
 import sqlite3
 
@@ -181,6 +182,52 @@ def instalar_guardas(db_path=None):
         "" if not faltantes else " -- sin guarda: {}".format(", ".join(faltantes))),
         flush=True)
     return puestas, faltantes
+
+
+# ---------------------------------------------------------------------------
+# Dinero
+# ---------------------------------------------------------------------------
+#
+# REGLA DEL PROYECTO: todo calculo de plata redondea con Decimal y
+# ROUND_HALF_UP. Nunca `round()` sobre un float.
+#
+# No es preferencia de estilo, son dos bichos distintos:
+#
+#   1. `round()` de Python redondea AL PAR (banquero): round(0.5)=0,
+#      round(1.5)=2, round(2.5)=2. PHP redondea medio LEJOS DEL CERO, tanto en
+#      `round()` como en `number_format()`. Un calculo replicado del legado con
+#      `round()` da un peso de menos cada vez que cae exacto en .5.
+#
+#   2. El float binario no representa los decimales de base 10. 35164.5 puede
+#      estar guardado como 35164.499999... y entonces hasta el redondeo
+#      correcto da el numero de abajo.
+#
+# Paso de verdad y costo encontrarlo: replicando el precio de las OT de
+# combustible, 119 de 1.061 no calzaban por exactamente 1 peso -- `29550 * 1.19
+# = 35164.5`, que PHP guarda como 35165 y Python como 35164. Con ROUND_HALF_UP
+# sobre Decimal, las 971 calzan al peso.
+#
+# Donde hay plata hoy: `modulos/facturacion.py` -- tarifas de acopio, precios
+# de OT y los totales con IVA. `kpis.py` usa round() pero sobre tasas y
+# minutos, no sobre pesos.
+
+IVA = decimal.Decimal("1.19")
+
+
+def peso(valor):
+    """Un monto redondeado al peso, como lo redondea el legado.
+
+    Acepta float, int, str o Decimal. Devuelve int, porque los pesos chilenos
+    no tienen centavos y guardar el decimal invita a que alguien lo sume."""
+    if valor is None:
+        return 0
+    return int(decimal.Decimal(str(valor)).quantize(
+        decimal.Decimal("1"), rounding=decimal.ROUND_HALF_UP))
+
+
+def con_iva(neto):
+    """El monto con IVA, redondeado al peso. `neto` puede venir en float."""
+    return peso(decimal.Decimal(str(neto or 0)) * IVA)
 
 
 def get_db():
