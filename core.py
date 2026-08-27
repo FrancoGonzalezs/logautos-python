@@ -79,6 +79,70 @@ def conectar_db(path=None):
     return db
 
 
+# ---------------------------------------------------------------------------
+# La guarda de `unidad_id`
+# ---------------------------------------------------------------------------
+#
+# Toda tabla propia de REGLA cuelga de UNA PASADA de la unidad, no del
+# vehiculo: `newstocks_cidef` tiene 71.546 filas para 61.447 VIN porque cada
+# fila es una entrada distinta al patio. Una fila sin `unidad_id` no se puede
+# atribuir a ninguna, y ninguna consulta la va a encontrar -- desde que todo
+# empareja por id, un movimiento sin dueño es invisible para la ficha, para el
+# listado y para el motor. Se pierde en silencio.
+#
+# POR QUE UN TRIGGER Y NO UN `if` EN CADA INSERT. Un chequeo en Python protege
+# a quien se acuerda de llamarlo, y este bug se repitio cuatro veces
+# justamente porque la disciplina no alcanza. El trigger lo aplica la base a
+# TODA escritura, venga de donde venga.
+#
+# Y sobre todo: `CREATE TRIGGER IF NOT EXISTS` funciona sobre una tabla que YA
+# EXISTE, sin recrearla. Es lo que lo hace servible en las bases desplegadas,
+# que es donde no llega ninguna migracion -- el proyecto crea sus tablas con
+# `CREATE TABLE IF NOT EXISTS`, asi que una base ya creada conserva su esquema
+# viejo para siempre. Un `NOT NULL` exigiria recrear y copiar; esto no.
+#
+# El mensaje va en el propio RAISE, asi que llega a Python como
+# `sqlite3.IntegrityError: <mensaje>` y se lee sin ir al codigo.
+
+TABLAS_CON_UNIDAD = {
+    "movimientos_regla": "unidad_id",
+    "pdi_regla": "unidad_id",
+    "it_regla": "unidad_id",
+    "check_list_regla": "unidad_id",
+    "revision_unidad_regla": "unidad_id",
+    "validacion_color_regla": "id_unidad",
+}
+
+
+def exigir_unidad_id(db, tabla):
+    """Instala el trigger que rechaza escrituras sin unidad para `tabla`.
+
+    Idempotente y barato: se puede llamar en cada request. Si la tabla todavia
+    no existe -- o no tiene la columna, que pasa en bases viejas -- no hace
+    nada y no rompe: la guarda se instala sola cuando la tabla aparezca."""
+    columna = TABLAS_CON_UNIDAD.get(tabla)
+    if columna is None:
+        raise ValueError("tabla sin unidad declarada: {}".format(tabla))
+    try:
+        cols = [c[1] for c in db.execute('PRAGMA table_info("{}")'.format(tabla))]
+    except Exception:                            # pragma: no cover
+        return False
+    if columna not in cols:
+        return False
+    mensaje = ("{tabla}.{columna} no puede ser NULL: cada fila cuelga de UNA "
+               "pasada de la unidad, y sin ese id la fila es invisible para "
+               "toda la aplicacion".format(tabla=tabla, columna=columna))
+    for momento in ("INSERT", "UPDATE"):
+        db.execute(
+            'CREATE TRIGGER IF NOT EXISTS "exige_{col}_{mom}_{tabla}" '
+            'BEFORE {mom} ON "{tabla}" FOR EACH ROW '
+            'WHEN NEW."{col}" IS NULL '
+            "BEGIN SELECT RAISE(ABORT, '{msg}'); END".format(
+                tabla=tabla, col=columna, mom=momento,
+                mom_low=momento.lower(), msg=mensaje.replace("'", "''")))
+    return True
+
+
 def get_db():
     if "db" not in g:
         g.db = conectar_db()

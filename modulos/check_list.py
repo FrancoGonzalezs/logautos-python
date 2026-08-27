@@ -58,7 +58,7 @@ from flask import (Blueprint, redirect, render_template, request,
                    send_from_directory, session, url_for)
 from werkzeug.utils import secure_filename
 
-from core import DATA_DIR, consultar, get_db
+from core import DATA_DIR, consultar, exigir_unidad_id, get_db
 from modulos.acceso import id_actual, nombre_actual
 from modulos.catalogos import normalizar
 from modulos.movimientos import es_desvio, estado_fisico, recomendar, registrar
@@ -325,8 +325,11 @@ def _asegurar_tabla(db):
         "CREATE INDEX IF NOT EXISTS ix_check_list_regla_vin "
         "ON check_list_regla (vin)")
 
+    # La guarda: rechaza filas sin unidad. Va acá porque esta
+    # funcion ya corre en cada request y es idempotente.
+    exigir_unidad_id(db, "check_list_regla")
 
-def check_lists_de(vin):
+def check_lists_por_vin(vin):
     if not vin:
         return []
     db = get_db()
@@ -402,7 +405,7 @@ def _indices_de_danos():
     return sorted(indices)
 
 
-def _leer_danos(vin):
+def _leer_danos_por_vin(vin):
     """Arma las cuatro cadenas paralelas a partir de las filas del formulario.
 
     Se saltean las filas vacias: el formulario arranca con una fila y el
@@ -502,7 +505,7 @@ def _pintar(unidad, errores=None, valores=None, codigo=200):
         errores=errores or [], v=valores or {},
         filas_danos=_filas_de_danos() if valores else
                     [{"i": 0, "pieza": "", "tipo": "", "nivel": ""}],
-        anteriores=check_lists_de(unidad["vin"]))
+        anteriores=check_lists_por_vin(unidad["vin"]))
     return pagina if codigo == 200 else (pagina, codigo)
 
 
@@ -565,7 +568,7 @@ def confirmar(id_unidad):
 
     danos = None
     if not errores:
-        danos = _leer_danos(unidad["vin"])
+        danos = _leer_danos_por_vin(unidad["vin"])
         if danos["faltan_fotos"]:
             errores.append(
                 "Cada dano necesita su foto. Sin foto quedaron: {}.".format(

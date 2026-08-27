@@ -25,8 +25,18 @@ Los casos que hay que cubrir, sobre una base descartable:
     5. el buscador de taller      muestra el de REGLA PRIMERO -- es la pantalla
                                   donde el movilizador encadena VIN y su propio
                                   trabajo desactualiza la columna cruda
+    6. otra pasada del mismo VIN  no hereda los movimientos de la otra
+    7. el vehiculo que REINGRESA  no figura con el PDI ya hecho ni hereda
+                                  hitos ajenos -- el caso con consecuencia
+                                  fisica, ver abajo
+    8. la guarda de unidad_id     una fila sin unidad se rechaza al escribir,
+                                  con mensaje claro
 
-La 3 es la que importa para la ficha; la 5, para el trabajo diario.
+La 3 importa para la ficha, la 5 para el trabajo diario, y la 7 es la unica
+con consecuencia fuera de la pantalla: el 14% de las filas de newstocks_cidef
+son vehiculos que reingresaron, y con la busqueda por VIN el sistema le decia
+al movilizador que la unidad ya tenia PDI cuando la PDI era de la pasada
+anterior. Una PDI que no se hace sobre un vehiculo que la necesita.
 
     python scripts/probar_ficha_estados.py
 """
@@ -131,8 +141,43 @@ def base_con(ruta, despachado, movimientos):
     db.close()
 
 
+def sembrar_pdi(ruta, unidad_id, fecha="2026-01-15"):
+    """Un PDI ya cargado en esa pasada."""
+    db = sqlite3.connect(ruta)
+    db.execute(
+        "INSERT INTO pdi_regla (unidad_id, vin, fecha_pdi, estado_hacia, creado_en) "
+        "VALUES (?,?,?,?,?)",
+        (unidad_id, "VINDEPRUEBA123456", fecha, "EN ESPERA DYP CONSOLIDADO",
+         "2026-01-15T09:00:00"))
+    db.commit()
+    db.close()
+
+
+def movimiento_en(ruta, unidad_id, paso, hacia):
+    db = sqlite3.connect(ruta)
+    db.execute(
+        "INSERT INTO movimientos_regla (unidad_id, vin, paso, estado_hacia, "
+        "creado_en) VALUES (?,?,?,?,?)",
+        (unidad_id, "VINDEPRUEBA123456", paso, hacia, "2026-01-15T09:00:00"))
+    db.commit()
+    db.close()
+
+
+# Marcas de trabajo que pertenecen a UNA pasada y no al vehiculo. Una pasada
+# nueva nace sin ellas.
+#
+# No es una suposicion: medido sobre las 6.182 VIN con varias pasadas de la
+# replica, 5.226 no tienen `fecha_pdi` en ninguna y 684 la tienen en algunas y
+# no en otras. O sea que la fecha NO se arrastra al reingresar -- cada pasada
+# la gana por su cuenta. Copiarla al armar la pasada nueva fue el primer
+# intento de esta prueba y la hizo fallar por un motivo falso.
+MARCAS_DE_PASADA = ("fecha_pdi", "fecha_pdi_2", "mes_pdi", "mespdinombre",
+                    "estado_it", "observacion_it", "fecha_check_list",
+                    "fecha_revision_salida")
+
+
 def otra_pasada(ruta, id_nuevo, despachado):
-    """Otra fila de newstocks_cidef con el MISMO VIN.
+    """Otra fila de newstocks_cidef con el MISMO VIN: el vehiculo reingresa.
 
     Es lo normal en este dato -- 71.546 filas para 61.447 VIN --, y es lo que
     destapo que atribuir movimientos por VIN estaba mal."""
@@ -141,6 +186,9 @@ def otra_pasada(ruta, id_nuevo, despachado):
     fila = list(db.execute("SELECT * FROM newstocks_cidef WHERE id = 90001").fetchone())
     fila[cols.index("id")] = id_nuevo
     fila[cols.index("despachado")] = despachado
+    for campo in MARCAS_DE_PASADA:
+        if campo in cols:
+            fila[cols.index(campo)] = None
     db.execute("INSERT INTO newstocks_cidef ({}) VALUES ({})".format(
         ", ".join('"{}"'.format(c) for c in cols), ", ".join("?" * len(cols))), fila)
     db.commit()
@@ -287,6 +335,79 @@ def main():
             estados.strip()[:140])
     afirmar(not aviso.strip(), "y no avisa de un desfase que no existe")
 
+    # ------------------------------------------------------------------ 7
+    paso("7. el vehiculo que REINGRESA no hereda el PDI de su pasada anterior")
+    # El riesgo real, y no es cosmetico: el 14% de las filas de
+    # newstocks_cidef son vehiculos que volvieron a entrar. Con la busqueda por
+    # VIN, `_ya_tiene_pdi` le decia al movilizador "esta unidad ya tiene PDI" y
+    # la PDI era de meses atras, de la pasada anterior. Resultado: una PDI que
+    # NO se hace sobre un vehiculo que la necesita.
+    #
+    # La pasada vieja es 90001 (la que arma base_con) y la nueva 90003.
+    base_con(ruta, "DESPACHADO", [])
+    sembrar_pdi(ruta, 90001)                       # PDI en la pasada VIEJA
+    movimiento_en(ruta, 90001, "pdi", "EN ESPERA DYP CONSOLIDADO")
+    otra_pasada(ruta, 90003, "ZONA DE RECEPCION")  # el vehiculo reingresa
+
+    import importlib
+    os.environ["DB_PATH"] = ruta
+    import core
+    importlib.reload(core)
+    for nombre in list(sys.modules):
+        if nombre.startswith("modulos.") or nombre == "app":
+            del sys.modules[nombre]
+    import app as appmod
+    with appmod.app.test_request_context("/"):
+        from modulos.movimientos import _pasos_registrados, hitos_de
+        from modulos.taller import _ya_tiene_pdi, pdi_de_unidad
+        import sqlite3 as _s
+        db = _s.connect(ruta); db.row_factory = _s.Row
+        nueva = db.execute("SELECT * FROM newstocks_cidef WHERE id = 90003").fetchone()
+        vieja = db.execute("SELECT * FROM newstocks_cidef WHERE id = 90001").fetchone()
+        db.close()
+        assert nueva["id"] == 90003, "la fila leida no es la pedida"
+        assert vieja["id"] == 90001, "la fila leida no es la pedida"
+
+        afirmar(_ya_tiene_pdi(vieja) is True,
+                "la pasada VIEJA si tiene su PDI")
+        afirmar(_ya_tiene_pdi(nueva) is False,
+                "la pasada NUEVA no figura como ya hecha", _ya_tiene_pdi(nueva))
+        afirmar(pdi_de_unidad(90003) is None,
+                "pdi_de_unidad no devuelve la PDI de la otra pasada")
+        afirmar(_pasos_registrados(90003) == set(),
+                "no hereda pasos ajenos", _pasos_registrados(90003))
+        afirmar(_pasos_registrados(90001) == {"pdi"},
+                "y la vieja conserva los suyos", _pasos_registrados(90001))
+        afirmar(hitos_de(nueva)["pdi"] is False,
+                "el motor NO da la PDI por cumplida en la unidad nueva")
+        afirmar(hitos_de(vieja)["pdi"] is True,
+                "y si la da por cumplida en la vieja")
+
+    # ------------------------------------------------------------------ 8
+    paso("8. la guarda: no se puede escribir una fila sin unidad")
+    base_con(ruta, "STOCK", [])
+    db = sqlite3.connect(ruta)
+    from core import exigir_unidad_id
+    for tabla in ("movimientos_regla", "pdi_regla", "it_regla"):
+        exigir_unidad_id(db, tabla)
+    db.commit()
+    for tabla, cols in (("movimientos_regla", "(vin, paso)"),
+                        ("pdi_regla", "(vin, fecha_pdi)"),
+                        ("it_regla", "(vin, estado_it)")):
+        try:
+            db.execute("INSERT INTO {} {} VALUES ('X','Y')".format(tabla, cols))
+            afirmar(False, "{}: la escritura sin unidad_id se rechaza".format(tabla),
+                    "no se rechazo")
+        except sqlite3.IntegrityError as e:
+            afirmar("no puede ser NULL" in str(e),
+                    "{}: rechazada con mensaje claro".format(tabla), str(e)[:90])
+    # y con unidad_id si entra
+    db.execute("INSERT INTO movimientos_regla (unidad_id, vin, paso) "
+               "VALUES (90001, 'X', 'Y')")
+    db.commit()
+    afirmar(True, "con unidad_id la escritura pasa normal")
+    db.close()
+
     shutil.rmtree(tmp, ignore_errors=True)
 
     print("\n" + "=" * 62)
@@ -295,7 +416,7 @@ def main():
         for f in fallos:
             print("  - {}".format(f))
         return 1
-    print("los 6 casos de los dos estados pasaron")
+    print("los 8 casos pasaron")
     return 0
 
 

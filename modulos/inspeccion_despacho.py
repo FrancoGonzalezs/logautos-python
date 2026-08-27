@@ -140,7 +140,7 @@ def inspeccion_de_vin(vin):
         (vin,), una=True)
 
 
-def inspecciones_previas(vin):
+def inspecciones_previas_por_vin(vin):
     """Las de la replica, del sistema viejo. Solo para mostrar: son 16.365 y
     son el historial que ya existe."""
     if not vin:
@@ -165,7 +165,7 @@ def fotos_de(fila):
     return salida
 
 
-def tiene_inspeccion(vin):
+def tiene_inspeccion_por_vin(vin):
     """Si la unidad ya tiene inspeccion, propia o del sistema viejo."""
     if not vin:
         return False
@@ -218,7 +218,7 @@ def _pintar_alta(unidad, errores=None, codigo=200):
         encargado=nombre_actual(),
         hoy=datetime.now().date().isoformat(),
         despachada=_despachada(unidad),
-        previas=inspecciones_previas(unidad["vin"]),
+        previas=inspecciones_previas_por_vin(unidad["vin"]),
         errores=errores or [], v=request.form if es_post else {})
     return (pagina, codigo) if codigo != 200 else pagina
 

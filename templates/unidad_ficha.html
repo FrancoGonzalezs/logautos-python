@@ -355,6 +355,40 @@
     {% endif %}
   </details>
 
+  {#- Los movimientos que REGLA registro en OTRAS pasadas de este mismo VIN.
+      En bloque aparte y rotulado, nunca mezclados con los de arriba: cada fila
+      de newstocks_cidef es una pasada distinta del vehiculo por el patio, y
+      presentar como propio un movimiento de hace seis meses fue exactamente el
+      bug que costo encontrar. Aca se muestran porque en la ficha SI interesa
+      la historia del vehiculo -- pero se dice de quien es cada cosa. -#}
+  {% if movimientos_otras_pasadas %}
+    <details class="grupo plegable">
+      <summary><h2>Pasadas anteriores de este VIN
+        <span class="cuenta">{{ movimientos_otras_pasadas|length }}</span></h2></summary>
+      <p class="nota-avanzados">
+        Movimientos que REGLA registró en <strong>otras pasadas</strong> del
+        mismo VIN. No son de esta unidad.
+      </p>
+      <div class="tabla-scroll">
+        <table>
+          <thead><tr><th>Pasada</th><th>Paso</th><th>Desde</th><th>Hacia</th><th>Fecha</th><th>Responsable</th></tr></thead>
+          <tbody>
+            {% for m in movimientos_otras_pasadas %}
+              <tr>
+                <td><a href="{{ url_for('unidades.ficha', id_unidad=m['unidad_id']) }}">{{ m['unidad_id'] }}</a></td>
+                <td><strong>{{ m['paso'] | mostrar }}</strong></td>
+                <td>{{ m['estado_desde'] | mostrar }}</td>
+                <td>{{ m['estado_hacia'] | mostrar }}</td>
+                <td>{{ m['creado_en'] | mostrar }}</td>
+                <td>{{ m['responsable'] | mostrar }}</td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </details>
+  {% endif %}
+
   <details class="grupo plegable">
     <summary><h2>Órdenes de trabajo <span class="cuenta">{{ ots|length }}</span></h2></summary>
     {% if not ots %}

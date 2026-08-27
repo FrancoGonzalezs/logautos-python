@@ -62,14 +62,14 @@ from datetime import datetime
 
 from flask import Blueprint, redirect, render_template, request, url_for
 
-from core import DB_PATH, consultar, get_db
+from core import DB_PATH, consultar, exigir_unidad_id, get_db
 from modulos.acceso import id_actual, nombre_actual
 from modulos.catalogos import normalizar
 # Se reusan las piezas del check list a proposito: son el mismo dato con los
 # mismos catalogos, y dos implementaciones se habrian desincronizado a la
 # primera correccion.
 from modulos.check_list import (_coincide, _filas_de_danos, _guardar_foto,
-                                _leer_danos, niveles_de_dano, piezas,
+                                _leer_danos_por_vin, niveles_de_dano, piezas,
                                 tipos_de_dano, url_de_foto)
 from modulos.movimientos import (_buscar, es_desvio, estado_fisico,
                                  recomendar, registrar)
@@ -183,6 +183,10 @@ def _asegurar_tablas(db):
         "CREATE UNIQUE INDEX IF NOT EXISTS uk_validacion_color_regla "
         "ON validacion_color_regla (vin, modulo_origen, referencia_id)")
 
+    # La guarda: rechaza filas sin unidad. Va acá porque esta
+    # funcion ya corre en cada request y es idempotente.
+    exigir_unidad_id(db, "revision_unidad_regla")
+    exigir_unidad_id(db, "validacion_color_regla")
 
 def _db():
     db = get_db()
@@ -384,7 +388,7 @@ def _agregar_a_lista(actual, valor):
 # Validacion de modelo y color
 # ---------------------------------------------------------------------------
 
-def validacion_de(vin, id_contenedor):
+def validacion_por_vin(vin, id_contenedor):
     _db().commit()
     return consultar(
         "SELECT * FROM validacion_color_regla WHERE vin = ? AND modulo_origen = ? "
@@ -397,7 +401,7 @@ def guardar_validacion(unidad, id_contenedor, modelo_obs, color_obs):
     La coincidencia se DEDUCE: el campo observado vacio significa 'coincide',
     que es lo normal y no cuesta nada escribir. Solo cuando el movilizador
     escribe algo distinto queda registrada la diferencia."""
-    existente = validacion_de(unidad["vin"], id_contenedor)
+    existente = validacion_por_vin(unidad["vin"], id_contenedor)
     if existente:
         return existente, False
 
@@ -424,7 +428,7 @@ def guardar_validacion(unidad, id_contenedor, modelo_obs, color_obs):
         id_actual(), nombre_actual(), 0,
         datetime.now().isoformat(timespec="seconds")))
     db.commit()
-    fila = validacion_de(unidad["vin"], id_contenedor)
+    fila = validacion_por_vin(unidad["vin"], id_contenedor)
     return fila, not (modelo_coincide and color_coincide)
 
 
@@ -678,7 +682,7 @@ def _pintar_evidencia(cont, unidad, errores=None, codigo=200):
         filas_danos=_filas_de_danos() if es_post else [
             {"i": 0, "pieza": "", "tipo": "", "nivel": ""}],
         encargado=nombre_actual(),
-        validacion=validacion_de(unidad["vin"], cont["id"]),
+        validacion=validacion_por_vin(unidad["vin"], cont["id"]),
         diferencias=diferencias_de(unidad, (v.get("modelo_observado") or "").strip(),
                                    (v.get("color_observado") or "").strip()),
         errores=errores or [], v=v)
@@ -719,7 +723,7 @@ def guardar_evidencia(id_contenedor, id_unidad):
             "Hay una diferencia con el packing list: confirmala para poder "
             "guardar."])
 
-    danos = _leer_danos(unidad["vin"])
+    danos = _leer_danos_por_vin(unidad["vin"])
     if danos["faltan_fotos"]:
         return _pintar_evidencia(cont, unidad, [
             "Cada daño necesita su foto. Sin foto quedaron: {}.".format(
@@ -860,7 +864,7 @@ def cerrar(id_contenedor):
                             id_contenedor=id_contenedor, correo=estado))
 
 
-def resumen_para_ficha(vin):
+def resumen_para_ficha_por_vin(vin):
     """Los contenedores de este VIN, listos para la ficha de la unidad.
 
     De cada uno se saca la fila de ESTE VIN, no el resumen del contenedor

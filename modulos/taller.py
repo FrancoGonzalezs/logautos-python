@@ -62,7 +62,7 @@ from datetime import datetime
 
 from flask import Blueprint, redirect, render_template, request, url_for
 
-from core import consultar, get_db
+from core import consultar, exigir_unidad_id, get_db
 from modulos.acceso import id_actual, nombre_actual
 from modulos.catalogos import normalizar
 from modulos.movimientos import (MOTIVOS, _buscar, es_desvio, estado_fisico,
@@ -139,6 +139,10 @@ def _asegurar_tablas(db):
         )""")
     db.execute("CREATE INDEX IF NOT EXISTS ix_it_regla_vin ON it_regla (vin)")
 
+    # La guarda: rechaza filas sin unidad. Va acá porque esta
+    # funcion ya corre en cada request y es idempotente.
+    exigir_unidad_id(db, "pdi_regla")
+    exigir_unidad_id(db, "it_regla")
 
 def _db():
     db = get_db()
@@ -236,16 +240,32 @@ def _motivo_guardado(estado_desde, estado_hacia, hubo_desvio):
     return None, None
 
 
-def pdi_de(vin):
+def pdi_de_unidad(unidad_id):
+    """La ultima PDI DE ESTA PASADA. Por `unidad_id`, jamas por VIN.
+
+    Buscar por VIN era un bug con consecuencia fisica, no cosmetica.
+    `newstocks_cidef` tiene 71.546 filas para 61.447 VIN porque cada fila es
+    UNA PASADA del vehiculo por el patio: el 14% de las filas son vehiculos
+    que reingresaron. Con la busqueda por VIN, un vehiculo que vuelve a entrar
+    le decia al movilizador "esta unidad ya tiene PDI" -- y la PDI era de la
+    pasada anterior, de meses atras. El resultado no es una pantalla fea: es
+    una PDI que no se hace sobre un vehiculo que la necesita.
+
+    Comprobado sobre el dato real: la unidad 80022 devolvia la PDI de la 91987
+    y la 87179 la de la 92049."""
     _db().commit()
-    return consultar("SELECT * FROM pdi_regla WHERE vin = ? ORDER BY id DESC LIMIT 1",
-                     (vin,), una=True)
+    return consultar(
+        "SELECT * FROM pdi_regla WHERE unidad_id = ? ORDER BY id DESC LIMIT 1",
+        (unidad_id,), una=True)
 
 
-def it_de(vin):
+def it_de_unidad(unidad_id):
+    """El ultimo IT DE ESTA PASADA. Mismo motivo que `pdi_de_unidad`: la
+    unidad 90389 traia el IT de la 92082."""
     _db().commit()
-    return consultar("SELECT * FROM it_regla WHERE vin = ? ORDER BY id DESC LIMIT 1",
-                     (vin,), una=True)
+    return consultar(
+        "SELECT * FROM it_regla WHERE unidad_id = ? ORDER BY id DESC LIMIT 1",
+        (unidad_id,), una=True)
 
 
 def _ya_tiene_pdi(unidad):
@@ -253,7 +273,7 @@ def _ya_tiene_pdi(unidad):
 
     El PHP mira `fecha_pdi` de la unidad; se mira lo mismo, mas nuestra tabla,
     porque una PDI cargada desde REGLA todavia no viajo al sistema viejo."""
-    if pdi_de(unidad["vin"]) is not None:
+    if pdi_de_unidad(unidad["id"]) is not None:
         return True
     fecha = (unidad["fecha_pdi"] or "").strip()
     return bool(fecha) and fecha != SIN_FECHA
@@ -414,7 +434,7 @@ def _pintar_it(unidad, errores=None, codigo=200):
         encargado=nombre_actual(),
         destino=_destino_it(unidad),
         estado_actual=estado_fisico(unidad),
-        previo=it_de(unidad["vin"]),
+        previo=it_de_unidad(unidad["id"]),
         volver=request.values.get("volver", ""),
         errores=errores or [], v=request.form if es_post else {},
         **_contexto_motivo(unidad, [_destino_it(unidad)]))

@@ -327,7 +327,7 @@ def danos_de_check_list(fila):
     return danos
 
 
-def check_lists_de(vin, cliente):
+def check_lists_por_vin(vin, cliente):
     if not vin:
         return []
     filas = consultar(
@@ -335,7 +335,7 @@ def check_lists_de(vin, cliente):
     return _del_cliente(filas, cliente)
 
 
-def check_mecanica_de(vin, cliente):
+def check_mecanica_por_vin(vin, cliente):
     if not vin:
         return []
     filas = consultar(
@@ -375,7 +375,7 @@ def items_de_mecanica(fila):
     return items
 
 
-def inspecciones_de(vin):
+def inspecciones_por_vin(vin):
     """Sin filtro de cliente, a diferencia de los check lists: la inspeccion
     de despacho se hace igual para todos."""
     if not vin:
@@ -385,7 +385,7 @@ def inspecciones_de(vin):
         "ORDER BY fecha_completa DESC, id DESC", (vin,))
 
 
-def movimientos_de(vin, tope=200):
+def movimientos_legado_por_vin(vin, tope=200):
     """El historial de `registros`.
 
     La tabla guarda pares actual/anterior (accion/newcalle, estado/newestado,
@@ -510,7 +510,7 @@ def cantidad_danos_aprobados(ob_dyp2):
     return max(len(texto.split(" /")) - 1, 0)
 
 
-def fecha_inspeccion_de(vin):
+def fecha_inspeccion_por_vin(vin):
     """Resuelve `fecha_inspeccion`, uno de los campos que en el PHP sale de un
     JOIN. Se usa `fecha_completa` porque viene poblada en las 16.365 filas,
     mientras que `fecha_despacho` solo en 4.171.
@@ -525,7 +525,7 @@ def fecha_inspeccion_de(vin):
         "ORDER BY fecha_completa DESC LIMIT 1", (vin,))
 
 
-def fecha_revision_contenedor_de(vin):
+def fecha_revision_contenedor_por_vin(vin):
     """Resuelve `fecha_revision_contenedor` desde `contenedor`.
 
     El cruce es por texto: `contenedor.vines` guarda todos los VIN del
@@ -774,8 +774,8 @@ def ficha(id_unidad):
     cliente = fila["clientecompleto"]
 
     calculados = {
-        "fecha_inspeccion": fecha_inspeccion_de(vin),
-        "fecha_revision_contenedor": fecha_revision_contenedor_de(vin),
+        "fecha_inspeccion": fecha_inspeccion_por_vin(vin),
+        "fecha_revision_contenedor": fecha_revision_contenedor_por_vin(vin),
         "cant_danos_dyp": cantidad_danos_dyp(fila["observaciones"]),
         "cant_danos_aprob_cliente": cantidad_danos_aprobados(fila["ob_dyp2"]),
     }
@@ -790,7 +790,7 @@ def ficha(id_unidad):
         "danos": danos_de_check_list(f),
         "foto_unidad": urls_de(f["link_unidad"]),
         "foto_guia": urls_de(f["link_guia"]),
-    } for f in check_lists_de(vin, cliente)]
+    } for f in check_lists_por_vin(vin, cliente)]
 
     mecanica = []
     if muestra_mecanica:
@@ -801,10 +801,10 @@ def ficha(id_unidad):
             # asi que la plantilla recibia una funcion en vez de la lista.
             "revisados": items_de_mecanica(f),
             "fotos": urls_de(f["link_unidades"]) + urls_de(f["fotos_adicionales"]),
-        } for f in check_mecanica_de(vin, cliente)]
+        } for f in check_mecanica_por_vin(vin, cliente)]
 
     inspecciones = [
-        {"fila": f, "fotos": _fotos_de_inspeccion(f)} for f in inspecciones_de(vin)]
+        {"fila": f, "fotos": _fotos_de_inspeccion(f)} for f in inspecciones_por_vin(vin)]
 
     return render_template(
         "unidad_ficha.html",
@@ -818,14 +818,28 @@ def ficha(id_unidad):
         # Import diferido a proposito: revision_contenedor importa TABLA de
         # este modulo, asi que hacerlo arriba seria un import circular. Es el
         # unico lugar donde la ficha necesita algo de ese modulo.
-        contenedores=_revision_de_contenedor(vin),
-        movimientos=movimientos_de(vin),
+        contenedores=_revision_de_contenedor_por_vin(vin),
+        movimientos=movimientos_legado_por_vin(vin),
+        movimientos_otras_pasadas=_otras_pasadas(fila),
         **_estados_de(fila))
 
 
-def _revision_de_contenedor(vin):
-    from modulos.revision_contenedor import resumen_para_ficha
-    return resumen_para_ficha(vin)
+def _otras_pasadas(fila):
+    """Los movimientos que REGLA registro en OTRAS pasadas de este VIN.
+
+    En la ficha si interesa la historia del vehiculo, pero va en su propio
+    bloque y rotulada: mezclarla con la de esta pasada es presentar como propio
+    algo que paso en otra entrada al patio.
+
+    Import diferido por el mismo motivo que el resto de este archivo:
+    `movimientos` importa TABLA de aca."""
+    from modulos.movimientos import movimientos_por_vin
+    return movimientos_por_vin(fila["vin"], excluir_unidad=fila["id"])
+
+
+def _revision_de_contenedor_por_vin(vin):
+    from modulos.revision_contenedor import resumen_para_ficha_por_vin
+    return resumen_para_ficha_por_vin(vin)
 
 
 def _estados_de(fila):
@@ -848,7 +862,7 @@ def _estados_de(fila):
     derivado escondería que el sistema anterior todavia no se entero, y mostrar
     solo el crudo esconde el trabajo que el operario acaba de cargar.
 
-    Import diferido por el mismo motivo que `_revision_de_contenedor`:
+    Import diferido por el mismo motivo que `_revision_de_contenedor_por_vin`:
     `movimientos` importa TABLA de este modulo."""
     from modulos.movimientos import estado_efectivo
 

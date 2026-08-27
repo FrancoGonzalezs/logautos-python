@@ -57,7 +57,7 @@ from datetime import date, datetime
 
 from flask import Blueprint, redirect, render_template, request, session, url_for
 
-from core import consultar, get_db
+from core import consultar, exigir_unidad_id, get_db
 from modulos.acceso import id_actual, nombre_actual, usuario_actual
 from modulos.catalogos import normalizar
 # `vin_limpio` vive en kpis.py porque ahi nacio (filtra los VIN invalidos de
@@ -716,28 +716,39 @@ def hitos_de(unidad):
     seguiria recomendando el mismo paso para siempre."""
     hitos = {
         "ingresada": not _vacio(unidad["g_ingreso"]) or not _vacio(unidad["ingreso"]),
-        "revision_contenedor": _tiene_contenedor(unidad["vin"]),
+        "revision_contenedor": _tiene_contenedor_por_vin(unidad["vin"]),
         "lavado_revision": not _vacio(unidad["fecha_lavado_y_combustible"]),
         "check_list": not _vacio(unidad["fecha_check_list"]),
         "pdi": not _vacio(unidad["fecha_pdi"]),
         "check_mecanica": not _vacio(unidad["fecha_check_list_mecanica"]),
     }
-    for paso in _pasos_registrados(unidad["vin"]):
+    for paso in _pasos_registrados(unidad["id"]):
         hito = HITO_DE_PASO.get(paso)
         if hito:
             hitos[hito] = True
     return hitos
 
 
-def _pasos_registrados(vin):
-    """Los pasos que ya se registraron desde REGLA para este VIN."""
-    if not vin:
+def _pasos_registrados(unidad_id):
+    """Los pasos que ya se registraron desde REGLA para ESTA PASADA.
+
+    Por `unidad_id`, jamas por VIN, y es el mas peligroso de los tres que
+    estaban mal: esto alimenta `hitos_de` y por lo tanto a `recomendar`. Por
+    VIN, un vehiculo que reingresa hereda los pasos de su pasada anterior y el
+    motor le recomienda seguir desde donde quedo la otra vez -- salteandole
+    justo lo que hay que rehacer.
+
+    Comprobado sobre el dato real: la unidad 80022 figuraba con el paso 'pdi'
+    cumplido sin haberlo hecho nunca (era de la pasada 91987), y la 90389 con
+    'control_calidad' e 'ingreso_taller' de la 92082."""
+    if not unidad_id:
         return set()
     db = get_db()
     _asegurar_tabla(db)
     db.commit()
     return {f["paso"] for f in consultar(
-        "SELECT DISTINCT paso FROM movimientos_regla WHERE vin = ?", (vin,))}
+        "SELECT DISTINCT paso FROM movimientos_regla WHERE unidad_id = ?",
+        (unidad_id,))}
 
 
 def estado_de_movimiento(paso, estado_hacia):
@@ -837,7 +848,7 @@ def estado_efectivo(unidad):
     return unidad["despachado"], False
 
 
-def _tiene_contenedor(vin):
+def _tiene_contenedor_por_vin(vin):
     """El cruce con `contenedor` es por texto porque `vines` guarda todos los
     VIN del contenedor en un solo campo separados por ' | '."""
     if not vin:
@@ -848,13 +859,13 @@ def _tiene_contenedor(vin):
     return fila is not None
 
 
-def _tiene_inspeccion_despacho(vin):
+def _tiene_inspeccion_despacho_por_vin(vin):
     """Import diferido a proposito: `inspeccion_despacho` importa de este
     modulo (registrar, recomendar, estado_fisico), asi que hacerlo arriba seria
     un import circular. Es el unico lugar donde el motor necesita algo de ese
     modulo."""
-    from modulos.inspeccion_despacho import tiene_inspeccion
-    return tiene_inspeccion(vin)
+    from modulos.inspeccion_despacho import tiene_inspeccion_por_vin
+    return tiene_inspeccion_por_vin(vin)
 
 
 def es_retorno(unidad):
@@ -989,7 +1000,7 @@ def recomendar(unidad):
     # Y el orden importa de verdad: la inspeccion documenta COMO sale la
     # unidad, asi que tiene que hacerse antes de que salga. Despues ya no hay
     # nada que documentar, y el propio sistema viejo la rechaza.
-    if estado == "ZONA DE DESPACHO" and not _tiene_inspeccion_despacho(unidad["vin"]):
+    if estado == "ZONA DE DESPACHO" and not _tiene_inspeccion_despacho_por_vin(unidad["vin"]):
         return _reco("inspeccion_despacho",
                      "Está en ZONA DE DESPACHO y todavía no tiene inspección "
                      "de despacho: se registra antes de que la unidad salga.",
@@ -1098,13 +1109,44 @@ def _asegurar_tabla(db):
         if columna not in ya_estan:
             db.execute("ALTER TABLE movimientos_regla ADD COLUMN {} TEXT".format(columna))
 
+    # La guarda: rechaza filas sin unidad. Va acá porque esta
+    # funcion ya corre en cada request y es idempotente.
+    exigir_unidad_id(db, "movimientos_regla")
 
-def movimientos_de(vin):
+def movimientos_de_unidad(unidad_id):
+    """El historial DE ESTA PASADA. Es lo que muestra /movimientos/<id>.
+
+    Decision tomada: el historial es de la pasada, no del VIN. Un vehiculo que
+    reingresa empieza una pasada nueva, y mezclar los movimientos de la
+    anterior en la misma tabla presenta como propio algo que paso hace meses.
+    Las anteriores se muestran, pero en un bloque aparte y rotulado -- ver
+    `movimientos_por_vin`."""
+    if not unidad_id:
+        return []
+    db = get_db()
+    _asegurar_tabla(db)
+    db.commit()
+    return consultar(
+        "SELECT * FROM movimientos_regla WHERE unidad_id = ? "
+        "ORDER BY id DESC LIMIT 30", (unidad_id,))
+
+
+def movimientos_por_vin(vin, excluir_unidad=None):
+    """Los movimientos de las OTRAS pasadas de este VIN.
+
+    El nombre dice la clave a proposito: este bug se repitio cuatro veces
+    porque `movimientos_legado_por_vin(vin)` no delataba que emparejaba por VIN. Desde
+    ahora, toda funcion que reciba un VIN lo dice en su nombre, para que el
+    error se vea en el punto de llamada y no haya que entrar a leerla."""
     if not vin:
         return []
     db = get_db()
     _asegurar_tabla(db)
     db.commit()
+    if excluir_unidad:
+        return consultar(
+            "SELECT * FROM movimientos_regla WHERE vin = ? AND unidad_id <> ? "
+            "ORDER BY id DESC LIMIT 30", (vin, excluir_unidad))
     return consultar(
         "SELECT * FROM movimientos_regla WHERE vin = ? "
         "ORDER BY id DESC LIMIT 30", (vin,))
@@ -1321,7 +1363,7 @@ def unidad(id_unidad):
                          for c in PASOS},
         hitos=hitos_de(fila), retorno=es_retorno(fila),
         motivos=MOTIVOS, hoy=date.today().isoformat(),
-        historial=movimientos_de(fila["vin"]))
+        historial=movimientos_de_unidad(fila["id"]))
 
 
 @bp.route("/<int:id_unidad>/registrar", methods=["POST"])
