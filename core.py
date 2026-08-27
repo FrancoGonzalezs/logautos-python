@@ -143,6 +143,46 @@ def exigir_unidad_id(db, tabla):
     return True
 
 
+def instalar_guardas(db_path=None):
+    """Instala LAS DOCE guardas de una, al arrancar.
+
+    Antes se instalaban desde cada `_asegurar_tabla*`, o sea de forma
+    perezosa: cada tabla recibia su trigger recien cuando alguien visitaba la
+    pantalla que la usa. Medido en Railway, eso dejaba 6 de 12 puestas -- media
+    proteccion ausente en produccion, no un detalle de auditoria.
+
+    Se llama desde `crear_app()`. Como los triggers son ESQUEMA y no estado de
+    conexion, quedan en el archivo: desde ese momento protegen tambien a lo que
+    no sirve un request -- el hilo del sync, el del push y los comandos de
+    consola --, aunque abran su propia conexion y no pasen por ningun modulo de
+    pantalla.
+
+    No levanta: una guarda que no se pudo instalar no puede impedir que la app
+    arranque. Se anota en el log y se sigue."""
+    puestas, faltantes = [], []
+    db = None
+    try:
+        db = conectar_db(db_path)
+        for tabla in TABLAS_CON_UNIDAD:
+            try:
+                (puestas if exigir_unidad_id(db, tabla) else faltantes).append(tabla)
+            except Exception as e:               # noqa: BLE001 -- ver docstring
+                faltantes.append("{} ({})".format(tabla, e))
+        db.commit()
+    except Exception as e:                       # noqa: BLE001
+        print("[guardas] no se pudieron instalar: {}: {}".format(
+            type(e).__name__, e), flush=True)
+        return [], list(TABLAS_CON_UNIDAD)
+    finally:
+        if db is not None:
+            db.close()
+    print("[guardas] unidad_id exigida en {} de {} tablas{}".format(
+        len(puestas), len(TABLAS_CON_UNIDAD),
+        "" if not faltantes else " -- sin guarda: {}".format(", ".join(faltantes))),
+        flush=True)
+    return puestas, faltantes
+
+
 def get_db():
     if "db" not in g:
         g.db = conectar_db()

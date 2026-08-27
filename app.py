@@ -11,7 +11,7 @@ import os
 
 from flask import Flask, redirect, url_for
 
-from core import DB_PATH, cerrar_db, clave_de_sesion, mostrar, numero, pesos, vacio
+from core import DB_PATH, cerrar_db, clave_de_sesion, instalar_guardas, mostrar, numero, pesos, vacio
 from modulos.acceso import bp as bp_acceso, registrar_guardia, usuario_actual
 from modulos.catalogos import bp as bp_catalogos
 from modulos.check_list import bp as bp_check_list
@@ -46,6 +46,12 @@ def crear_app():
     # cambia la clave y obliga a que todos vuelvan a entrar -- molesto, no
     # inseguro. Setear SECRET_KEY lo evita y es lo recomendado.
     app.secret_key = clave_de_sesion()
+
+    # Las guardas de `unidad_id`, TODAS y al arrancar. Antes se instalaban
+    # perezosamente desde cada modulo de pantalla y en Railway habia 6 de 12.
+    # Acá quedan puestas antes del primer request, y como son esquema protegen
+    # tambien al hilo del sync, al del push y a los comandos de consola.
+    instalar_guardas()
 
     app.config["MAX_CONTENT_LENGTH"] = 64 * 1024 * 1024
 
