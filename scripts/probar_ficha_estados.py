@@ -131,6 +131,22 @@ def base_con(ruta, despachado, movimientos):
     db.close()
 
 
+def otra_pasada(ruta, id_nuevo, despachado):
+    """Otra fila de newstocks_cidef con el MISMO VIN.
+
+    Es lo normal en este dato -- 71.546 filas para 61.447 VIN --, y es lo que
+    destapo que atribuir movimientos por VIN estaba mal."""
+    db = sqlite3.connect(ruta)
+    cols = [r[1] for r in db.execute("PRAGMA table_info(newstocks_cidef)")]
+    fila = list(db.execute("SELECT * FROM newstocks_cidef WHERE id = 90001").fetchone())
+    fila[cols.index("id")] = id_nuevo
+    fila[cols.index("despachado")] = despachado
+    db.execute("INSERT INTO newstocks_cidef ({}) VALUES ({})".format(
+        ", ".join('"{}"'.format(c) for c in cols), ", ".join("?" * len(cols))), fila)
+    db.commit()
+    db.close()
+
+
 def pedir(ruta, camino):
     """Renderiza una pagina con la base `ruta`. DB_PATH se lee al importar
     core, asi que se recarga el modulo para que tome la base de la prueba."""
@@ -247,6 +263,30 @@ def main():
     afirmar("estado-crudo" not in html,
             "sin movimientos en REGLA muestra el crudo a secas")
 
+    # ------------------------------------------------------------------ 6
+    paso("6. otra pasada del mismo VIN no hereda los movimientos")
+    # El caso real: 80022, 87179 y 90389 quedaron marcadas como divergentes
+    # porque su VIN habia vuelto a entrar despues bajo otro id. Tres de cuatro
+    # marcas eran falsas, y decian que REGLA tenia en STOCK una pasada que
+    # habia terminado hace meses.
+    base_con(ruta, "Navegando", [("pdi", "EN ESPERA DYP CONSOLIDADO")])
+    otra_pasada(ruta, 90002, "DESPACHADO")     # pasada vieja, mismo VIN
+    codigo, html = pedir(ruta, "/unidades/?q=VINDEPRUEBA123456&fragmento=1")
+    afirmar(codigo == 200, "el listado responde 200", codigo)
+    afirmar(html.count("marca-regla") == 1,
+            "marca UNA sola fila, no las dos", html.count("marca-regla"))
+    fila_vieja = re.search(r"<td><a[^>]*>90002</a></td>(.*?)</tr>", html, re.S)
+    afirmar(fila_vieja and "marca-regla" not in fila_vieja.group(1),
+            "y la marcada NO es la pasada vieja")
+
+    # La ficha de la pasada vieja tampoco tiene que inventarle un estado.
+    codigo, html = pedir(ruta, "/unidades/90002")
+    estados, aviso = bloque_estados(html)
+    afirmar("sin movimientos registrados" in estados,
+            "la ficha de la pasada vieja dice que REGLA no tiene nada",
+            estados.strip()[:140])
+    afirmar(not aviso.strip(), "y no avisa de un desfase que no existe")
+
     shutil.rmtree(tmp, ignore_errors=True)
 
     print("\n" + "=" * 62)
@@ -255,7 +295,7 @@ def main():
         for f in fallos:
             print("  - {}".format(f))
         return 1
-    print("los 5 casos de los dos estados pasaron")
+    print("los 6 casos de los dos estados pasaron")
     return 0
 
 

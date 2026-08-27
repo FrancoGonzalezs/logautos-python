@@ -720,9 +720,9 @@ def listado():
     # Import diferido por el mismo motivo que en la ficha: `movimientos`
     # importa TABLA de este modulo.
     from modulos.movimientos import difieren_estados, estados_regla_de
-    de_regla = estados_regla_de([f["vin"] for f in filas])
+    de_regla = estados_regla_de([f["id"] for f in filas])
     difieren = {f["id"] for f in filas
-                if difieren_estados(f["despachado"], de_regla.get(f["vin"]))}
+                if difieren_estados(f["despachado"], de_regla.get(f["id"]))}
 
     contexto = dict(
         filas=filas, columnas=columnas, total=total,

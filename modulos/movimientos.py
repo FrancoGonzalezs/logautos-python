@@ -758,27 +758,42 @@ def estado_de_movimiento(paso, estado_hacia):
     return None
 
 
-def estados_regla_de(vins):
-    """{vin: estado} con el ULTIMO movimiento de cada VIN, en UNA consulta.
+def estados_regla_de(ids):
+    """{unidad_id: estado} con el ULTIMO movimiento de cada unidad, en UNA
+    consulta.
 
-    Es para el listado, que pinta 50 filas por pagina: preguntando de a una
-    serian 50 consultas por pantalla. Los VIN vacios se descartan antes -- en
-    `newstocks_cidef` hay 3 filas con el VIN en blanco y agruparlas seria
-    mezclar unidades distintas."""
-    vins = [v for v in set(vins or ()) if v]
-    if not vins:
+    POR unidad_id Y NO POR VIN, y no es un detalle. `newstocks_cidef` tiene
+    71.546 filas para 61.447 VIN: cada fila es UNA PASADA del vehiculo por el
+    flujo, no el vehiculo. Un VIN puede tener tres pasadas -- dos despachadas
+    hace meses y una viva --, y los movimientos de la viva no dicen nada de las
+    otras dos.
+
+    Agrupar por VIN parecia funcionar y estaba mal. La primera version de este
+    helper lo hacia asi y marcaba como divergentes tres unidades DESPACHADAS
+    (80022, 87179, 90389) porque su VIN habia vuelto a entrar despues bajo otro
+    id. Tres de cuatro marcas eran falsas, y de las falsas la mas peligrosa:
+    decian que REGLA tenia una unidad en STOCK cuando esa pasada habia
+    terminado hace meses.
+
+    Es la misma regla que el pull ya habia fijado -- "el match es por `id`,
+    jamas por VIN" (nota 2 de sync_legado.py) -- aplicada donde faltaba.
+
+    En UNA consulta porque el listado pinta 50 filas por pagina: preguntando de
+    a una serian 50 consultas por pantalla."""
+    ids = [i for i in set(ids or ()) if i is not None]
+    if not ids:
         return {}
-    marcas = ", ".join("?" * len(vins))
+    marcas = ", ".join("?" * len(ids))
     filas = consultar(
-        "SELECT m.vin, m.paso, m.estado_hacia FROM movimientos_regla m "
-        "JOIN (SELECT vin, MAX(id) AS id FROM movimientos_regla "
-        "       WHERE vin IN ({0}) GROUP BY vin) u ON u.id = m.id"
-        .format(marcas), vins)
+        "SELECT m.unidad_id, m.paso, m.estado_hacia FROM movimientos_regla m "
+        "JOIN (SELECT unidad_id, MAX(id) AS id FROM movimientos_regla "
+        "       WHERE unidad_id IN ({0}) GROUP BY unidad_id) u ON u.id = m.id"
+        .format(marcas), ids)
     resuelto = {}
     for f in filas:
         estado = estado_de_movimiento(f["paso"], f["estado_hacia"])
         if estado:
-            resuelto[f["vin"]] = estado
+            resuelto[f["unidad_id"]] = estado
     return resuelto
 
 
@@ -796,10 +811,12 @@ def difieren_estados(crudo, de_regla):
 def estado_efectivo(unidad):
     """El estado que corresponde mostrar: el ultimo registrado desde REGLA si
     lo hay, y si no el de la replica."""
-    if unidad["vin"]:
+    # Por `unidad_id` y no por VIN: los movimientos de OTRA pasada del mismo
+    # vehiculo no son de esta. Ver la nota larga en estados_regla_de.
+    if unidad["id"]:
         ultimo = consultar(
-            "SELECT paso, estado_hacia FROM movimientos_regla WHERE vin = ? "
-            "ORDER BY id DESC LIMIT 1", (unidad["vin"],), una=True)
+            "SELECT paso, estado_hacia FROM movimientos_regla WHERE unidad_id = ? "
+            "ORDER BY id DESC LIMIT 1", (unidad["id"],), una=True)
         if ultimo:
             # `estado_hacia` es donde la unidad quedo DE VERDAD, y manda sobre
             # el `estado_destino` del paso. Dos razones:

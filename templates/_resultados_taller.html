@@ -33,7 +33,7 @@
                   llegue. -#}
               <td>
                 {% if r['id'] in filas_que_difieren %}
-                  {{ estado_regla[r['vin']] }}
+                  {{ estado_regla[r['id']] }}
                   <span class="estado-crudo" title="Todavía no confirmado en el sistema anterior">
                     sist. anterior: {{ r['despachado'] | mostrar }}</span>
                 {% else %}

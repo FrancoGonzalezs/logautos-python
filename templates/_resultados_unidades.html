@@ -77,8 +77,8 @@
                   <td class="celda-desfase">
                     {{ f[campo] | mostrar }}
                     <span class="marca-regla"
-                          title="REGLA la tiene en {{ estado_regla[f['vin']] }}; el sistema anterior todavía no lo confirmó">
-                      REGLA: {{ estado_regla[f['vin']] }}</span>
+                          title="REGLA la tiene en {{ estado_regla[f['id']] }}; el sistema anterior todavía no lo confirmó">
+                      REGLA: {{ estado_regla[f['id']] }}</span>
                   </td>
                 {%- else %}
                   <td {% if f[campo] is vacio %}class="vacio"{% endif %}>{{ f[campo] | mostrar }}</td>

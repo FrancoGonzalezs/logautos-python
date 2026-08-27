@@ -546,9 +546,9 @@ def _lista(titulo, bajada, endpoint_lista, destino_form):
     # unidad sigue diciendo lo de antes -- su propio trabajo desactualizando la
     # pantalla desde la que trabaja.
     from modulos.movimientos import difieren_estados, estados_regla_de
-    de_regla = estados_regla_de([r["vin"] for r in resultados])
+    de_regla = estados_regla_de([r["id"] for r in resultados])
     difieren = {r["id"] for r in resultados
-                if difieren_estados(r["despachado"], de_regla.get(r["vin"]))}
+                if difieren_estados(r["despachado"], de_regla.get(r["id"]))}
 
     # `fragmento=1` lo manda la busqueda en vivo: solo el bloque de
     # resultados, sin recargar. Y nunca redirige, por lo mismo que en
