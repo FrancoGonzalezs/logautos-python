@@ -141,12 +141,27 @@ def encolar_un_it(ruta):
         db.close()
 
 
-def leer(ruta, sql, params=()):
+def leer(ruta, sql, params=(), id_esperado=None):
+    """Una fila. Si se pidio por id, AFIRMA que la que vuelve es esa.
+
+    La afirmacion no es paranoia: un script de verificacion leia la primera
+    fila devuelta en vez de la que habia pedido, y con eso dio por buenas dos
+    pantallas que en realidad discrepaban. El VIN tenia varias pasadas y la
+    consulta devolvia varias filas. Costo un commit con un bug adentro.
+
+    Regla del proyecto desde entonces: un script de verificacion afirma que lo
+    que leyo es lo que pidio ANTES de comparar nada."""
     db = sqlite3.connect(ruta)
     db.row_factory = sqlite3.Row
     try:
         fila = db.execute(sql, params).fetchone()
-        return dict(fila) if fila else None
+        d = dict(fila) if fila else None
+        if id_esperado is not None:
+            assert d is not None, "no vino fila para id={}".format(id_esperado)
+            assert d.get("id") == id_esperado, (
+                "la fila leida es id={} y se pidio id={}"
+                .format(d.get("id"), id_esperado))
+        return d
     finally:
         db.close()
 
@@ -170,7 +185,8 @@ def main():
     base_nueva(ruta)
     id_cola = encolar_un_it(ruta)
 
-    antes = leer(ruta, "SELECT * FROM newstocks_cidef WHERE id = ?", (UNIDAD_ID,))
+    antes = leer(ruta, "SELECT * FROM newstocks_cidef WHERE id = ?", (UNIDAD_ID,),
+                 id_esperado=UNIDAD_ID)
     afirmar(antes["push_pendiente"] == 1,
             "encolar deja push_pendiente = 1", antes["push_pendiente"])
     cola = leer(ruta, "SELECT * FROM sync_push_pendientes WHERE id = ?", (id_cola,))
@@ -186,7 +202,8 @@ def main():
     try:
         resultado = ejecutar_entrada(id_cola, cliente(puerto), db_path=ruta)
         afirmar(resultado == "ok", "ejecutar_entrada devuelve 'ok'", resultado)
-        fila = leer(ruta, "SELECT * FROM newstocks_cidef WHERE id = ?", (UNIDAD_ID,))
+        fila = leer(ruta, "SELECT * FROM newstocks_cidef WHERE id = ?", (UNIDAD_ID,),
+                 id_esperado=UNIDAD_ID)
         afirmar(fila["push_pendiente"] == 0, "push_pendiente vuelve a 0")
         afirmar(fila["updated_at"].startswith("2026-08-26 12:00:"),
                 "la replica guarda el updated_at del legado", fila["updated_at"])
@@ -219,7 +236,8 @@ def main():
                     "guarda NUESTRA version (si no, se pierde en el proximo pull)")
             afirmar(conf["version_legado_json"] != "{}",
                     "guarda tambien la version del legado")
-        fila = leer(ruta, "SELECT * FROM newstocks_cidef WHERE id = ?", (UNIDAD_ID,))
+        fila = leer(ruta, "SELECT * FROM newstocks_cidef WHERE id = ?", (UNIDAD_ID,),
+                 id_esperado=UNIDAD_ID)
         afirmar(fila["push_pendiente"] == 0,
                 "baja el flag: no hay nada que reintentar")
         afirmar(fila["estado_it"] is None,
@@ -244,7 +262,8 @@ def main():
         afirmar(cola["proximo_intento"] != "", "quedo agendada", cola["proximo_intento"])
         afirmar("500" in cola["ultimo_error"], "guardo el error",
                 cola["ultimo_error"][:80])
-        fila = leer(ruta, "SELECT * FROM newstocks_cidef WHERE id = ?", (UNIDAD_ID,))
+        fila = leer(ruta, "SELECT * FROM newstocks_cidef WHERE id = ?", (UNIDAD_ID,),
+                 id_esperado=UNIDAD_ID)
         afirmar(fila["push_pendiente"] == 1,
                 "push_pendiente SIGUE en 1: el pull no debe pisarla")
 
@@ -289,7 +308,8 @@ def main():
                 "NO hubo ningun 409 contra nosotros mismos", contadores)
         conf = leer(ruta, "SELECT COUNT(*) n FROM sync_conflictos")
         afirmar(conf["n"] == 0, "no se registro ningun conflicto falso", conf)
-        fila = leer(ruta, "SELECT * FROM newstocks_cidef WHERE id = ?", (UNIDAD_ID,))
+        fila = leer(ruta, "SELECT * FROM newstocks_cidef WHERE id = ?", (UNIDAD_ID,),
+                 id_esperado=UNIDAD_ID)
         afirmar(fila["push_pendiente"] == 0, "y el flag quedo limpio")
     finally:
         srv.kill()

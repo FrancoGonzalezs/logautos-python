@@ -85,6 +85,27 @@ def _unidad_de_prueba(id_pedido):
     return fila[0]
 
 
+def _confirmar_unidad(unidad_id):
+    """AFIRMA que la fila local de ese id existe y es la de ese id.
+
+    Un VIN puede tener varias pasadas en `newstocks_cidef` -- 71.546 filas para
+    61.447 VIN --, asi que una consulta por VIN devuelve varias. Leer la
+    primera y darla por la pedida ya produjo un commit con un bug adentro. Un
+    script de verificacion afirma que lo que leyo es lo que pidio ANTES de
+    comparar nada."""
+    db = sqlite3.connect(DB_PATH)
+    db.row_factory = sqlite3.Row
+    try:
+        f = db.execute("SELECT id, vin, updated_at FROM newstocks_cidef "
+                       "WHERE id = ?", (unidad_id,)).fetchone()
+    finally:
+        db.close()
+    assert f is not None, "la unidad {} no esta en la replica".format(unidad_id)
+    assert f["id"] == unidad_id, (
+        "se leyo id={} y se pidio id={}".format(f["id"], unidad_id))
+    return dict(f)
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(description="Humo del PUT contra produccion")
     ap.add_argument("--base", default=BASE_URL_DEFECTO)
@@ -100,11 +121,13 @@ def main(argv=None):
 
     base = args.base.rstrip("/")
     unidad_id = _unidad_de_prueba(args.id)
+    local = _confirmar_unidad(unidad_id)   # afirma antes de comparar nada
     ua = {"User-Agent": USER_AGENT}               # nunca python-requests
     con_clave = dict(ua, **{"X-API-Key": clave})
 
     print("base   : {}".format(base))
-    print("unidad : {} (solo para la sonda 4; no se escribe)".format(unidad_id))
+    print("unidad : {} vin={} (solo para la sonda 4; no se escribe)"
+          .format(unidad_id, local["vin"]))
     print("NINGUNA de estas sondas escribe en la base.\n")
 
     # -- 0 -----------------------------------------------------------------
