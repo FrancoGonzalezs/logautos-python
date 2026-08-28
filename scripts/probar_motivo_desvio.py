@@ -54,9 +54,32 @@ def afirmar(condicion, descripcion, detalle=""):
         fallos.append(descripcion)
 
 
+def sembrar_stock(ruta):
+    """Las dos filas de `stock_consumibles`, como las trae el pull.
+
+    Hace falta desde que la PDI tiene compuerta de combustible: sin stock la
+    pantalla frena y no guarda, que es lo correcto en produccion y lo que esta
+    prueba no quiere medir. Son los valores REALES de la tabla del legado --
+    diesel en 5, por debajo del umbral de 20 -- asi que esta prueba usa
+    BENCINA, que es la que pasa.
+    """
+    import sqlite3
+    db = sqlite3.connect(ruta)
+    db.execute("""CREATE TABLE IF NOT EXISTS stock_consumibles (
+        id INTEGER PRIMARY KEY, nombre TEXT, stock INTEGER,
+        precio INTEGER, promedio INTEGER)""")
+    db.execute("DELETE FROM stock_consumibles")
+    db.executemany("INSERT INTO stock_consumibles VALUES (?,?,?,?,?)",
+                   [(2, "DIESEL", 5, 1500, 1091),
+                    (3, "BENCINA", 563, 1500, 1188)])
+    db.commit()
+    db.close()
+
+
 def cliente(ruta):
     """Una app apuntando a `ruta`, con sesion abierta."""
     import importlib
+    sembrar_stock(ruta)
     os.environ["DB_PATH"] = ruta
     import core
     importlib.reload(core)

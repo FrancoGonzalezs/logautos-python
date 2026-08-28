@@ -15,10 +15,18 @@ Levanta `legado_simulado.py` en un puerto libre, arma una base con lo minimo
     6. aviso de conflicto   el 409 dispara el correo, con la unidad, el VIN,
                             los campos que difieren y desde que replica salio
     7. correo caido         si el aviso revienta, el conflicto se guarda igual
+    8. tablas de traduccion  calle y patio cubren los mismos estados
 
 El caso 4 es el que justifica la Idempotency-Key en un PUT y es el unico que
 no se puede probar contra el PHP real: hace falta un servidor que aplique el
 cambio y despues corte sin responder.
+
+El caso 8 no toca la red ni la base: compara CALLE_POR_ESTADO con
+PATIO_POR_ESTADO. Existe porque el modo de falla de esta pareja de tablas es
+silencioso -- agregar un estado a una y olvidarlo en la otra da 200 y una fila
+con el patio vacio, que es la forma que el sistema viejo casi nunca produce y
+el motivo por el que PATIO_POR_ESTADO se escribio. Nadie lo ve hasta que
+alguien audita el historial meses despues.
 
     python scripts/probar_push.py
 """
@@ -432,13 +440,61 @@ def main():
         correo.destinatarios = push_legado.correo.destinatarios
 
     # ------------------------------------------------------------------
+    paso("8. las dos tablas de traduccion cubren los mismos estados")
+
+    # Los estados que el legado deja SIN patio, con la cuenta que lo respalda.
+    # Estar aca es una decision anotada, no un olvido: es la unica diferencia
+    # legitima entre las dos tablas.
+    SIN_PATIO_A_PROPOSITO = {
+        "EN ESPERA DYP CONSOLIDADO": "la PDI: 3.241 de 3.241 filas sin patio",
+    }
+
+    con_calle = set(push_legado.CALLE_POR_ESTADO)
+    con_patio = set(push_legado.PATIO_POR_ESTADO)
+
+    faltan = con_calle - con_patio - set(SIN_PATIO_A_PROPOSITO)
+    afirmar(not faltan,
+            "todo estado con calle tiene patio (o esta anotado sin el)",
+            "sin patio y sin anotar: " + ", ".join(sorted(faltan)))
+
+    sobran = con_patio - con_calle
+    afirmar(not sobran,
+            "no hay patios para estados que no se empujan",
+            "sobran: " + ", ".join(sorted(sobran)))
+
+    solapan = con_patio & set(SIN_PATIO_A_PROPOSITO)
+    afirmar(not solapan,
+            "los estados anotados sin patio no estan ademas en la tabla",
+            "contradictorios: " + ", ".join(sorted(solapan)))
+
+    for estado in SIN_PATIO_A_PROPOSITO:
+        afirmar(push_legado.patio_para(estado) is None,
+                "patio_para({!r}) devuelve None".format(estado))
+
+    # Ningun estado excluido puede tener traduccion: si la tuviera, el push lo
+    # dejaria pasar por el camino equivocado.
+    cruce = set(push_legado.SIN_CALLE) & (con_calle | con_patio)
+    afirmar(not cruce,
+            "ningun estado de SIN_CALLE tiene traduccion cargada",
+            "cruce: " + ", ".join(sorted(cruce)))
+
+    # Y el payload real lleva el campo. Se arma con la funcion de verdad sobre
+    # una unidad de mentira, sin base y sin red.
+    for estado, esperado in (("CONTROL DE CALIDAD DESPACHO", "PATIO 1"),
+                             ("ZONA DE LAVADO", "PATIO 2"),
+                             ("EN ESPERA DYP CONSOLIDADO", "")):
+        afirmar((push_legado.patio_para(estado) or "") == esperado,
+                "{} -> patio {!r}".format(estado, esperado),
+                push_legado.patio_para(estado))
+
+    # ------------------------------------------------------------------
     print("\n" + "=" * 60)
     if fallos:
         print("FALLARON {} comprobaciones:".format(len(fallos)))
         for f in fallos:
             print("  - {}".format(f))
         return 1
-    print("las 7 pruebas pasaron")
+    print("las 8 pruebas pasaron")
     return 0
 
 
