@@ -13,6 +13,7 @@ capa aparte termino en un loop de imports.
 import decimal
 import os
 import sqlite3
+import sys
 
 from flask import g
 
@@ -329,3 +330,174 @@ def numero(valor):
 def pesos(valor):
     entero = numero(valor)
     return entero if entero == "—" else "$" + entero
+
+
+# ---------------------------------------------------------------------------
+# La guarda de destino: una prueba no le habla a produccion
+# ---------------------------------------------------------------------------
+#
+# NACIO DE UN ERROR REAL (2026-08-27). Escribiendo `probar_circulo.py` se seteo
+# `LEGADO_BASE_URL` por entorno DESPUES de importar el modulo, y las dos
+# constantes de base se leen AL IMPORTAR. El pull se fue a
+# claude.logautos.cl. Fue un GET, volvio 401 y no escribio nada -- pero el
+# mismo descuido en el push habria sido una escritura contra produccion desde
+# una prueba.
+#
+# EL ARREGLO OBVIO ERA DISCIPLINA -- "pasa siempre base_url explicito" -- y la
+# disciplina de este proyecto ya fallo seis veces con el match por VIN. Asi que
+# la guarda no la aplica quien escribe la prueba: la aplican los CLIENTES, y se
+# enciende sola.
+#
+# COMO SABE QUE ESTA EN UNA PRUEBA: por el nombre del script. La convencion ya
+# existe y se respeta hace meses -- `scripts/probar_*.py` no toca produccion,
+# `scripts/verificar_push_produccion.py` si y lo dice en el nombre. Atarse a
+# esa convencion es lo que hace que una prueba NUEVA quede protegida sin que
+# nadie se acuerde de nada, que es justo lo que fallaba.
+#
+# Se puede forzar en los dos sentidos:
+#   REGLA_SOLO_LOCAL=1   exige local aunque el script no se llame probar_*
+#   REGLA_SOLO_LOCAL=0   lo apaga, para el caso raro de una prueba que de
+#                        verdad quiera salir (hoy no hay ninguna)
+
+DESTINOS_LOCALES = ("127.0.0.1", "localhost", "::1", "0.0.0.0")
+
+
+def _es_prueba():
+    forzado = os.environ.get("REGLA_SOLO_LOCAL", "").strip()
+    if forzado:
+        return forzado not in ("0", "no", "false")
+    guion = os.path.basename(sys.argv[0] or "")
+    return guion.startswith("probar_")
+
+
+def exigir_destino_local(url, quien=""):
+    """Revienta si `url` no apunta a localhost y estamos en una prueba.
+
+    La llaman los dos clientes HTTP en su __init__, asi que cubre tanto al que
+    pasa mal el base_url como al que se olvida de pasarlo y cae al de
+    produccion por defecto.
+
+    Falla al CONSTRUIR el cliente y no al pedir: asi el error sale antes de que
+    la prueba escriba nada local, y el traceback apunta a quien lo construyo."""
+    if not _es_prueba():
+        return url
+    host = ""
+    try:
+        from urllib.parse import urlparse
+        host = (urlparse(url or "").hostname or "").lower()
+    except Exception:                            # noqa: BLE001
+        host = ""
+    if host in DESTINOS_LOCALES:
+        return url
+    raise RuntimeError(
+        "GUARDA DE DESTINO: {} intento apuntar a {!r} desde {!r}.\n"
+        "  Las pruebas (scripts/probar_*.py) solo pueden hablarle al legado "
+        "simulado en localhost.\n"
+        "  Pasale `base_url` EXPLICITO al cliente -- setear LEGADO_BASE_URL por "
+        "entorno NO alcanza:\n"
+        "  las constantes de base se leen al importar el modulo, asi que "
+        "cambiarla despues no tiene efecto\n"
+        "  y la peticion se va a produccion. Eso mismo paso el 2026-08-27."
+        .format(quien or "un cliente", url,
+                os.path.basename(sys.argv[0] or "?")))
+
+
+# ---------------------------------------------------------------------------
+# Que version se esta sirviendo
+# ---------------------------------------------------------------------------
+#
+# NACIO DE PERDER UNA SEMANA. El 2026-08-27 se probo la pantalla de Movimientos
+# en Railway buscando el campo de patio y calle, y no estaba: el commit
+# desplegado era anterior a todo el trabajo de la semana. No habia forma de
+# saberlo mirando la pantalla, y ya habia pasado antes con el deploy de b1f81dd.
+#
+# El problema no es el despliegue: es que "lo que estoy probando" y "lo que creo
+# que estoy probando" son dos cosas y nada las compara. Esto las compara.
+#
+# De donde sale el commit, en orden:
+#
+#   1. REGLA_COMMIT           si alguien la define a mano
+#   2. RAILWAY_GIT_COMMIT_SHA la pone Railway sola en cada despliegue
+#   3. `git rev-parse`        en la maquina de desarrollo, donde si hay repo
+#   4. 'desconocido'          antes que mentir
+#
+# El paso 3 NO cachea el resultado a proposito: en desarrollo el commit cambia
+# mientras el proceso vive, y un valor congelado seria justo el tipo de mentira
+# que esto viene a evitar. Cuesta un fork por request de una pagina que nadie
+# recarga en bucle.
+
+def commit_desplegado():
+    """El commit que este proceso esta sirviendo. Siempre devuelve algo."""
+    for variable in ("REGLA_COMMIT", "RAILWAY_GIT_COMMIT_SHA"):
+        valor = (os.environ.get(variable) or "").strip()
+        if valor:
+            return valor[:7]
+    try:
+        import subprocess
+        salida = subprocess.run(
+            ["git", "rev-parse", "--short=7", "HEAD"],
+            cwd=BASE_DIR, capture_output=True, text=True, timeout=2)
+        if salida.returncode == 0 and salida.stdout.strip():
+            sucio = subprocess.run(
+                ["git", "status", "--porcelain"],
+                cwd=BASE_DIR, capture_output=True, text=True, timeout=2)
+            # EL SUFIJO `+` ES LA MITAD DEL VALOR. Un commit limpio dice que lo
+            # que corre es exactamente lo que esta en git; con cambios sin
+            # commitear, el commit NO describe lo que se esta sirviendo, y eso
+            # es precisamente el caso que hay que poder ver.
+            marca = "+" if (sucio.returncode == 0 and sucio.stdout.strip()) else ""
+            return salida.stdout.strip() + marca
+    except Exception:                            # noqa: BLE001
+        pass
+    return "desconocido"
+
+
+# ---------------------------------------------------------------------------
+# Los indices que la app necesita y el dump no trae
+# ---------------------------------------------------------------------------
+#
+# El importador crea la tabla desde el dump del legado, asi que los indices que
+# REGLA necesita para SUS consultas no vienen. Se crean al arrancar, junto a las
+# guardas y por el mismo motivo: perezoso significa que el primero que entra
+# paga, y en Railway ese primero es un movilizador parado en el patio.
+
+INDICES = {
+    # La busqueda de Movimientos, que corre en CADA TECLA.
+    #
+    # CUBRIDOR: lleva las tres columnas del WHERE y las ocho del SELECT, para
+    # que SQLite pueda recorrer el indice y no tocar la tabla. Un LIKE con `%`
+    # adelante no puede saltar a una posicion, pero recorrer 6 MB de indice y
+    # recorrer 382 MB de tabla no cuestan lo mismo.
+    #
+    # Medido: 66 ms -> 18 ms con la base caliente, y en frio la diferencia es
+    # el tamaño del archivo que hay que leer del volumen.
+    "ix_newstocks_busqueda": (
+        'CREATE INDEX IF NOT EXISTS ix_newstocks_busqueda ON newstocks_cidef '
+        "(vin, patente, n_motor, id, marca, modelo, color, clientecompleto, "
+        " despachado)"),
+}
+
+
+def instalar_indices(db_path=None):
+    """Crea los indices de INDICES. Idempotente, se llama desde `crear_app()`.
+
+    No revienta si falla: un indice que no se pudo crear hace la app LENTA, no
+    incorrecta, y tirar el arranque por eso seria peor. Pero lo dice en el log,
+    porque una consulta con `INDEXED BY` sobre un indice que no existe si
+    revienta -- y el mensaje de ahi no explicaria por que."""
+    db = None
+    try:
+        db = conectar_db(db_path)
+        creados = []
+        for nombre, sql in INDICES.items():
+            db.execute(sql)
+            creados.append(nombre)
+        db.commit()
+        print("[indices] {} de {}: {}".format(
+            len(creados), len(INDICES), ", ".join(creados)), flush=True)
+    except Exception as e:                       # noqa: BLE001
+        print("[indices] NO se pudieron crear: {}: {}".format(
+            type(e).__name__, e), flush=True)
+    finally:
+        if db is not None:
+            db.close()

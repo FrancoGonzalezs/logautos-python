@@ -101,6 +101,18 @@
   <main class="contenido">
     {% block contenido %}{% endblock %}
   </main>
+  {#
+    El commit que se esta sirviendo, a la vista y en todas las pantallas.
+    Chico y en gris: no es informacion de todos los dias, es la que hace falta
+    cuando algo "no esta" y hay que saber si lo que se esta mirando incluye el
+    cambio. Se perdio una semana por no tenerlo.
+
+    El sufijo `+` significa que hay cambios sin commitear, o sea que el commit
+    NO describe lo que corre.
+  #}
+  <footer class="pie-version">
+    <a href="{{ url_for('version') }}" title="qué está sirviendo este proceso">{{ commit }}</a>
+  </footer>
 
 </div>
 

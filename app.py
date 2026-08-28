@@ -11,7 +11,8 @@ import os
 
 from flask import Flask, redirect, url_for
 
-from core import DB_PATH, cerrar_db, clave_de_sesion, instalar_guardas, mostrar, numero, pesos, vacio
+from core import (DB_PATH, cerrar_db, clave_de_sesion, instalar_guardas,
+                  instalar_indices, mostrar, numero, pesos, vacio)
 from modulos.acceso import bp as bp_acceso, registrar_guardia, usuario_actual
 from modulos.catalogos import bp as bp_catalogos
 from modulos.check_list import bp as bp_check_list
@@ -75,17 +76,36 @@ def crear_app():
     app.register_blueprint(bp_reconciliacion)
 
     registrar_guardia(app)
+    instalar_indices()
 
     @app.route("/")
     def inicio():
         return redirect(url_for("unidades.listado"))
+
+    @app.route("/version")
+    def version():
+        """Que esta sirviendo este proceso. Sin login: es la ruta que se mira
+        JUSTO CUANDO algo no anda, y pedir sesion para eso es pedirla en el peor
+        momento. No expone nada -- el commit ya es publico en GitHub."""
+        from core import commit_desplegado
+        return {
+            "commit": commit_desplegado(),
+            "sync_intervalo_segundos": os.environ.get(
+                "SYNC_INTERVALO_SEGUNDOS") or "0 (apagado)",
+            "push_legado_activo": os.environ.get(
+                "PUSH_LEGADO_ACTIVO") or "0 (apagado)",
+            "legado": os.environ.get("LEGADO_BASE_URL")
+                      or "https://claude.logautos.cl",
+        }
 
     @app.context_processor
     def contexto():
         # `usuario` es el dict del logueado (o None), no un string suelto: las
         # pantallas necesitan el nombre para mostrarlo y el rol para decidir
         # que ofrecer, y pasarlos por separado los deja desincronizarse.
-        return {"db_path": DB_PATH, "usuario": usuario_actual()}
+        from core import commit_desplegado
+        return {"db_path": DB_PATH, "usuario": usuario_actual(),
+                "commit": commit_desplegado()}
 
     return app
 
