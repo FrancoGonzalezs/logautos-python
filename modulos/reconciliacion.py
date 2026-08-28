@@ -58,6 +58,31 @@ despues.
 Por eso la medicion BASE se saca antes de empezar el paralelo: sin punto de
 partida no hay forma de distinguir un numero malo de uno esperable.
 
+CORRIDA POR PRIMERA VEZ EL 2026-08-27, con el enlace de STOCK
+-------------------------------------------------------------
+`scripts/probar_circulo.py`. El mismo movimiento a STOCK por los dos caminos,
+sobre dos copias de la replica y contra el legado simulado:
+
+                          SIN enlace   CON enlace
+    de acuerdo                     0            1
+    REGLA adelante                 2            1
+    contradicciones                0            0
+
+La categoria 1 baja y la unidad cambia de cajon -- no aparece una unidad nueva,
+que seria otra cosa. Es la primera vez que el circuito se cierra entero en una
+prueba: hasta ese dia el simulado sabia recibir el push pero no servir el pull,
+asi que el paso que la reconciliacion mide -- que el cambio VUELVA -- no se
+probaba en ningun lado.
+
+Es un A/B y no un antes/despues a proposito. Un movimiento nuevo SUMA a un
+cajon, no mueve los que ya estaban, asi que de una sola corrida no se puede leer
+si la categoria bajo. La rama de control no simula nada: restaura STOCK en
+SIN_CALLE y llama a `encolar_movimiento` sin ubicacion, que es literalmente como
+lo llamaba `registrar()` hasta ese dia.
+
+OJO: el simulado no es el PHP. Esto dice que el circuito CIERRA. El numero que
+decide en serio es el de Railway despues de unos dias de uso real.
+
 
 EL SENSOR DE PLATA
 ==================
@@ -224,10 +249,22 @@ def estados_sin_registro(db):
 # ---------------------------------------------------------------------------
 
 # Lo que vale una PDI hoy, para poder decir el monto y no solo el porcentaje.
-# Es el `$precio_pdi` del PHP, fijo desde el 2026-06-02 (antes variaba con la
-# UF). Si cambia alla, hay que cambiarlo aca -- por eso esta con su fecha.
-PRECIO_PDI = 49000
-PRECIO_PDI_VIGENTE_DESDE = "2026-06-02"
+#
+# LA FECHA DECIA 2026-06-02 Y ERA UN DIA ANTES. Corregido el 2026-08-27
+# midiendo las OT reales: ESE dia conviven los dos precios, 27 OT a 46.878 y 3 a
+# 49.000. El despliegue del legado fue a mitad del 02, y `createdDtm` guarda
+# solo la fecha, asi que no hay forma de clasificar las de ese dia -- ni con
+# esta constante ni con ninguna. El primer dia entero al precio nuevo es el 03.
+#
+# Con el 02 el sensor le atribuia 49.000 a 27 PDI que se cobraron a 46.878:
+# 57.294 pesos de mas en el monto que informa.
+#
+# La fuente de verdad del precio es `ot_pdi.PRECIOS_PDI`, que ademas tiene el
+# precio viejo. Esta constante existe porque el sensor solo necesita el de hoy,
+# y se importa de alla para que no haya dos numeros que puedan separarse.
+from modulos.ot_pdi import PRECIOS_PDI as _PRECIOS_PDI
+
+PRECIO_PDI_VIGENTE_DESDE, PRECIO_PDI = _PRECIOS_PDI[0]
 
 
 def pdi_sin_ot(db, desde=DESDE_OT_AUTOMATICA):

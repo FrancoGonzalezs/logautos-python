@@ -146,7 +146,7 @@ import sqlite3
 import sys
 import time
 
-from core import DB_PATH
+from core import DB_PATH, exigir_destino_local
 
 try:
     import requests
@@ -189,6 +189,25 @@ ENTIDADES = {
         "tabla": "newstocks_cidef",
         "ruta": "/api_regla/cambios/unidades",
         "precondiciones": [],
+    },
+    # El stock de combustible. DOS filas, y por eso NO es incremental: la ruta
+    # devuelve las dos enteras cada vez y no hay marca de agua que llevar.
+    #
+    # No es una simplificacion: `stock_consumibles` no tiene `updated_at` ni
+    # ninguna columna de tiempo -- `Update_time` de la tabla viene NULL --, asi
+    # que un pull incremental habria obligado a agregarle una columna a una
+    # tabla del legado. Es lo unico de todo el despliegue que le cambiaria el
+    # esquema, y se evita.
+    #
+    # `completa` le dice al pull que ignore la marca de agua y pida todo. La
+    # marca se guarda igual, con el `hasta` que manda el legado: no sirve para
+    # filtrar pero si para saber CUANDO se leyo el stock, que es lo que hace
+    # falta para entender una compuerta que decidio con datos viejos.
+    "stock_consumibles": {
+        "tabla": "stock_consumibles",
+        "ruta": "/api_regla/stock_consumibles",
+        "precondiciones": [],
+        "completa": True,
     },
 }
 
@@ -255,7 +274,8 @@ class Legado(object):
     """
 
     def __init__(self, base_url=None, api_key=None, timeout=None):
-        self.base_url = (base_url or BASE_URL_DEFECTO).rstrip("/")
+        self.base_url = exigir_destino_local(
+            (base_url or BASE_URL_DEFECTO).rstrip("/"), "el cliente del PULL")
         self.api_key = api_key if api_key is not None else os.environ.get("LEGADO_API_KEY", "")
         self.timeout = timeout or TIMEOUT_DEFECTO
 
@@ -379,6 +399,13 @@ def sincronizar_entidad(entidad, dry_run=False, desde=None, limite=None,
         # `desde` explicito gana; si no, la marca de agua guardada. Cadena
         # vacia = traer todo (reconciliacion completa).
         marca = est["marca_agua"] if desde is None else desde
+        # Una entidad `completa` no filtra: se pide todo cada vez. Mandar la
+        # marca guardada la haria pedir "lo que cambio despues de X" a un
+        # endpoint que ignora el parametro -- funcionaria igual, pero el dia
+        # que alguien lo implemente dejaria de traer las filas viejas sin que
+        # nadie lo note.
+        if conf.get("completa"):
+            marca = ""
         limite = limite or LIMITE_DEFECTO
         cliente = cliente or Legado()
 
@@ -447,7 +474,13 @@ def sincronizar_entidad(entidad, dry_run=False, desde=None, limite=None,
             # cual: ver la nota 3 del encabezado.
             if datos.get("hasta"):
                 marca_nueva = datos["hasta"]
-            if not datos.get("hay_mas"):
+            # Una entidad `completa` trae todo en una vuelta y su endpoint NO
+            # manda `hay_mas` -- devuelve `filas` y `hasta` y nada mas. Sin
+            # esto igual cortaria, porque `.get()` devuelve None y None es
+            # falso; pero cortaria POR CASUALIDAD. Que sea explicito es lo que
+            # evita que alguien "arregle" el default de `hay_mas` mas adelante
+            # y deje a esta entidad girando hasta el tope de paginas.
+            if conf.get("completa") or not datos.get("hay_mas"):
                 break
             pagina += 1
         else:
