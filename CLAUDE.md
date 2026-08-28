@@ -462,6 +462,26 @@ con buen motivo — la lista blanca ignora en silencio, así que cablear sólo
 Python da 200 y cero efecto. Ese orden es el correcto **sobre la copia**. Sobre
 el sistema vivo se invierte, y hay que acordarse de invertirlo.
 
+### 5b. Que DYP empuje de verdad
+
+Hoy DYP es **el único paso que la pantalla deja elegir y que no viaja**. Se
+guarda en `movimientos_regla`, no se escribe la fila, y la pantalla lo dice:
+*"Este paso todavía no viaja al sistema anterior"*.
+
+El obstáculo escrito en `SIN_CALLE` es que la rama del legado **manda un correo
+al cliente** con la patente de la unidad entregada al proveedor, así que empujar
+sólo la columna deja media entrega hecha.
+
+**Ese obstáculo ya no es lo que era.** Para las OT de la PDI decidimos que los
+efectos que el query builder no dispara **los hace REGLA** — por eso existe
+`ot_pdi.py` y el endpoint estrecho del bloque D. Mismo criterio: REGLA manda el
+correo, o lo manda un endpoint estrecho como el de las OT.
+
+La calle es determinista (`ENTREGADO DYP`, 92,6%) y el patio también (PATIO 2),
+así que la traducción no es el problema. Lo que falta es el correo.
+
+Más adelante, no ahora.
+
 ### 6. Migraciones versionadas — aprobado, sin construir
 
 Variante de fuente única. Migración 1 = esquema completo; migración 2 = arreglo

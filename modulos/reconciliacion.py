@@ -130,92 +130,159 @@ def asegurar_tabla(db):
 # Los estados
 # ---------------------------------------------------------------------------
 
-def _clasificar_una(fila, normalizar_estado):
-    """(categoria, detalle) para una unidad que REGLA toco."""
-    crudo = normalizar_estado(fila["despachado"])
-    hacia = normalizar_estado(fila["estado_hacia"])
-    desde = normalizar_estado(fila["estado_desde"])
+# Las seis categorias. El orden importa: se evalua de arriba hacia abajo y la
+# primera que da, gana. Ver la nota larga de `comparar_estados`.
+CATEGORIAS = ("no_viaja", "conflicto", "trabado", "en_camino",
+              "el_legado_siguio", "entregado")
 
-    if not hacia:
+ROTULOS = {
+    "no_viaja": "no viaja (no hay enlace)",
+    "conflicto": "conflicto: gano el legado",
+    "trabado": "trabado (reintentando)",
+    "en_camino": "en camino",
+    "el_legado_siguio": "el legado siguio despues",
+    "entregado": "entregado",
+    "sin_arco": "sin arco",
+}
+
+
+def _clasificar_una(fila, normalizar_estado):
+    """(categoria, detalle) para una unidad que REGLA toco.
+
+    LA PREGUNTA ES "¿SE ENTERO EL LEGADO?" Y SE LE HACE A LA COLA, no a los
+    estados. Ver el encabezado."""
+    if not normalizar_estado(fila["estado_hacia"]):
         return "sin_arco", None
-    if crudo == hacia:
-        return "de_acuerdo", None
-    # El legado sigue en algun punto del camino que REGLA ya recorrio: en el
-    # `estado_desde` del ultimo movimiento, o en el de cualquiera anterior.
+
+    # 1. NO VIAJA. El movimiento no genera entrada de cola porque el estado
+    #    destino esta en SIN_CALLE. Es el unico cajon que mide "falta el
+    #    enlace", y es el que TIENE QUE CAER cuando entra uno nuevo.
+    if fila["no_encola"]:
+        return "no_viaja", None
+
+    # 2. CONFLICTO. Gano el legado y no se escribio nada. No es un error del
+    #    push: es que administracion habia trabajado la unidad antes.
+    if fila["conflictos"]:
+        return "conflicto", None
+
+    # 3. TRABADO. Hay entradas sin resolver Y con error: el push lo intento y
+    #    fallo, y esta esperando el backoff. Se separa de `en_camino` porque
+    #    son dos cosas distintas -- una se cura sola y la otra puede no
+    #    curarse nunca --, y aplastarlas en un solo numero fue justamente lo
+    #    que escondia el problema antes.
+    if fila["pendientes_con_error"]:
+        return "trabado", {
+            "unidad": fila["id"], "vin": fila["vin"],
+            "regla": fila["estado_hacia"], "paso": fila["paso"],
+            "error": fila["ultimo_error"],
+            "movimiento_en": fila["creado_en"]}
+
+    # 4. EN CAMINO. Encolado y todavia sin resolver, sin error. Es normal: el
+    #    hilo lo toma en la proxima vuelta.
+    if fila["pendientes"]:
+        return "en_camino", None
+
+    # 5. EL LEGADO SIGUIO. Todo entregado, y aun asi la fila ya no coincide con
+    #    nuestro ultimo movimiento: administracion la trabajo DESPUES. No es un
+    #    error, es trabajo que REGLA todavia no vio.
     #
-    # Mirar SOLO el ultimo estaba incompleto y lo destapo la medicion base: la
-    # unidad 91950 tiene `ingreso` (NAVEGANDO -> ZONA DE RECEPCION) y despues
-    # `revision_contenedor` (ZONA DE RECEPCION -> ZONA DE RECEPCION), y el
-    # legado sigue en 'Navegando'. Ninguno de los dos pasos empuja todavia, asi
-    # que es REGLA adelante de manual -- pero comparando solo contra el ultimo
-    # `estado_desde` caia en contradiccion. Una cadena de pasos deja al legado
-    # en el ARRANQUE de la cadena, no en el penultimo escalon.
-    if crudo and crudo in fila["recorrido"]:
-        return "regla_adelante", None
-    # Un estado que REGLA reconoce pero no enruta -- SOLICITUD DESPACHO, CC PDI,
-    # IT FALTA SEGUNDA PDI -- no cae en ninguna de las tres categorias.
-    #
-    # VA ANTES DE `push_confirmado`, Y EL ORDEN ES EL ARREGLO. Estaba despues, y
-    # entonces una unidad con el push confirmado cuyo legado quedaba en
-    # SOLICITUD DESPACHO se contaba como "el legado adelante". Son ~150 por mes:
-    # habrian llenado de ruido justo la categoria que existe para detectar el
-    # trabajo de administracion, y una categoria con ruido deja de mirarse.
-    #
-    # Y es correcto ademas de conveniente: SOLICITUD DESPACHO no mueve la
-    # unidad de lugar, asi que el legado no esta "adelante" en ningun sentido
-    # util -- esta marcando otra cosa.
-    if fila["reconocido_sin_ruta"]:
-        return "fuera_de_alcance", None
-    if fila["push_confirmado"]:
-        # Empujamos, el legado lo tomo, y despues se movio por su cuenta.
-        return "legado_adelante", None
-    return "contradiccion", {
-        "unidad": fila["id"], "vin": fila["vin"],
-        "legado": fila["despachado"], "regla": fila["estado_hacia"],
-        "desde": fila["estado_desde"], "paso": fila["paso"],
-        "movimiento_en": fila["creado_en"],
-    }
+    #    Esta comparacion contra la fila sigue siendo valida justo aca y solo
+    #    aca: con todo entregado, la fila volvio a ser lo que el legado tiene
+    #    -- el push le puso el `updated_at` de ALLA y el pull ya puede pisarla.
+    if (normalizar_estado(fila["despachado"])
+            != normalizar_estado(fila["estado_hacia"])
+            and not fila["reconocido_sin_ruta"]):
+        return "el_legado_siguio", None
+
+    # 6. ENTREGADO. La cola resuelta sin error: el legado lo sabe.
+    return "entregado", None
 
 
 def comparar_estados(db):
-    """Clasifica todas las unidades que REGLA toco."""
-    from modulos.movimientos import (RECONOCIDOS_SIN_RUTA,
-                                     normalizar_estado)
+    """Clasifica todas las unidades que REGLA toco.
+
+    LE PREGUNTA A LA COLA, NO A LOS ESTADOS, y ese cambio es del 2026-08-27.
+
+    Hasta esa fecha comparaba `newstocks_cidef.despachado` contra el
+    `estado_hacia` del ultimo movimiento. Esa comparacion era valida mientras la
+    replica fuera un ESPEJO de lo que el legado tiene. Dejo de serlo: desde que
+    `movimientos.registrar()` escribe tambien la fila, la replica es una mezcla
+    de lo que el legado dijo y de lo que escribimos nosotros, sin marca de cual
+    es cual.
+
+    Medido en el momento del cambio: guardar un movimiento a STOCK SIN pushear
+    subia `de_acuerdo` de 1 a 2 con la cola sin resolver. El sensor que existia
+    para detectar "REGLA hizo algo y el legado no se entero" contaba ese caso
+    como acuerdo.
+
+    La cola responde la misma pregunta de forma directa, y ademas distingue tres
+    cosas que antes se aplastaban en un solo numero: pendiente, error y
+    conflicto.
+
+    LA COMPARACION CONTRA LA FILA SOBREVIVE EN UN SOLO LUGAR -- la categoria
+    `el_legado_siguio` --, y ahi es legitima: con todo entregado, el push le
+    puso a la fila el `updated_at` de ALLA y el pull ya puede pisarla, asi que
+    volvio a ser lo que el legado tiene.
+    """
+    from modulos.movimientos import RECONOCIDOS_SIN_RUTA, normalizar_estado
+    from modulos.push_legado import calle_para
 
     filas = db.execute("""
-        SELECT n.id, n.vin, n.despachado, n.push_pendiente,
-               m.paso, m.estado_desde, m.estado_hacia, m.creado_en,
-               (SELECT COUNT(*) FROM sync_push_pendientes p
-                 WHERE p.legado_id = n.id AND p.resuelto_en <> ''
-                   AND p.ultimo_error = '') AS empujes_ok
+        SELECT n.id, n.vin, n.despachado,
+               m.id AS mov_id, m.paso, m.estado_desde, m.estado_hacia,
+               m.creado_en
           FROM newstocks_cidef n
           JOIN (SELECT unidad_id, MAX(id) AS mid FROM movimientos_regla
                  GROUP BY unidad_id) u ON u.unidad_id = n.id
           JOIN movimientos_regla m ON m.id = u.mid
     """).fetchall()
 
-    conteo = {"de_acuerdo": 0, "regla_adelante": 0, "legado_adelante": 0,
-              "contradiccion": 0, "sin_arco": 0, "fuera_de_alcance": 0}
-    detalles = []
-    # Todos los `estado_desde` de cada unidad: el camino que REGLA ya recorrio.
-    recorridos = {}
-    for r in db.execute(
-            "SELECT unidad_id, estado_desde FROM movimientos_regla "
-            " WHERE estado_desde IS NOT NULL AND estado_desde <> ''"):
-        recorridos.setdefault(r["unidad_id"], set()).add(
-            normalizar_estado(r["estado_desde"]))
+    # La cola, agrupada por movimiento, en UNA consulta. Preguntando de a una
+    # serian tantas consultas como unidades tocadas.
+    cola = {}
+    for r in db.execute("""
+            SELECT python_id, resuelto_en, ultimo_error
+              FROM sync_push_pendientes WHERE entidad = 'movimientos'"""):
+        e = cola.setdefault(r["python_id"], {
+            "pendientes": 0, "pendientes_con_error": 0,
+            "resueltas": 0, "ultimo_error": ""})
+        if r["resuelto_en"]:
+            e["resueltas"] += 1
+        else:
+            e["pendientes"] += 1
+            if r["ultimo_error"]:
+                e["pendientes_con_error"] += 1
+                e["ultimo_error"] = r["ultimo_error"]
 
+    conflictos = {}
+    for r in db.execute("SELECT python_id FROM sync_conflictos "
+                        " WHERE entidad = 'movimientos'"):
+        conflictos[r["python_id"]] = conflictos.get(r["python_id"], 0) + 1
+
+    conteo = dict.fromkeys(CATEGORIAS + ("sin_arco",), 0)
+    detalles = []
     for f in filas:
         d = dict(f)
-        d["push_confirmado"] = bool(f["empujes_ok"]) and not f["push_pendiente"]
-        d["recorrido"] = recorridos.get(f["id"], set())
+        entrada = cola.get(f["mov_id"], {})
+        d["pendientes"] = entrada.get("pendientes", 0)
+        d["pendientes_con_error"] = entrada.get("pendientes_con_error", 0)
+        d["ultimo_error"] = entrada.get("ultimo_error", "")
+        d["conflictos"] = conflictos.get(f["mov_id"], 0)
+        # NO ENCOLA: el estado destino esta en SIN_CALLE, asi que
+        # `encolar_movimiento` devolvio None y no hay entrada que mirar. Se
+        # DEDUCE en vez de guardarse, porque la respuesta la tiene la tabla de
+        # traduccion -- que es justamente la que cambia cuando entra un enlace
+        # nuevo, y asi el numero se mueve solo el dia que eso pasa.
+        d["no_encola"] = (not entrada
+                          and bool(normalizar_estado(f["estado_hacia"]))
+                          and calle_para(f["estado_hacia"]) is None)
         d["reconocido_sin_ruta"] = (
             normalizar_estado(f["despachado"]) in RECONOCIDOS_SIN_RUTA)
         categoria, detalle = _clasificar_una(d, normalizar_estado)
         conteo[categoria] += 1
         if detalle:
             detalles.append(detalle)
-    return {"conteo": conteo, "contradicciones": detalles[:50],
+    return {"conteo": conteo, "trabadas": detalles[:50],
             "unidades_miradas": len(filas)}
 
 
@@ -377,10 +444,15 @@ def avisar(resumen):
     from modulos import correo
 
     sin_ot = resumen["pdi_sin_ot"]["sin_ot"]
-    contra = resumen["estados"]["conteo"]["contradiccion"]
+    # Se avisa por lo TRABADO -- push intentado y fallado, esperando backoff --
+    # y no por `no_viaja`, que es un enlace que todavia no existe y no se
+    # arregla mirandolo. Antes se avisaba por "contradicciones", que mezclaba
+    # las dos cosas.
+    contra = (resumen["estados"]["conteo"]["trabado"]
+              + resumen["estados"]["conteo"]["conflicto"])
     if not sin_ot and not contra:
         correo.log("sin_novedad", "reconciliacion",
-                   "nada que avisar: 0 PDI sin OT, 0 contradicciones")
+                   "nada que avisar: 0 PDI sin OT, 0 trabadas ni conflictos")
         return "sin_novedad"
 
     c = resumen["estados"]["conteo"]
@@ -391,7 +463,7 @@ def avisar(resumen):
     filas_contra = "".join(
         "<tr><td>{}</td><td>{}</td><td>{}</td><td>{}</td></tr>".format(
             d["unidad"], d["vin"] or "", d["legado"] or "", d["regla"] or "")
-        for d in resumen["estados"]["contradicciones"][:20])
+        for d in resumen["estados"]["trabadas"][:20])
 
     html = (
         "<style>.tb{{border-collapse:collapse}}.tb th,.tb td{{padding:5px;"
@@ -399,8 +471,9 @@ def avisar(resumen):
         ".tb th{{background:lightblue}}</style>"
         "<h3><b>Reconciliación con el sistema anterior</b></h3>"
         "<p>Corrida del {cuando} desde <b>{origen}</b>.</p>"
-        "<p><b>Estados</b> — de acuerdo: {ok} · REGLA adelante: {ra} · "
-        "el sistema anterior adelante: {la} · <b>contradicciones: {co}</b></p>"
+        "<p><b>¿Se enteró el sistema anterior?</b> — entregado: {ok} · "
+        "en camino: {ra} · no viaja: {nv} · el legado siguió: {la} · "
+        "<b>trabadas + conflictos: {co}</b></p>"
         "{bloque_contra}"
         "<h4>PDI sin su OT — {sin_ot} de {tot} desde {desde} ({pct}%)</h4>"
         "<p>Cada una es una PDI hecha y no cobrada: <b>${pesos}</b> como piso, "
@@ -411,8 +484,8 @@ def avisar(resumen):
         "<p>Este mail fue enviado automaticamente por sistema REGLA</p>"
     ).format(
         cuando=resumen["corrida_en"], origen=correo.origen(),
-        ok=c["de_acuerdo"], ra=c["regla_adelante"], la=c["legado_adelante"],
-        co=c["contradiccion"],
+        ok=c["entregado"], ra=c["en_camino"], nv=c["no_viaja"],
+        la=c["el_legado_siguio"], co=c["trabado"] + c["conflicto"],
         bloque_contra=(
             '<h4>Contradicciones ({})</h4><table class="tb"><tr><th>Unidad</th>'
             "<th>VIN</th><th>Sistema anterior</th><th>REGLA</th></tr>{}</table>"
@@ -428,10 +501,10 @@ def avisar(resumen):
         "Estados: de acuerdo {ok} | REGLA adelante {ra} | "
         "el anterior adelante {la} | CONTRADICCIONES {co}\n"
         "PDI sin su OT: {sin_ot} de {tot} desde {desde} ({pct}%)\n\n"
-        "Las contradicciones son las unicas que hay que mirar a mano."
+        "Las trabadas y los conflictos son los unicos que hay que mirar a mano."
     ).format(cuando=resumen["corrida_en"], origen=correo.origen(),
-             ok=c["de_acuerdo"], ra=c["regla_adelante"],
-             la=c["legado_adelante"], co=c["contradiccion"],
+             ok=c["entregado"], ra=c["en_camino"], nv=c["no_viaja"],
+             la=c["el_legado_siguio"], co=c["trabado"] + c["conflicto"],
              sin_ot=sin_ot, tot=resumen["pdi_sin_ot"]["pdi_totales"],
              desde=resumen["pdi_sin_ot"]["desde"],
              pct=resumen["pdi_sin_ot"]["porcentaje"],
@@ -439,7 +512,7 @@ def avisar(resumen):
 
     correo.en_segundo_plano(
         correo.mandar, correo.destinatarios(DESTINATARIOS),
-        "Reconciliación — {} contradicciones, {} PDI sin OT (${})".format(
+        "Reconciliación — {} trabadas, {} PDI sin OT (${})".format(
             contra, sin_ot,
             "{:,}".format(resumen["pdi_sin_ot"]["pesos"]).replace(",", ".")),
         texto, html)

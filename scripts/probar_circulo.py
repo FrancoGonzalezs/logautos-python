@@ -179,12 +179,14 @@ def conteo(ruta):
         db.close()
 
 
-ORDEN = ("de_acuerdo", "regla_adelante", "legado_adelante", "contradiccion",
-         "sin_arco", "fuera_de_alcance")
-ROTULO = {"de_acuerdo": "de acuerdo", "regla_adelante": "REGLA adelante",
-          "legado_adelante": "el anterior adelante",
-          "contradiccion": "contradicciones", "sin_arco": "sin arco",
-          "fuera_de_alcance": "fuera de alcance"}
+# Las categorias nuevas (2026-08-27). La pregunta dejo de ser "¿donde esta cada
+# uno?" y paso a ser "¿se entero el legado?": se le hace a la COLA.
+ORDEN = ("entregado", "en_camino", "no_viaja", "trabado", "conflicto",
+         "el_legado_siguio", "sin_arco")
+ROTULO = {"entregado": "entregado", "en_camino": "en camino",
+          "no_viaja": "NO VIAJA (falta enlace)", "trabado": "trabado",
+          "conflicto": "conflicto", "el_legado_siguio": "el legado siguio",
+          "sin_arco": "sin arco"}
 
 
 def linea(c):
@@ -431,14 +433,19 @@ def main():
             "   <--" if sin_enlace[k] != con_enlace[k] else ""))
     print()
 
-    afirmar(con_enlace["regla_adelante"] < sin_enlace["regla_adelante"],
-            "'REGLA adelante' BAJA con el enlace: {} -> {}".format(
-                sin_enlace["regla_adelante"], con_enlace["regla_adelante"]))
-    afirmar(con_enlace["de_acuerdo"] > sin_enlace["de_acuerdo"],
-            "'de acuerdo' SUBE: {} -> {}".format(
-                sin_enlace["de_acuerdo"], con_enlace["de_acuerdo"]))
-    afirmar(con_enlace["contradiccion"] == sin_enlace["contradiccion"] == 0,
-            "sin contradicciones en ninguna de las dos")
+    # `no_viaja` ES EL NUMERO QUE REEMPLAZA A `regla_adelante`, y mide mejor.
+    # El viejo mezclaba tres cosas -- no hay enlace, esta en vuelo, fallo --; el
+    # nuevo cuenta SOLO la primera, que es la unica que un despliegue arregla.
+    afirmar(con_enlace["no_viaja"] < sin_enlace["no_viaja"],
+            "'no viaja' BAJA con el enlace: {} -> {}".format(
+                sin_enlace["no_viaja"], con_enlace["no_viaja"]))
+    afirmar(con_enlace["entregado"] > sin_enlace["entregado"],
+            "'entregado' SUBE: {} -> {}".format(
+                sin_enlace["entregado"], con_enlace["entregado"]))
+    afirmar(con_enlace["trabado"] == sin_enlace["trabado"] == 0,
+            "nada trabado en ninguna de las dos")
+    afirmar(con_enlace["conflicto"] == sin_enlace["conflicto"] == 0,
+            "ni conflictos")
     afirmar(sum(sin_enlace.values()) == sum(con_enlace.values()),
             "y el total de unidades miradas es el mismo: la unidad cambio de "
             "cajon, no aparecio una nueva")

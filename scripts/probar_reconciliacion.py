@@ -34,56 +34,72 @@ def afirmar(c, d, det=""):
         fallos.append(d)
 
 
-def caso(despachado, hacia, desde, recorrido=(), push_confirmado=False):
+def caso(despachado, hacia, no_encola=False, pendientes=0,
+         pendientes_con_error=0, conflictos=0):
+    """Una unidad tocada por REGLA, con el estado de SU COLA.
+
+    Ya no lleva `recorrido` ni `push_confirmado`: la pregunta dejo de ser
+    "¿donde esta cada uno?" y paso a ser "¿se entero el legado?", y eso lo
+    responde la cola. Ver `comparar_estados`."""
     fila = {
         "id": 1, "vin": "VINPRUEBA", "despachado": despachado,
-        "estado_hacia": hacia, "estado_desde": desde, "paso": "pdi",
-        "creado_en": "2026-08-27T10:00:00",
-        "recorrido": {normalizar_estado(x) for x in recorrido},
-        "push_confirmado": push_confirmado,
+        "estado_hacia": hacia, "estado_desde": "STOCK", "paso": "pdi",
+        "creado_en": "2026-08-27T10:00:00", "ultimo_error": "se cayo",
+        "no_encola": no_encola, "pendientes": pendientes,
+        "pendientes_con_error": pendientes_con_error, "conflictos": conflictos,
         "reconocido_sin_ruta": normalizar_estado(despachado) in RECONOCIDOS_SIN_RUTA,
     }
     return _clasificar_una(fila, normalizar_estado)[0]
 
 
 def main():
-    print("\n--- 1. las tres categorias ---")
-    afirmar(caso("INGRESO A TALLER", "INGRESO A TALLER", "STOCK") == "de_acuerdo",
-            "los dos dicen lo mismo -> de acuerdo")
-    afirmar(caso("STOCK", "INGRESO A TALLER", "STOCK", ["STOCK"]) == "regla_adelante",
-            "el legado esta donde arrancamos -> REGLA adelante")
-    afirmar(caso("Navegando", "STOCK", "ZONA DE RECEPCION",
-                 ["NAVEGANDO", "ZONA DE RECEPCION"]) == "regla_adelante",
-            "el legado esta al ARRANQUE de una cadena -> REGLA adelante")
-    afirmar(caso("ZONA DE DESPACHO", "INGRESO A TALLER", "STOCK", ["STOCK"],
-                 push_confirmado=True) == "legado_adelante",
-            "empujamos, lo tomo, y despues se movio -> el legado adelante")
-    afirmar(caso("ZONA DE DESPACHO", "INGRESO A TALLER", "STOCK", ["STOCK"],
-                 push_confirmado=False) == "contradiccion",
-            "sin push confirmado y en otro lado -> contradiccion")
+    print("\n--- 1. la pregunta es a la COLA, no a los estados ---")
+    afirmar(caso("INGRESO A TALLER", "INGRESO A TALLER") == "entregado",
+            "cola resuelta y sin error -> entregado")
+    afirmar(caso("STOCK", "INGRESO A TALLER", pendientes=1) == "en_camino",
+            "encolado y sin resolver -> en camino")
+    afirmar(caso("STOCK", "INGRESO A TALLER", pendientes=1,
+                 pendientes_con_error=1) == "trabado",
+            "sin resolver Y con error -> trabado, que es lo que se mira a mano")
+    afirmar(caso("STOCK", "INGRESO A TALLER", conflictos=1) == "conflicto",
+            "hay conflicto registrado -> gano el legado")
+    afirmar(caso("STOCK", "DYP", no_encola=True) == "no_viaja",
+            "el estado no tiene enlace -> no viaja")
+    afirmar(caso("ZONA DE DESPACHO", "INGRESO A TALLER") == "el_legado_siguio",
+            "todo entregado y la fila ya no coincide -> lo trabajo despues")
 
-    print("\n--- 2. los reconocidos sin ruta NO ensucian ninguna categoria ---")
-    # El caso que motivo el arreglo: push confirmado Y el legado en un estado
-    # que REGLA reconoce pero no enruta. Antes caia en 'legado_adelante'.
+    print("\n--- 2. EL CASO QUE MOTIVO EL CAMBIO ---")
+    # Guardar un movimiento escribe la fila, asi que `despachado` y
+    # `estado_hacia` COINCIDEN aunque el legado no se haya enterado. Con la
+    # comparacion vieja eso daba "de acuerdo": medido el 2026-08-27, el
+    # contador subia de 1 a 2 con la cola sin resolver.
+    afirmar(caso("STOCK", "STOCK", pendientes=1) == "en_camino",
+            "la fila YA dice STOCK porque la escribimos nosotros, y aun asi "
+            "NO cuenta como entregado")
+    afirmar(caso("STOCK", "STOCK", pendientes=1, pendientes_con_error=1)
+            == "trabado",
+            "y si ademas fallo, se ve que fallo")
+
+    print("\n--- 3. el orden de las categorias ---")
+    # `no_viaja` gana sobre todo: si no hay enlace, el resto no aplica.
+    afirmar(caso("STOCK", "DYP", no_encola=True, conflictos=1) == "no_viaja",
+            "no_viaja gana sobre conflicto")
+    # Y `trabado` gana sobre `en_camino`: lo que falla se mira antes.
+    afirmar(caso("STOCK", "INGRESO A TALLER", pendientes=2,
+                 pendientes_con_error=1) == "trabado",
+            "una entrada con error entre varias -> trabado")
+
+    print("\n--- 4. los reconocidos sin ruta no ensucian `el_legado_siguio` ---")
+    # SOLICITUD DESPACHO y compania no mueven la unidad de lugar: que el legado
+    # quede ahi no significa que la haya trabajado despues.
     for estado in RECONOCIDOS_SIN_RUTA:
-        r_con = caso(estado, "INGRESO A TALLER", "STOCK", ["STOCK"],
-                     push_confirmado=True)
-        r_sin = caso(estado, "INGRESO A TALLER", "STOCK", ["STOCK"],
-                     push_confirmado=False)
-        afirmar(r_con == "fuera_de_alcance",
-                "{!r} con push confirmado -> fuera_de_alcance, NO categoria 2"
-                .format(estado), r_con)
-        afirmar(r_sin == "fuera_de_alcance",
-                "{!r} sin push confirmado -> fuera_de_alcance, NO categoria 3"
-                .format(estado), r_sin)
-
-    # Y la forma con typo que escribe el legado tambien.
-    afirmar(caso("SOLICTUD DESPACHO", "INGRESO A TALLER", "STOCK", ["STOCK"],
-                 push_confirmado=True) == "fuera_de_alcance",
+        afirmar(caso(estado, "INGRESO A TALLER") == "entregado",
+                "{!r} no se cuenta como que el legado siguio".format(estado))
+    afirmar(caso("SOLICTUD DESPACHO", "INGRESO A TALLER") == "entregado",
             "'SOLICTUD DESPACHO' (el typo del legado) tambien")
 
-    print("\n--- 3. sin arco no se clasifica ---")
-    afirmar(caso("STOCK", None, None) == "sin_arco",
+    print("\n--- 5. sin arco no se clasifica ---")
+    afirmar(caso("STOCK", None) == "sin_arco",
             "un movimiento sin estado_hacia no opina")
 
     print("\n" + "=" * 62)
