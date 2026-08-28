@@ -16,7 +16,8 @@ Los siete casos:
     5. la ventana       pasada la hora la sugerencia SE APAGA, no se atenua
     6. validacion       el POST rechaza vacio, calle inexistente y patio que
                         no estaciona
-    7. el push          patio y calle llegan al payload como los eligio el
+    7. el indice        el cubridor sigue cubriendo: las dos listas coinciden
+    8. el push          patio y calle llegan al payload como los eligio el
                         movilizador, no como los dedujo una tabla
 
 EL CASO 5 ES EL QUE PROTEGE LA DECISION DE DISEÑO. La sugerencia acierta 76%
@@ -206,7 +207,49 @@ def main():
                 "rechaza {!r} / {!r} -- {}".format(patio, calle, por_que))
 
     # ------------------------------------------------------------------
-    paso("7. el push manda lo que el movilizador eligio")
+    paso("7. el indice cubridor sigue cubriendo")
+
+    # UN INDICE CUBRIDOR SON DOS LISTAS QUE TIENEN QUE COINCIDIR. Cubre solo
+    # mientras las columnas del SELECT sean subconjunto de las del indice; si
+    # alguien agrega una al SELECT, SQLite vuelve a la tabla de 382 MB y la
+    # busqueda pasa de 18 ms a un segundo. Sin error, sin log, sin nada.
+    #
+    # Hoy las dos se arman de la misma constante y no pueden separarse, pero
+    # esto lo afirma igual: la proxima persona puede volver a escribir el
+    # SELECT a mano, que es como empezo.
+    from core import BUSQUEDA_DEVUELVE, BUSQUEDA_FILTRA, INDICES
+
+    ddl = INDICES["ix_newstocks_busqueda"]
+    del_indice = set(
+        c.strip() for c in ddl[ddl.index("(") + 1:ddl.rindex(")")].split(","))
+    faltan = (set(BUSQUEDA_DEVUELVE) | set(BUSQUEDA_FILTRA)) - del_indice
+    afirmar(not faltan,
+            "el indice cubre TODAS las columnas del SELECT y del WHERE",
+            "faltan en el indice: " + ", ".join(sorted(faltan)))
+
+    # Y que el SQL que se manda de verdad sea el que se armo con esas listas.
+    from modulos import movimientos as M
+    sql_visto = []
+    real = M.consultar
+
+    def espia(sql, params=(), una=False):
+        sql_visto.append(sql)
+        return []
+
+    M.consultar = espia
+    try:
+        M._buscar("316254")
+    finally:
+        M.consultar = real
+    sql = " ".join(sql_visto)
+    afirmar("INDEXED BY ix_newstocks_busqueda" in sql,
+            "la busqueda fuerza el indice -- el planificador no lo elige solo")
+    for columna in BUSQUEDA_DEVUELVE:
+        afirmar(columna in sql,
+                "el SELECT lleva {!r}, como el indice".format(columna))
+
+    # ------------------------------------------------------------------
+    paso("8. el push manda lo que el movilizador eligio")
 
     import json
     from modulos import push_legado
@@ -247,7 +290,7 @@ def main():
         for f in fallos:
             print("  - {}".format(f))
         return 1
-    print("los 7 casos de ubicacion pasaron")
+    print("los 8 casos de ubicacion pasaron")
     return 0
 
 

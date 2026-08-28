@@ -461,20 +461,32 @@ def commit_desplegado():
 # guardas y por el mismo motivo: perezoso significa que el primero que entra
 # paga, y en Railway ese primero es un movilizador parado en el patio.
 
+# La busqueda de Movimientos, que corre en CADA TECLA de la busqueda en vivo.
+#
+# UN INDICE CUBRIDOR SON DOS LISTAS QUE TIENEN QUE COINCIDIR, y cubre SOLO
+# mientras las columnas del SELECT sean subconjunto de las del indice. Basta
+# con que alguien agregue una columna al SELECT para que el indice deje de
+# cubrir, SQLite vuelva a la tabla de 382 MB, y la busqueda pase de 18 ms a un
+# segundo -- sin un error, sin un log, sin nada. Es el mismo patron de la lista
+# blanca y de CALLE_POR_ESTADO/PATIO_POR_ESTADO, y ya sabemos como termina.
+#
+# POR ESO NO SON DOS LISTAS: son estas dos, y el SQL de la busqueda se ARMA con
+# ellas (ver `movimientos._buscar`). No hay un literal que pueda separarse.
+# `scripts/probar_ubicacion.py` lo afirma igual, por si alguien vuelve a
+# escribir el SELECT a mano.
+BUSQUEDA_FILTRA = ("vin", "patente", "n_motor")
+BUSQUEDA_DEVUELVE = ("id", "vin", "patente", "marca", "modelo", "color",
+                     "clientecompleto", "despachado")
+
+# El orden importa: primero las del WHERE. Un LIKE con `%` adelante no puede
+# SALTAR por indice -- hay que recorrer todo -- pero si puede recorrer el
+# INDICE (6 MB) en vez de la TABLA (382 MB). Medido: 66 ms -> 18 ms caliente.
 INDICES = {
-    # La busqueda de Movimientos, que corre en CADA TECLA.
-    #
-    # CUBRIDOR: lleva las tres columnas del WHERE y las ocho del SELECT, para
-    # que SQLite pueda recorrer el indice y no tocar la tabla. Un LIKE con `%`
-    # adelante no puede saltar a una posicion, pero recorrer 6 MB de indice y
-    # recorrer 382 MB de tabla no cuestan lo mismo.
-    #
-    # Medido: 66 ms -> 18 ms con la base caliente, y en frio la diferencia es
-    # el tamaño del archivo que hay que leer del volumen.
     "ix_newstocks_busqueda": (
-        'CREATE INDEX IF NOT EXISTS ix_newstocks_busqueda ON newstocks_cidef '
-        "(vin, patente, n_motor, id, marca, modelo, color, clientecompleto, "
-        " despachado)"),
+        "CREATE INDEX IF NOT EXISTS ix_newstocks_busqueda ON newstocks_cidef ({})"
+        .format(", ".join(BUSQUEDA_FILTRA
+                          + tuple(c for c in BUSQUEDA_DEVUELVE
+                                  if c not in BUSQUEDA_FILTRA)))),
 }
 
 

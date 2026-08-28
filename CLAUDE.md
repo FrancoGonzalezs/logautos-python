@@ -10,6 +10,28 @@ escriben sobre el mismo dato, **coincidir vale más que tener razón**: cada
 diferencia que aparece en la reconciliación es ruido que alguien tiene que
 explicar, y el ruido se lleva puesta la señal.
 
+### Cada entrega dice dónde quedó cada cosa
+
+**Hay DOS despliegues y no se mueven juntos**, y la distinción no se sostiene
+sola: hay que decirla en cada entrega.
+
+| | qué | quién despliega |
+|---|---|---|
+| **Railway** | el Python: pantallas, pull, push, cálculo | push a `main` en GitHub |
+| **claude.logautos.cl** | el PHP: `Api_regla.php`, los endpoints | Franco, a mano por cPanel |
+
+Toda entrega dice explícitamente, por cada cosa: **si quedó en el árbol de
+trabajo, si está commiteada, o si está desplegada — y en cuál de los dos.**
+
+Escrito porque el 2026-08-27 se perdió una semana: se hablaba de "desplegado"
+por los bloques PHP, que sí lo estaban, mientras el Python entero seguía en un
+árbol sucio en una sola máquina. Franco probó la pantalla en Railway buscando el
+campo de patio y calle y no estaba. Ninguna afirmación fue falsa; la que faltaba
+era la que nadie hizo.
+
+El pie de página y `/version` existen para que eso se vea sin preguntar, y el
+sufijo `+` del commit avisa cuando lo que corre no es lo que está en git.
+
 ### Calibración: qué es "producción" acá
 
 **`claude.logautos.cl` es la copia congelada, no la operación real de la
@@ -422,7 +444,25 @@ Va después de PDI a propósito: PDI es el que le falta al circuito, y meter una
 entidad nueva al pull mientras el push todavía crece agrega superficie sin
 cerrar nada.
 
-### 5. Migraciones versionadas — aprobado, sin construir
+### 5. El runbook del corte — NUNCA el PHP solo sobre el sistema vivo
+
+Hoy quedó el **PHP adelante del Python**: el legado acepta 19 columnas de las
+que REGLA manda 5, y tiene **tres endpoints de escritura que nadie llama** —
+`descontar_stock`, `crear_ot_pdi` y el PUT ampliado.
+
+Sobre la copia congelada eso es inerte. **Al corte, esos endpoints van al
+sistema vivo**: puertas de escritura sobre `orden_trabajo` y sobre el stock de
+combustible, abiertas, sin consumidor, protegidas sólo por la API key.
+
+**La regla: no se despliega nunca el PHP solo, con puertas de escritura sin
+consumidor, sobre el sistema real.** Van juntos o va primero el consumidor.
+
+Cómo se llegó acá, para no repetirlo: el PHP se desplegó primero a propósito y
+con buen motivo — la lista blanca ignora en silencio, así que cablear sólo
+Python da 200 y cero efecto. Ese orden es el correcto **sobre la copia**. Sobre
+el sistema vivo se invierte, y hay que acordarse de invertirlo.
+
+### 6. Migraciones versionadas — aprobado, sin construir
 
 Variante de fuente única. Migración 1 = esquema completo; migración 2 = arreglo
 explícito del `unidad_id` que falta en `inspeccion_despacho_regla` en Railway.
@@ -430,7 +470,7 @@ Correr `estado` justo después de la 1 es **obligatorio** en el runbook.
 
 `PRAGMA foreign_keys=ON` queda **explícitamente afuera**.
 
-### 6. Decisiones que esperan datos, no código
+### 7. Decisiones que esperan datos, no código
 
 - **CARFLEX 0,022 vs 0,026.** El legado tiene **dos implementaciones vivas** con
   tarifas distintas para el mismo cliente (`dash_acopio.php` y

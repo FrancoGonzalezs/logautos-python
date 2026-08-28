@@ -57,7 +57,8 @@ from datetime import date, datetime
 
 from flask import Blueprint, redirect, render_template, request, session, url_for
 
-from core import consultar, exigir_unidad_id, get_db
+from core import (BUSQUEDA_DEVUELVE, BUSQUEDA_FILTRA, consultar,
+                  exigir_unidad_id, get_db)
 from modulos.acceso import id_actual, nombre_actual, usuario_actual
 from modulos.catalogos import normalizar
 # `vin_limpio` vive en kpis.py porque ahi nacio (filtra los VIN invalidos de
@@ -1398,8 +1399,8 @@ def _buscar(texto):
     limpio = vin_limpio(texto)
     if limpio:
         exactas = consultar(
-            'SELECT id, vin, patente, marca, modelo, color, clientecompleto, '
-            'despachado FROM "{}" WHERE vin = ? ORDER BY id DESC'.format(TABLA),
+            'SELECT {} FROM "{}" WHERE vin = ? ORDER BY id DESC'.format(
+                ", ".join(BUSQUEDA_DEVUELVE), TABLA),
             (limpio,))
         if exactas:
             return exactas
@@ -1425,12 +1426,16 @@ def _buscar(texto):
     # Que `INDEXED BY` reviente si el indice no esta es DESEABLE: el indice lo
     # crea `core.instalar_indices()` al arrancar, y una busqueda que
     # silenciosamente vuelve a tardar un segundo es justo lo que nadie reporta.
+    #
+    # EL SELECT Y EL WHERE SE ARMAN CON LAS LISTAS DE `core`, las mismas con
+    # las que se construye el indice. Escritos a mano serian dos listas que
+    # tienen que coincidir y que nadie compara.
     return consultar(
-        'SELECT id, vin, patente, marca, modelo, color, clientecompleto, '
-        'despachado FROM "{}" INDEXED BY ix_newstocks_busqueda '
-        "WHERE vin LIKE ? OR patente LIKE ? OR n_motor LIKE ? "
-        "ORDER BY id DESC LIMIT 25".format(TABLA),
-        (patron, patron, patron))
+        'SELECT {} FROM "{}" INDEXED BY ix_newstocks_busqueda WHERE {} '
+        "ORDER BY id DESC LIMIT 25".format(
+            ", ".join(BUSQUEDA_DEVUELVE), TABLA,
+            " OR ".join("{} LIKE ?".format(c) for c in BUSQUEDA_FILTRA)),
+        tuple(patron for _ in BUSQUEDA_FILTRA))
 
 
 # La ruta /soy ya no existe. Era el parche con que se elegia a mano quien era
