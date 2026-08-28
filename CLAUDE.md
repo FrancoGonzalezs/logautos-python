@@ -10,9 +10,77 @@ escriben sobre el mismo dato, **coincidir vale más que tener razón**: cada
 diferencia que aparece en la reconciliación es ruido que alguien tiene que
 explicar, y el ruido se lleva puesta la señal.
 
+### Calibración: qué es "producción" acá
+
+**`claude.logautos.cl` es la copia congelada, no la operación real de la
+empresa.** Si el controlador se cae, se bloquea NUESTRO trabajo — el pull, el
+push, las pruebas —, no el negocio. Nadie deja de facturar ni de mover autos.
+
+Está escrito porque el 2026-08-27 el despliegue del PHP tiró abajo la clase
+entera y se reportó como "incidente en producción". La urgencia era real —el
+sync estuvo caído— pero la escala no, y esa clase de error de calibración es lo
+que hace tomar decisiones apuradas: revertir sin diagnosticar, saltarse el lint
+para "arreglar rápido", tocar dos cosas a la vez.
+
+Lo que SÍ es delicado de verdad, y la diferencia hay que tenerla clara:
+
+- **`orden_trabajo`**, porque de ahí sale la facturación y es append-only: una
+  OT creada de más no se borra.
+- **Cualquier columna que se BORRE** en vez de agregarse. Hoy una: `ubicacion`
+  en el push de PDI.
+- **`registros`**, append-only también: un movimiento duplicado queda para
+  siempre en el historial del que salen sus reportes.
+
+Un 500 en un endpoint se arregla y se vuelve a intentar. Una fila de más en
+`orden_trabajo` hay que ir a explicarla.
+
 ---
 
-## Las tres reglas que no se negocian
+## Las cinco reglas que no se negocian
+
+### 0. La clave tiene que separar lo que la pregunta separa
+
+**Antes de contar, de cruzar o de leer un valor, preguntá qué representa UNA
+fila —o UNA variable— de la clave que vas a usar. Si representa dos cosas
+distintas, vas a razonar sobre una mientras el dato es la otra** — y no se ve,
+porque sale un número redondo y con volumen, o una frase que suena obvia.
+
+Apareció **cuatro veces**, en cuatro formas que parecen no tener nada que ver:
+
+| El nombre que se usó | Lo que cubría en realidad | Lo que dio |
+|---|---|---|
+| `vin` | el vehículo y **cada pasada** por el patio | la PDI de meses atrás contaba como la de este reingreso |
+| todo el histórico | el código de hoy y **años de versiones viejas** | `IT` 69,9% / `It` 30% "conviviendo", cuando `It` es la forma vieja |
+| `calle` | el estacionamiento y **la etapa de proceso** | `A` → PATIO 2 al 78,8%, "el único caso ambiguo" |
+| `$patio` en `actulocproccess` | el patio de la unidad y **lo que el operario eligió en el formulario** | "las unidades con patio sucio no se pueden mover" — y se mueven igual |
+
+Los tres primeros se arreglan igual: **partir la clave hasta que una fila sea
+una cosa sola.** `vin` → `id` de la pasada. El histórico → los últimos 6 meses.
+`calle` → el estado destino, con lo que los catorce quedaron entre 93,6% y 100%
+y la ambigüedad de `A` desapareció: nunca había existido.
+
+**El cuarto es el mismo error una capa más abajo, y por eso vale anotarlo.** No
+es agregar sobre una clave mezclada, es leer una variable creyendo el nombre:
+`$patio` se llama como la columna `patio` de la unidad, pero sale de
+`$this->input->post('patio')` — del desplegable. Sobre esa lectura se construyó
+un diagnóstico entero (147 filas sucias ⇒ unidades que no se pueden mover) que
+era falso de punta a punta: la columna sucia sólo se lee como `$newpatio`, el
+origen, que se copia a `registros` y no se compara contra nada.
+
+Lo que lo destapó no fue mirar más código: fue **preguntar de dónde sale el
+valor**, y después buscar la huella que tendría que haber dejado. Si el
+desplegable hubiera ofrecido `PATIO 4 B` alguna vez, esa cadena estaría en
+`registros.patio`, porque el `$mov` la copia. No está. Ahí se cayó.
+
+Las tres señales de que estás por pisarla:
+
+- el número es alto pero no redondo (78,8%, 69,9%);
+- hay un caso que "no cierra" mientras el resto sí — **ese caso no es el borde,
+  es el síntoma**;
+- una variable te resulta obvia por el nombre y no fuiste a ver de dónde sale.
+
+La regla 1 es el caso de esta regla que además rompe escrituras, y por eso tiene
+guardas propias en vez de quedar acá.
 
 ### 1. El match es por `id`, jamás por VIN — en las tablas propias de REGLA
 
@@ -63,7 +131,20 @@ no llega al 100%, hay una regla que no entendimos, no un caso borde.
 Las tarifas están en `TARIFAS_ACOPIO`, tabla **con fecha de vigencia**, porque
 el precio de la PDI ya cambió una vez. Agregar una tarifa es agregar una FILA,
 nunca editar una existente: la fila vieja es la que explica las facturas ya
-emitidas.
+emitidas. Lo mismo `PRECIOS_PDI` en `ot_pdi.py`.
+
+**El cambio de precio fue a mitad del 2026-06-02**: ese día conviven 27 OT a
+46.878 y 3 a 49.000, y `createdDtm` no guarda la hora. La vigencia arranca el
+**03**, no el 02 — `reconciliacion.PRECIO_PDI_VIGENTE_DESDE` tiene el 02 y por
+eso le atribuye el precio nuevo a 27 OT que se cobraron al viejo.
+
+**Un oráculo puede estar sucio, y hay que notarlo antes de "arreglar" el
+código.** Validando la OT de combustible contra `tipo_combu` daba 96,5%, y las
+35 que fallaban no eran la fórmula: `FOTON VIEW GRAND` figura 32 veces como
+`GASOLINA` y 13 como `DIESEL` —mismo modelo, misma época— y las 45 con precio
+de diesel. La columna se contradice a sí misma porque la reescribe otro
+proceso. Validado contra lo que el código realmente decide —los litros y el
+IVA, que no dependen de esa columna— da **969 de 969**.
 
 Un cliente sin tarifa **se niega y avisa**; no cae a la genérica en silencio.
 
@@ -73,6 +154,44 @@ Ni el pull ni el push parsean fechas cruzando sistemas. La marca de agua la pone
 el legado con su reloj; `updated_at` lo pone el receptor con el suyo. El desfase
 del dump **no es fijo**: es conversión de zona horaria y cambia con el horario
 de verano (4 h o 3 h según el mes).
+
+### 4. Un doble más permisivo que el original es un sello de goma
+
+**El legado simulado tiene que RECHAZAR todo lo que rechaza el real.** Si acepta
+de más, la prueba no falla cuando el sistema está roto: falla al revés, da verde
+sobre algo que en producción no funciona. Y eso es peor que no tener prueba,
+porque la prueba se usa para decidir desplegar.
+
+Pasó **tres veces**, y las tres se descubrieron al querer probar algo nuevo, no
+al revisar el doble:
+
+| Lo que el doble no sabía | Lo que quedó sin probar |
+|---|---|
+| sólo devolvía `updated_at` en el 409 | el aviso de conflicto podía salir vacío |
+| sólo sabía el PUT, no el pull | que el cambio VUELVA — justo lo que mide la reconciliación |
+| aplicaba `fila.update(datos)`, aceptaba todo | que la lista blanca ignora en silencio: 200, cero efecto |
+
+El tercero es el que mejor lo muestra. Con el doble permisivo, empujar una PDI
+contra el simulado escribía las catorce columnas y la prueba pasaba — mientras
+que contra producción, sin la lista blanca desplegada, no escribía ninguna. La
+prueba habría autorizado un despliegue que no hacía nada.
+
+**Las tres condiciones, para cada endpoint que se agregue al doble:**
+
+1. **Rechaza lo que rechaza el real.** Falta de API key, falta de
+   `Idempotency-Key` donde es obligatoria, un valor fuera del catálogo, una
+   columna fuera de la lista blanca. Si el real dice 400, el doble dice 400.
+2. **La prueba demuestra el rechazo, no sólo el camino feliz.** Un `afirmar`
+   sobre el 400 y sobre el efecto CERO, no sólo sobre el 201.
+3. **Cuando el contrato cambia por etapas, el doble modela las dos.**
+   `--lista-blanca desplegada|con_pdi` existe por esto: la prueba corre contra
+   las dos y afirma que dan distinto. Si dieran igual, no está mirando nada.
+
+Y la señal de que estás por pisarla: estás por escribir en el doble un
+`update(todo)`, un `return 200` incondicional, o un campo que "no hace falta
+para esta prueba".
+
+---
 
 ---
 
@@ -123,10 +242,14 @@ Cosas del push que no se deducen del código:
   `registromov()` **cero veces**, así que empujarlo le metería al historial una
   fila que su propia pantalla nunca genera. El PDI llama **dos** veces, así que
   ahí sí va.
-- **El origen no viaja.** `newcalle`/`newestado`/`newpatio` los resuelve el
-  endpoint leyendo la fila dentro de su transacción. Mandarlos sería mandar lo
-  que REGLA *cree* que el legado tenía, con hasta una vuelta de sync de atraso,
-  y quedaría escrito en su historial como un hecho.
+- **El origen no viaja; el destino sí, los tres.** `newcalle`/`newestado`/
+  `newpatio` los resuelve el endpoint leyendo la fila dentro de su transacción:
+  mandarlos sería mandar lo que REGLA *cree* que el legado tenía, con hasta una
+  vuelta de sync de atraso, y quedaría escrito en su historial como un hecho.
+  Del lado del destino viajan `accion`, `estado` **y `patio`** — este último
+  desde el 2026-08-27, ver el pendiente 2. La distinción no es "qué columnas
+  sabemos" sino **quién es la fuente**: el origen lo sabe el legado, el destino
+  lo decide REGLA.
 - **Las columnas de `registros` están invertidas** y el prefijo miente:
   `accion`/`estado`/`patio` son el **DESTINO**, `newcalle`/`newestado`/`newpatio`
   el **ORIGEN**. Verificado a mano sobre la fila 305637.
@@ -135,59 +258,158 @@ Cosas del push que no se deducen del código:
 
 ## Pendientes, en orden
 
-### 1. STOCK sale de las exclusiones — decidido, sin implementar
+### 1. STOCK sale de las exclusiones — RESUELTO el 2026-08-27
 
-`SIN_CALLE` excluye cuatro estados. La razón que quedó escrita para `STOCK` era
-"la calle de patio es el dato y REGLA no la pide", y **esa razón no se
-sostiene**: el movilizador sí sabe patio y calle — está parado en el patio, él
-lo estacionó. El problema no es que el dato no exista, es que REGLA no lo
-pregunta, y eso se arregla preguntándolo.
+`modulos/ubicacion.py` + el bloque de la pantalla, y recién después `STOCK`
+fuera de `SIN_CALLE`. **El orden es la mitad del trabajo**: al revés, el push
+habría mandado la calle mayoritaria, que acierta el 25%, escrita en el historial
+del legado como un hecho.
 
-STOCK es además el estado de mayor volumen de los cuatro, así que es el que más
-historial le falta al legado hoy.
+Es el único estado cuya calle y cuyo patio salen del formulario en vez de
+`CALLE_POR_ESTADO` / `PATIO_POR_ESTADO`. `encolar_movimiento` acepta `calle` y
+`patio` explícitos y ganan sobre las tablas: son la respuesta del movilizador
+contra una inferencia.
 
-> **El código todavía tiene `STOCK` en `SIN_CALLE`** y no hay ningún campo de
-> calle ni de patio en las pantallas. Esto es trabajo por hacer, no estado
-> actual.
+**Las tres cosas que decidieron el diseño, y las tres salieron de medir:**
 
-Los otros tres siguen excluidos por razones distintas, que no cambian: `DYP`
-(depende del proveedor asignado, que REGLA no elige), `SALIDA DYP` (8
-movimientos en 6 meses, insuficiente para fijar una traducción) y `DESPACHADO`
-(el camino del legado además manda correo y crea OT; empujar solo la columna
-deja un despacho a medias, que es peor que no empujarlo).
+**Precargar el patio actual está mal el 45% de las veces.** Suena obvio y es
+falso: la unidad entra a STOCK justo cuando *cambia* de patio. El predictor es
+origen + cliente (79,0%) — CIDEF estaciona en 5 y 3, CARFLEX en 2.
 
-### 2. El patio destino quedó vacío — hay que revisarlo
+**Ordenar las calles por frecuencia acierta 27,1%; por última usada en ese
+patio, 72,4%.** Los movilizadores trabajan una calle por tanda. Es la diferencia
+entre ordenar por el promedio del semestre y ordenar por lo que pasó hace diez
+minutos.
 
-En la fila 305637, verificada a mano:
+**Pero la recencia vence, y de golpe**: 75,8% dentro de la hora, ~50% después,
+plano. Por eso `VENTANA_RECENCIA_SEGUNDOS` es un corte duro y no un peso que
+baja — entre las 2 h y las 30 h no hay nada que ponderar. Y por eso pasada la
+ventana la pantalla **deja de sugerir** en vez de mostrar la antigüedad en letra
+chica: un chip que se ve confiable cuando no lo es es peor que uno neutro.
+
+> **Ese 3600 sale del sistema viejo, donde la calle se elegía en un `<select>`
+> alfabético. La pantalla nueva cambia justo lo que se midió.** Hay que remedirlo
+> con `movimientos_regla` cuando haya semanas de uso.
+
+**La propiedad que lo hace seguro: la sugerencia sólo puede ahorrar toques,
+nunca agregarlos.** El atajo *prepara*, no confirma — el piso son dos toques
+siempre, y el botón nombra el destino completo antes de escribirlo. Un atajo
+errado (1 de cada 6,5) cuesta exactamente lo mismo que no haber tenido atajo: un
+toque en la calle correcta. Si alguna vez esto pasa a confirmar de una, ese
+15,4% se convierte en ubicaciones falsas en el legado.
+
+La recencia sale de `movimientos_regla` y **no** de `registros`, que en la
+réplica sólo se actualiza con el dump y tiene semanas de atraso. Eso resuelve el
+arranque en frío solo: el primer día no hay tanda, la pantalla entra en modo sin
+sugerencia — que es el mismo modo correcto de un lunes a la mañana — y se cura
+con el primer movimiento del turno.
+
+`scripts/probar_ubicacion.py` cubre los siete casos. El 5 es el que protege la
+ventana: si alguien hace que la tanda no expire, la pantalla sigue andando y
+sigue sugiriendo, sólo que la mitad de las veces mal, y no hay forma de notarlo
+mirándola.
+
+Los otros tres siguen excluidos, pero **el motivo de `DYP` estaba mal escrito** y
+se corrigió el 2026-08-27. Decía "depende del proveedor asignado, que REGLA no
+elige" y la calle es **determinista**: la rama `if($calle == 'Dyp')` de
+`Pedido.php:8577` descarta lo que el usuario eligió y fuerza `PATIO 2` /
+`ENTREGADO DYP` / `ubicacion 1`. En los datos, 189 de 204 movimientos, **92,6%**
+— más que diez de las catorce traducciones que ya están cargadas. La medición
+vieja (`B` 48%) salía de contar la columna `calle` de las unidades y no el
+destino de los movimientos.
+
+`DYP` queda afuera por lo mismo que `DESPACHADO`: esa rama **manda un correo al
+cliente** con la patente de la unidad entregada al proveedor. Empujar solo la
+columna deja media entrega hecha. No se arregla agregando la línea a
+`CALLE_POR_ESTADO` — se arregla migrando "Actualizar DYP" entera, correo
+incluido. El comentario viejo invitaba justo a lo que no hay que hacer.
+
+`SALIDA DYP` sin cambios: 8 movimientos en 6 meses, y las calles llevan el
+nombre del proveedor. `DESPACHADO` sin cambios: correo más OT.
+
+### 2. El patio destino quedó vacío — RESUELTO el 2026-08-27
+
+`PATIO_POR_ESTADO` en `push_legado.py`, al lado de `CALLE_POR_ESTADO` y con la
+misma clave. **Sin tocar el PHP**: `Api_regla_movimientos.php` ya aceptaba
+`patio` como campo opcional del cuerpo desde el primer día.
+
+**Las dos razones que estaban escritas acá eran falsas, y las dos se cayeron
+midiendo.**
+
+La primera era "el patio lo decide el legado por rama y REGLA no lo pregunta".
+No hace falta preguntarlo: **el patio es función del estado destino**, porque
+cada etapa vive en un patio fijo. Los catorce estados traducibles dan entre
+93,6% y 100% sobre los últimos 6 meses.
+
+La segunda era "como la unidad no cambia de patio, lo correcto sería repetir el
+origen". **Es al revés.** Para `Cc`, las 3.247 filas del semestre van a PATIO 1
+vengan de donde vengan, y 2.948 venían de PATIO 2 — ninguna repite el origen. Ir
+a control de calidad *es* ir al patio 1. Repetir el origen en la 305637 habría
+escrito `PATIO 5`, que es justo el valor que el legado nunca escribe para `Cc`.
+
+**Por estado y no por calle**, que fue el segundo intento y era peor. Medido por
+calle, `A` daba PATIO 2 al 78,8% y parecía el único caso ambiguo. No lo era: `A`
+es a la vez calle de estacionamiento y calle de las dos esperas de check list, y
+el 21% era el estacionamiento contaminando la cuenta. Separados por estado, los
+dos que usan `A` dan 100%. Misma lección que el histórico contra los 6 meses: la
+mayoría falsa aparece cuando se agrega sobre una clave que mezcla dos cosas.
+
+**La excepción es la PDI**: el legado deja el patio vacío en las 3.241 filas del
+semestre, las 3.241, porque su bloque arranca con `$patiopdi = ' '` y nunca lo
+usa. `patio_para()` devuelve `None` y se manda vacío a propósito. Cuando entre
+la entidad PDI hay que dejarlo así — coincidir vale más que tener razón.
+
+La 305637 la corrigió Franco a mano a `PATIO 1`. El caso 8 de `probar_push.py`
+verifica que las dos tablas cubran los mismos estados: el modo de falla de esta
+pareja es silencioso, y agregar un estado a una y olvidarlo en la otra vuelve a
+producir filas con el patio vacío sin que nadie se entere.
+
+### 3. El push de PDI — CERRADO el 2026-08-27
+
+Una PDI encola **cuatro** entradas, con orden:
 
 ```
-accion='Cc'   estado='CONTROL DE CALIDAD DESPACHO'   patio=''
-newcalle='C'  newestado='STOCK'                      newpatio='PATIO 5'
+movimiento  (registros + la unidad, en la transacción del endpoint)
+   ├── pdi                 las 14 columnas
+   ├── ot_pdi              las dos OT, una sola entrada
+   └── stock_consumibles   el descuento, si consume
 ```
 
-La fila dice de dónde salió pero no adónde llegó. Como la unidad **no cambia de
-patio** en estos movimientos, lo correcto sería repetir el origen: vacío no es
-lo mismo que igual, y un reporte que agrupe el historial por `patio` no ve estas
-filas.
+Las tres cuelgan del movimiento con **`depende_de`**. Se escriben en la misma
+transacción que la PDI — sobreviven a que el proceso muera — y no se intentan
+hasta que el movimiento esté resuelto **y sin error**. Encolarlas *después* de
+que el movimiento vuelva OK las perdería si el proceso muere en el medio, y eso
+deja una PDI aplicada en el legado y sin cobrar. Un 409 en el movimiento
+significa que el legado ganó: no hay PDI que cobrar, y `orden_trabajo` es
+append-only.
 
-**No se arregla desde Python** — mandar el patio desde acá es exactamente lo que
-decidimos no hacer. El endpoint ya tiene el valor a mano dentro de su
-transacción. Es una línea del PHP y la decide Franco.
+> **La guarda va en `ejecutar_entrada`, no sólo en el selector de pendientes.**
+> `disparar_push` llama directo con el id y `guardar_pdi` dispara las cuatro
+> seguidas: con la guarda sólo en el selector, la OT salía **antes** que el
+> movimiento. Lo encontró `probar_circulo.py`. Las dos puertas o ninguna.
 
-### 3. El push de PDI
+**Las dependientes tardan un ciclo de cola.** `procesar_pendientes` junta los
+ids al principio, así que son elegibles en la vuelta siguiente. El hilo corre
+continuo: es una espera, no una falla, y la prueba lo hace explícito.
 
-`ENTIDADES` no tiene PDI y `guardar_pdi` no encola: hoy no llega nada al legado,
-ni `fecha_pdi` ni el estado. Necesita **las dos mitades a la vez**:
+**Los precios coinciden al 100%** entre `ot_pdi.py` y el PHP, verificado contra
+producción sobre la unidad 66505 (PRUEBA) y contra el histórico. El 201 devuelve
+`litros` y `valor` además del precio, y eso es lo que deja comparar **la regla**
+y no sólo el número final, que puede coincidir de casualidad.
 
-- Python: la entidad y el enganche (y acá el movimiento **sí** se empuja).
-- PHP: ampliar la lista blanca de `Api_regla.php` con `fecha_pdi`, `mes_pdi`,
-  `mespdinombre` y las cuatro automáticas. **Lo que no está en la lista se
-  ignora en silencio**, así que cablear solo el lado Python da 200 y cero efecto
-  — el tipo de error que se ve semanas después.
+> **Lo que ese 100% NO cubre: la asimetría G7/G9.** Ninguna unidad `PRUEBA`
+> tiene un modelo que empiece con `G9`/`V7`/`V9`, así que las tres pruebas
+> corren por la rama de 20 litros. La asimetría —cuatro prefijos en Bencina, uno
+> en Diesel— está validada contra las 969 OT históricas del lado Python, y **sin
+> verificar del lado PHP**. Se cierra poniéndole `marca='FOTON'` y
+> `modelo='V9 2.0'` a una unidad PRUEBA.
 
-Entra además la OT automática de PDI y el descuento de stock de combustible (la
-carrera de la compuerta es un límite conocido: la ventana de REGLA es de 300 s
-contra el mismo-request del legado).
+**La compuerta** (`modulos/combustible.py`) se evalúa contra la **réplica**: si
+el legado está lento, la pantalla del patio no se puede colgar. Frena de verdad
+hoy — el diesel tiene 5 litros contra un umbral de 20. `fila_de()` exige
+encontrar **exactamente una** fila y distingue los dos modos de falla, porque no
+se arreglan igual: tabla vacía (*"falta el pull"*) contra combustible sin fila
+(*"avisá a sistemas"*). No hay fila para `GASOLINA`.
 
 ### 4. `registros` entra al pull — DESPUÉS del push de PDI
 
@@ -241,18 +463,60 @@ Para leer el estado real de una unidad en producción **sin escribir**: un PUT c
 devuelve 409 con `datos_actuales`.
 
 **`C:\Regla_Python\application` es SOLO LECTURA** — es el legado. El PHP nuevo se
-escribe como archivo aparte en `scripts/`. No hay `php` en la máquina, así que
-nunca se lintea local: `php -l` antes de subir.
+escribe como archivo aparte en `scripts/`.
+
+**EL LINT SE CORRE EN EL SERVIDOR, Y NO ES OPCIONAL.** No hay `php` en la
+notebook, pero el hosting es cPanel y trae Terminal — el servidor sí tiene PHP.
+Después de subir y ANTES de probar nada:
+
+```bash
+php -l ~/public_html/application/controllers/Api_regla.php
+```
+
+Tiene que decir `No syntax errors detected`. Esto quedó sin hacerse mucho tiempo
+porque se creía que hacía falta PHP en la notebook; no hace falta. El 2026-08-27
+un método duplicado tiró la clase entera abajo y se diagnosticó a ciegas desde
+Python, cuando una línea lo decía.
+
+**Y EL LINT NO ALCANZA PARA UN MÉTODO DUPLICADO.** `php -l` sólo parsea, y un
+`Cannot redeclare` es un fatal de COMPILACIÓN: aparece al cargar la clase, no al
+parsearla. Así que además:
+
+```bash
+grep -o "function [a-z_]*" ~/public_html/application/controllers/Api_regla.php | sort | uniq -d
+grep -c "<?php" ~/public_html/application/controllers/Api_regla.php
+```
+
+El primero tiene que salir **vacío** y el segundo dar **1**. El `uniq -d` es
+mejor que contar un método concreto porque no hay que saber cuál buscar: lista
+todos los duplicados, sea cual sea el que se pegó dos veces.
+
+**LOS SPECS DICEN QUÉ BORRAR, NO "REEMPLAZÁ".** El bloque A decía "reemplazá el
+método `columnas_permitidas` (hoy en la línea 271)" y quedaron los dos: el viejo
+en la 271 y el nuevo en la 792. El riesgo de un spec que manda reemplazar no es
+que el comportamiento cambie mal — es que el método quede DUPLICADO, y eso no es
+un bug, es la clase que no carga. De ahí en más, todo bloque que reemplace algo
+lleva el texto de la PRIMERA y de la ÚLTIMA línea a borrar, no un número de
+línea que se corre con la primera edición.
+
+**Y un reemplazo a medias deja código muerto que parece vivo.** En el mismo
+despliegue, `tabla_de()` entró pero `actualizar()` siguió con `newstocks_cidef`
+escrita a mano en el SELECT y en el UPDATE: el método nuevo existía y no lo
+llamaba nadie. Un spec que agrega un helper tiene que listar TODOS los puntos de
+llamada, y la verificación es buscar el literal viejo hasta que no quede
+ninguno.
 
 **El legado devuelve 200 con cuerpo vacío en vez de 404** (`404_override`), así
 que el cliente exige `ok: true` explícito y no se conforma con un 2xx.
 
-Las siete suites, ninguna escribe en producción:
+Las diez suites, ninguna escribe en producción:
 
 ```bash
-for s in estados reconciliacion ficha_estados motivo_desvio push facturacion; do python scripts/probar_$s.py; done
+for s in estados reconciliacion ficha_estados motivo_desvio push facturacion ubicacion ot_pdi; do python scripts/probar_$s.py; done
 python scripts/probar_pull.py
+python scripts/probar_circulo.py   # el circuito entero, y la PDI contra las DOS listas blancas
 python scripts/verificar_push_produccion.py   # 5 sondas contra producción, ninguna escribe
+python scripts/probar_precio_ot.py            # sondas; con --crear escribe OT reales sobre PRUEBA
 ```
 
 El README tiene el detalle largo (esquema, hallazgos sobre el dato real,
