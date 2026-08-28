@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% from "_macros.html" import badge_estado %}
+{% from "_macros.html" import badge_estado, bloque_ubicacion %}
 {% block titulo %}{{ u['vin'] | mostrar }} — Movimientos{% endblock %}
 
 {% block contenido %}
@@ -43,6 +43,11 @@
     <div class="aviso">
       Ese estado no se confirma desde acá: lo escribe otro módulo cuando
       ejecuta su operación.
+    </div>
+  {% elif request.args.get('error') == 'falta_ubicacion' %}
+    <div class="aviso">
+      Falta decir dónde quedó la unidad. Elegí patio y calle y volvé a
+      confirmar.
     </div>
   {% endif %}
 
@@ -93,8 +98,13 @@
         {% endif %}
       {% else %}
       <form method="post" action="{{ url_for('movimientos.registrar_movimiento', id_unidad=u['id']) }}"
-            class="form-paso">
+            class="form-paso" id="ubic-sugerido"
+            {% if recomendado.clave in pasos_con_ubicacion %}data-pide-ubicacion="1"{% endif %}>
         <input type="hidden" name="paso" value="{{ recomendado.clave }}">
+
+        {% if recomendado.clave in pasos_con_ubicacion %}
+          {{ bloque_ubicacion(ubic, 'sugerido') }}
+        {% endif %}
 
         <div class="campos-paso">
           {% for campo, etiqueta, tipo in recomendado.pide %}
@@ -120,6 +130,17 @@
         {# Quién firma el movimiento no es editable: sale de la sesión. Se
            muestra para que quede a la vista antes de confirmar. #}
         <p class="firma">Lo registra <strong>{{ usuario.name }}</strong></p>
+        {# El botón nombra el destino completo y no dice sólo "Confirmar": es
+           la última defensa contra un atajo mal tocado, porque el operario lee
+           adónde va a quedar la unidad ANTES de escribirla. Sin javascript el
+           texto se queda en el genérico y el servidor rechaza si falta la
+           calle. #}
+        {# Sale HABILITADO del servidor y lo deshabilita el javascript al
+           cargar. Al revés dejaría la pantalla inutilizable si el javascript
+           no corre —un teléfono viejo, la red que se cortó a mitad— y el
+           servidor ya rechaza el submit sin calle con un mensaje que se
+           entiende. Un formulario que no se puede mandar es peor que uno que
+           se manda y avisa. #}
         <button type="submit" class="boton">Confirmar {{ recomendado.titulo }}</button>
       </form>
       {% endif %}
@@ -161,7 +182,8 @@
     </p>
 
     <form method="post" action="{{ url_for('movimientos.registrar_movimiento', id_unidad=u['id']) }}"
-          class="form-paso" id="form-desvio">
+          class="form-paso" id="form-desvio"
+          data-pasos-con-ubicacion="{{ pasos_con_ubicacion | join(',') }}">
       <div class="campos-paso">
         <label>
           <span>Paso</span>
@@ -195,6 +217,14 @@
                  placeholder="Por qué se desvía del paso sugerido">
         </label>
       </div>
+
+      {# A STOCK también se llega por acá, y por eso el bloque va en los DOS
+         formularios. Aparece sólo cuando el paso elegido lo pide; el
+         javascript lo prende y lo apaga al cambiar el selector. #}
+      <div id="ubicacion-desvio">
+        {{ bloque_ubicacion(ubic, 'desvio') }}
+      </div>
+
       <p class="firma">Lo registra <strong>{{ usuario.name }}</strong></p>
       <button type="submit" class="boton secundario">Registrar desvío</button>
     </form>
@@ -249,6 +279,125 @@
   </details>
 
   <script>
+    /* ------------------------------------------------------------------
+       El bloque de ubicación: patio, calle y atajos.
+
+       Todo acá es MEJORA sobre HTML que ya funciona. Sin javascript los
+       cuatro patios quedan visibles y rotulados, el botón manda, y el
+       servidor rechaza con un mensaje si falta la calle. Esto lo hace
+       cómodo, no posible.
+       ------------------------------------------------------------------ */
+    (function () {
+      function conectar(form) {
+        var fieldset = form.querySelector('.ubicacion');
+        if (!fieldset) { return null; }
+
+        /* Le avisa al CSS que el javascript corrió: con un solo bloque de
+           calles visible, el rótulo del patio en cada bloque sobra. */
+        fieldset.classList.add('js-activo');
+
+        var boton = form.querySelector('button[type="submit"]');
+        var textoOriginal = boton ? boton.textContent.trim() : '';
+        var bloques = fieldset.querySelectorAll('.calles-de-patio');
+
+        function patioElegido() {
+          var r = fieldset.querySelector('input[name="patio"]:checked');
+          return r ? r.value : null;
+        }
+        function calleElegida() {
+          var r = fieldset.querySelector('input[name="calle"]:checked');
+          return r ? r.value : null;
+        }
+
+        function mostrarPatio() {
+          var p = patioElegido();
+          for (var i = 0; i < bloques.length; i++) {
+            var visible = bloques[i].getAttribute('data-patio') === p;
+            bloques[i].hidden = !visible;
+            /* Al cambiar de patio se BORRA la calle elegida. Si no, elegir
+               PATIO 5 · C y después cambiar a PATIO 2 mandaría "PATIO 2 · C"
+               con la C todavía marcada en un bloque escondido: una ubicación
+               que el operario nunca eligió y que además puede no existir en
+               ese patio. */
+            if (!visible) {
+              var rs = bloques[i].querySelectorAll('input[name="calle"]');
+              for (var j = 0; j < rs.length; j++) { rs[j].checked = false; }
+            }
+          }
+        }
+
+        function pintarBoton() {
+          if (!boton) { return; }
+          var p = patioElegido(), c = calleElegida();
+          var listo = !!(p && c);
+          /* El botón dice adónde va a quedar la unidad. Es la última
+             oportunidad de ver un atajo mal tocado antes de escribirlo. */
+          boton.textContent = listo ? (textoOriginal + ' en ' + p + ' · ' + c)
+                                    : textoOriginal;
+          boton.disabled = !listo && form.dataset.ubicacionActiva === '1';
+        }
+
+        function actualizar() { mostrarPatio(); pintarBoton(); }
+
+        fieldset.addEventListener('change', function (e) {
+          if (e.target.name === 'patio') { actualizar(); }
+          else if (e.target.name === 'calle') { pintarBoton(); }
+        });
+
+        /* El atajo PREPARA, no confirma: deja patio y calle puestos y el
+           operario todavía tiene que apretar Confirmar. Es lo que hace que
+           una sugerencia errada cueste lo mismo que no haber tenido
+           sugerencia — un toque en la calle correcta — en vez de escribir
+           una ubicación falsa. */
+        var atajos = fieldset.querySelectorAll('.atajo');
+        for (var k = 0; k < atajos.length; k++) {
+          atajos[k].addEventListener('click', function () {
+            var p = this.getAttribute('data-patio');
+            var c = this.getAttribute('data-calle');
+            var rp = fieldset.querySelector('input[name="patio"][value="' + p + '"]');
+            if (rp) { rp.checked = true; }
+            mostrarPatio();
+            var rc = fieldset.querySelector(
+              '.calles-de-patio[data-patio="' + p + '"] input[name="calle"][value="' + c + '"]');
+            if (rc) { rc.checked = true; }
+            pintarBoton();
+          });
+        }
+
+        return { fieldset: fieldset, actualizar: actualizar,
+                 pintarBoton: pintarBoton };
+      }
+
+      /* El del paso sugerido: activo sólo si ese paso pide ubicación. */
+      var sugerido = document.getElementById('ubic-sugerido');
+      if (sugerido) {
+        var s = conectar(sugerido);
+        if (s) {
+          sugerido.dataset.ubicacionActiva = '1';
+          s.actualizar();
+          s.pintarBoton();
+        }
+      }
+
+      /* El del desvío: aparece y desaparece según el paso del selector. */
+      var desvio = document.getElementById('form-desvio');
+      var caja = document.getElementById('ubicacion-desvio');
+      var selector = document.getElementById('desvio-paso');
+      if (desvio && caja && selector) {
+        var d = conectar(desvio);
+        var conUbicacion = (desvio.getAttribute('data-pasos-con-ubicacion') || '')
+                             .split(',').filter(Boolean);
+        var alternar = function () {
+          var pide = conUbicacion.indexOf(selector.value) !== -1;
+          caja.hidden = !pide;
+          desvio.dataset.ubicacionActiva = pide ? '1' : '0';
+          if (d) { d.actualizar(); }
+        };
+        selector.addEventListener('change', alternar);
+        alternar();
+      }
+    })();
+
     /* El campo de texto libre solo aparece cuando el motivo es "Otro", y ahí
        pasa a ser obligatorio: un desvío sin explicación no sirve para medir. */
     (function () {

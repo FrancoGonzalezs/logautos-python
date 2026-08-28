@@ -27,6 +27,110 @@
   {%- endif -%}
 {% endmacro %}
 
+{#
+  `bloque_ubicacion` pregunta dónde quedó la unidad, para los pasos que
+  estacionan. Es un macro y no HTML suelto porque va en DOS formularios —el del
+  paso sugerido y el del desvío— y a STOCK se llega por los dos. Duplicarlo
+  dejaría que uno de los dos se quedara sin el campo, que es exactamente el
+  bug que ya tuvimos con el push enganchado pantalla por pantalla.
+
+  `sufijo` distingue los ids entre las dos copias: sin él, el `for`/`id` de la
+  primera se lleva los clicks de la segunda.
+
+  LO QUE NO HACE, y es deliberado: no preselecciona la calle. El patio sí viene
+  puesto —es un achique, todavía hay que elegir calle— pero la calle es la
+  respuesta, y dejarla puesta convertiría "Confirmar" en un solo toque sobre
+  una predicción que se equivoca una de cada seis veces. El piso son dos
+  toques y así una sugerencia errada cuesta lo mismo que no haber tenido
+  ninguna.
+#}
+{% macro bloque_ubicacion(ubic, sufijo) %}
+  <fieldset class="ubicacion">
+    <legend>¿Dónde la dejaste?</legend>
+
+    {% if ubic.atajos %}
+      {# Sólo con tanda fresca. Pasada la ventana de una hora el acierto de la
+         última calle cae de 76% a ~50%, y un atajo que se ve confiable cuando
+         no lo es es peor que no ofrecerlo: el pulgar no lee la letra chica. #}
+      <div class="rotulo-campo">Últimas de este turno</div>
+      <div class="atajos">
+        {% for p, c in ubic.atajos %}
+          <button type="button" class="atajo"
+                  data-patio="{{ p }}" data-calle="{{ c }}"
+                  data-destino="ubic-{{ sufijo }}">
+            <span class="atajo-patio">{{ p }}</span>
+            <span class="atajo-calle">{{ c }}</span>
+          </button>
+        {% endfor %}
+      </div>
+    {% endif %}
+
+    <div class="rotulo-campo">
+      Patio
+      <span class="pista">sugerido por cliente y patio de origen</span>
+    </div>
+    <div class="chips" data-grupo="patio-{{ sufijo }}">
+      {% for p in ubic.patios %}
+        <label class="chip">
+          <input type="radio" name="patio" value="{{ p }}"
+                 {% if p == ubic.patio %}checked{% endif %}>
+          <span>{{ p }}</span>
+        </label>
+      {% endfor %}
+    </div>
+
+    <div class="rotulo-campo">
+      Calle
+      <span class="pista">
+        {% if ubic.fresco %}ordenadas por la tanda en curso
+        {% else %}ordenadas por uso del semestre{% endif %}
+      </span>
+    </div>
+
+    {#
+      Los CUATRO patios se dibujan y se muestra el del patio elegido. Cambiar
+      de patio no puede costar una vuelta al servidor: esto se usa parado en el
+      patio, con la señal que haya. Sin javascript quedan los cuatro visibles y
+      cada uno rotulado, que se entiende igual — no es lindo, pero se puede
+      trabajar.
+    #}
+    {% for p in ubic.patios %}
+      {% set bloque = ubic.calles[p] %}
+      <div class="calles-de-patio" data-patio="{{ p }}"
+           {% if p != ubic.patio %}hidden{% endif %}>
+        <div class="rotulo-patio">{{ p }}</div>
+        <div class="chips chips-calle">
+          {% for c, n in bloque.a_la_vista %}
+            <label class="chip chip-calle {% if c == bloque.reciente %}reciente{% endif %}"
+                   {% if c == bloque.reciente %}title="es la calle que se está usando ahora"{% endif %}>
+              <input type="radio" name="calle" value="{{ c }}">
+              <span class="calle-letra">{{ c }}</span>
+              <span class="calle-n">{{ n }}</span>
+            </label>
+          {% endfor %}
+        </div>
+
+        {% if bloque.plegadas %}
+          {# Las calles que existen pero casi no se usan. Siguen disponibles;
+             no compiten por el pulgar con las que se usan todos los días. #}
+          <details class="plegable">
+            <summary>otras {{ bloque.plegadas | length }} calles de {{ p }}</summary>
+            <div class="chips chips-calle">
+              {% for c, n in bloque.plegadas %}
+                <label class="chip chip-calle">
+                  <input type="radio" name="calle" value="{{ c }}">
+                  <span class="calle-letra">{{ c }}</span>
+                  <span class="calle-n">{{ n }}</span>
+                </label>
+              {% endfor %}
+            </div>
+          </details>
+        {% endif %}
+      </div>
+    {% endfor %}
+  </fieldset>
+{% endmacro %}
+
 {% macro badge_estado(valor) %}
   {%- if valor is vacio -%}
     <span class="vacio">—</span>

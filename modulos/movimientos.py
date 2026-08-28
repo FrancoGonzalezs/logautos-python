@@ -65,6 +65,10 @@ from modulos.catalogos import normalizar
 # que entrego el escaner es un VIN o texto suelto, asi que se reusa en vez de
 # escribir una segunda validacion que pueda divergir.
 from modulos.kpis import vin_limpio
+# El modulo entero y no sus nombres sueltos: `ubicacion.valida` y
+# `ubicacion.sugerencia` se leen mejor con el prefijo, que dice de que catalogo
+# salen. Y no importa a `movimientos`, asi que no hay ciclo.
+from modulos import ubicacion
 from modulos.unidades import TABLA
 
 bp = Blueprint("movimientos", __name__, url_prefix="/movimientos")
@@ -545,6 +549,14 @@ def motivo_obligatorio(desde, hacia):
 # motivo ahi seria pedirlo todo el tiempo, y un motivo que se pide siempre
 # deja de significar algo.
 PASOS_INDEPENDIENTES = {"ingreso", "revision_contenedor"}
+
+# Los pasos que ademas de mover el estado piden DONDE quedo la unidad.
+#
+# Hoy es uno solo. Es un conjunto y no un `if paso == "stock"` porque el que
+# viene detras es 'zona_despacho' -- Zd tambien es una calle concreta de PATIO
+# 1 -- y porque tenerlo como conjunto obliga a que la respuesta se busque en un
+# solo lugar: la pantalla, el POST y el push preguntan todos aca.
+PASOS_CON_UBICACION = {"stock"}
 
 
 # Estados que produce un paso cuyo nombre no coincide con el del estado. La
@@ -1167,6 +1179,30 @@ def _asegurar_tabla(db):
         if columna not in ya_estan:
             db.execute("ALTER TABLE movimientos_regla ADD COLUMN {} TEXT".format(columna))
 
+    # La ubicacion fisica: donde quedo la unidad. Por el mismo ALTER y por el
+    # mismo motivo que las dos de arriba.
+    #
+    # Se guardan ACA y no solo se mandan al legado porque son la fuente de la
+    # recencia -- `ubicacion.tanda_en_curso` las lee para ordenar las calles de
+    # la proxima pantalla. Es tambien lo que hace que REGLA pase de mirar la
+    # ubicacion a saberla: hoy `patio`/`calle` llegan en el pull dentro de
+    # `newstocks_cidef`, que es el estado ACTUAL sin historia ni autor.
+    #
+    # Solo se llenan en los movimientos que estacionan. En los demas quedan
+    # NULL, que es distinto de vacio: vacio seria "quedo sin patio" y NULL es
+    # "este movimiento no es de estacionamiento". `tanda_en_curso` filtra por
+    # NULL y por vacio para no confundirlos.
+    for columna in ("patio", "calle"):
+        if columna not in ya_estan:
+            db.execute("ALTER TABLE movimientos_regla ADD COLUMN {} TEXT".format(columna))
+
+    # La consulta de la tanda filtra por fecha y ordena por fecha sobre las
+    # filas con ubicacion, que son una minoria. Sin indice barre la tabla
+    # entera en cada request de la pantalla.
+    db.execute(
+        "CREATE INDEX IF NOT EXISTS ix_movimientos_regla_ubicacion "
+        "ON movimientos_regla (creado_en DESC) WHERE calle IS NOT NULL")
+
     # La guarda: rechaza filas sin unidad. Va acá porque esta
     # funcion ya corre en cada request y es idempotente.
     exigir_unidad_id(db, "movimientos_regla")
@@ -1219,14 +1255,15 @@ def registrar(unidad, datos):
         INSERT INTO movimientos_regla
           (unidad_id, vin, paso, paso_recomendado, es_desvio, motivo,
            motivo_detalle, resultado_pdi, guia_ingreso, fecha, responsable,
-           usuario, creado_en, estado_desde, estado_hacia)
-        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""", (
+           usuario, creado_en, estado_desde, estado_hacia, patio, calle)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""", (
         unidad["id"], unidad["vin"], datos["paso"], datos["recomendado"],
         1 if datos["es_desvio"] else 0, datos.get("motivo"),
         datos.get("motivo_detalle"), datos.get("resultado_pdi"),
         datos.get("guia_ingreso"), datos.get("fecha"), datos.get("responsable"),
         id_actual(), datetime.now().isoformat(timespec="seconds"),
-        datos.get("estado_desde"), datos.get("estado_hacia")))
+        datos.get("estado_desde"), datos.get("estado_hacia"),
+        datos.get("patio"), datos.get("calle")))
     movimiento_id = cur.lastrowid
 
     # El push al legado, en el MISMO commit que la fila del movimiento.
@@ -1238,8 +1275,13 @@ def registrar(unidad, datos):
     # habria dejado a la proxima sin push y sin que nadie lo note.
     #
     # `encolar_movimiento` devuelve None cuando el estado destino no se puede
-    # traducir a una calle (STOCK, DYP, SALIDA DYP, DESPACHADO): esos no se
-    # empujan, y NO es un error. Ver SIN_CALLE en push_legado.
+    # traducir a una calle (DYP, SALIDA DYP, DESPACHADO): esos no se empujan, y
+    # NO es un error. Ver SIN_CALLE en push_legado.
+    #
+    # STOCK ya no esta en esa lista: desde el 2026-08-27 la pantalla pregunta
+    # patio y calle, asi que la calle viaja porque el movilizador la dijo, no
+    # porque REGLA la haya adivinado. Es el unico estado cuya calle y cuyo
+    # patio vienen del formulario en vez de las tablas de traduccion.
     #
     # Import diferido: `push_legado` no importa `movimientos`, pero `taller` si
     # importa los dos y el orden se vuelve fragil al hacerlo arriba.
@@ -1265,7 +1307,9 @@ def registrar(unidad, datos):
     id_cola = None
     if datos.get("empuja_movimiento", True):
         id_cola = encolar_movimiento(db, unidad, movimiento_id,
-                                     datos.get("estado_hacia"), id_actual())
+                                     datos.get("estado_hacia"), id_actual(),
+                                     calle=datos.get("calle"),
+                                     patio=datos.get("patio"))
     db.commit()
 
     # Despues del commit, nunca antes, y detras de PUSH_LEGADO_ACTIVO.
@@ -1361,9 +1405,29 @@ def _buscar(texto):
             return exactas
 
     patron = "%{}%".format(texto)
+    # `INDEXED BY` NO ES DECORACION Y NO ES PREMATURO: esta busqueda corre en
+    # CADA TECLA de la busqueda en vivo, parado en el patio con un telefono.
+    #
+    # Un LIKE con `%` adelante no puede BUSCAR por indice -- hay que recorrer
+    # todo --, pero si puede recorrer el INDICE en vez de la TABLA, y ahi esta
+    # la diferencia: el indice cubridor pesa ~6 MB y `newstocks_cidef` pesa
+    # 382. Medido en la replica: 66 ms -> 18 ms con la base caliente.
+    #
+    # Y en frio pesa mucho mas que eso, que es el caso real de Railway: el
+    # volumen es lento, el pull escribe cada 300 s y desaloja paginas, y la
+    # primera consulta despues de eso paga el archivo entero. Medida en frio
+    # local: 980 ms.
+    #
+    # SE FUERZA porque el planificador no lo elige solo: con tres LIKE unidos
+    # por OR descarta el indice y va a la tabla. Verificado con EXPLAIN QUERY
+    # PLAN, antes y despues.
+    #
+    # Que `INDEXED BY` reviente si el indice no esta es DESEABLE: el indice lo
+    # crea `core.instalar_indices()` al arrancar, y una busqueda que
+    # silenciosamente vuelve a tardar un segundo es justo lo que nadie reporta.
     return consultar(
         'SELECT id, vin, patente, marca, modelo, color, clientecompleto, '
-        'despachado FROM "{}" '
+        'despachado FROM "{}" INDEXED BY ix_newstocks_busqueda '
         "WHERE vin LIKE ? OR patente LIKE ? OR n_motor LIKE ? "
         "ORDER BY id DESC LIMIT 25".format(TABLA),
         (patron, patron, patron))
@@ -1465,6 +1529,11 @@ def unidad(id_unidad):
                          for c in PASOS},
         hitos=hitos_de(fila), retorno=es_retorno(fila),
         motivos=MOTIVOS, hoy=date.today().isoformat(),
+        # El bloque de estacionamiento. Se calcula SIEMPRE y no solo cuando el
+        # paso recomendado es 'stock', porque tambien se llega a STOCK por el
+        # selector de desvio y ahi el bloque tiene que aparecer igual.
+        ubic=ubicacion.sugerencia(get_db(), fila, id_actual()),
+        pasos_con_ubicacion=PASOS_CON_UBICACION,
         historial=movimientos_de_unidad(fila["id"]))
 
 
@@ -1509,6 +1578,26 @@ def registrar_movimiento(id_unidad):
             motivo=request.form.get("motivo") or None,
             motivo_detalle=request.form.get("motivo_detalle") or None))
 
+    # DONDE QUEDO LA UNIDAD, para los pasos que estacionan.
+    #
+    # Se valida acá y no solo en el formulario, por lo mismo que el motivo del
+    # desvío: `calle` es la UBICACION FISICA y de ella salen los reportes de
+    # patio del legado. Un submit con javascript caído, o armado a mano, no
+    # puede meter una calle que no existe -- y tampoco puede dejarla vacía y
+    # que el push mande cadena vacía, que en la columna se ve igual que el
+    # patio vacío que acabamos de terminar de arreglar.
+    #
+    # Se RECHAZA en vez de caer a un valor por defecto. No hay default posible:
+    # la calle mayoritaria acierta el 25%, así que un default sería inventar la
+    # ubicación tres de cada cuatro veces.
+    patio = calle = None
+    if paso in PASOS_CON_UBICACION:
+        patio = (request.form.get("patio") or "").strip()
+        calle = (request.form.get("calle") or "").strip()
+        if not ubicacion.valida(patio, calle):
+            return redirect(url_for("movimientos.unidad", id_unidad=id_unidad,
+                                    error="falta_ubicacion", paso=paso))
+
     recomendado = recomendar(fila)
     clave_recomendada = recomendado["clave"] if recomendado else None
     desvio = es_desvio(clave_recomendada, paso)
@@ -1529,6 +1618,11 @@ def registrar_movimiento(id_unidad):
         "resultado_pdi": request.form.get("resultado_pdi") or None,
         "guia_ingreso": request.form.get("guia_ingreso") or None,
         "fecha": request.form.get("fecha") or None,
+        # None y no cadena vacía en los pasos que no estacionan: la columna
+        # distingue "este movimiento no es de estacionamiento" de "quedó sin
+        # patio", y `tanda_en_curso` cuenta con esa distinción.
+        "patio": patio,
+        "calle": calle,
         # Firma el que esta logueado, no un nombre escrito a mano.
         "responsable": nombre_actual() or None,
     })

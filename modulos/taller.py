@@ -65,6 +65,7 @@ from flask import Blueprint, redirect, render_template, request, url_for
 from core import consultar, exigir_unidad_id, get_db
 from modulos.acceso import id_actual, nombre_actual
 from modulos.catalogos import normalizar
+from modulos import combustible, ot_pdi
 from modulos.movimientos import (MOTIVOS, _buscar, es_desvio, estado_fisico,
                                  motivo_obligatorio, recomendar, registrar)
 from modulos.push_legado import (asegurar_tablas, campos_it, disparar_push,
@@ -79,8 +80,14 @@ bp = Blueprint("taller", __name__)
 RESULTADO = ["OK", "PRESENTA FALLAS"]
 
 # Del <select name="tipo_combu"> de actualizar_pdi.php, tal cual -- incluido
-# 'Electrico' sin tilde, que es el `value` que viaja.
-COMBUSTIBLES = ["Bencina", "Diesel", "Electrico"]
+# que la caja importa: el PHP compara `== 'Bencina'`, exacto.
+#
+# SE IMPORTA DE `ot_pdi` Y NO SE COPIA. Son la misma lista y tienen que
+# separarse nunca: la pantalla ofrece lo que el calculo acepta, y el calculo
+# acepta lo que el legado sabe leer. Copiada, alcanzaba con que alguien
+# agregara 'GASOLINA' aca -- son 2.416 unidades en la replica -- para que la
+# PDI se guardara y despues no generara OT ni descuento, sin un solo error.
+from modulos.ot_pdi import COMBUSTIBLES
 
 # Las cuatro revisiones que el PDI da por hechas y sella con la fecha del dia.
 FECHAS_AUTOMATICAS = ["aceite_coco", "sistema_audio", "adblue",
@@ -357,6 +364,35 @@ def guardar_pdi(id_unidad):
     if errores:
         return _pintar_pdi(unidad, errores, codigo=400)
 
+    # -- LA COMPUERTA DE COMBUSTIBLE -----------------------------------------
+    #
+    # El bloque entero del PDI del legado cuelga de
+    # `if($stock > 20 || $combu == 'ELECTRICO')`, y si no pasa NO guarda nada:
+    # ni la PDI, ni las OT, ni el descuento. Se replica igual, y se replica
+    # FRENANDO -- no guardando la PDI y avisando -- porque guardarla de este
+    # lado dejaria una PDI que el legado no tiene y que ademas nadie facturo.
+    #
+    # Se evalua contra la REPLICA: si el legado esta lento, la pantalla del
+    # patio no se puede colgar. Ver modulos/combustible.py.
+    #
+    # HOY ESTO FRENA DE VERDAD: el diesel tiene 5 litros contra un umbral de
+    # 20, asi que ninguna PDI a diesel pasa. No es un caso hipotetico ni un
+    # camino que se pruebe con datos inventados.
+    # `StockNoResuelto` se atrapa y se pinta: sin el stock no se puede decidir,
+    # y un 500 le dice al operario menos que nada. NO se deja pasar la PDI --
+    # "no se" no es "si": guardarla dejaria una PDI sin descuento y sin OT.
+    try:
+        compuerta = combustible.evaluar(datos["tipo_combu"])
+    except combustible.StockNoResuelto as e:
+        return _pintar_pdi(unidad, [e.motivo_usuario], codigo=400)
+    if not compuerta["pasa"]:
+        return _pintar_pdi(unidad, [compuerta["motivo"]], codigo=400)
+
+    # ANTES de escribir nada: si se mira despues, nuestra propia fila cuenta
+    # como "ya tenia" y no se empujaria nunca ninguna PDI. Ver el enganche del
+    # push, mas abajo.
+    ya_tenia_pdi = _ya_tiene_pdi(unidad)
+
     estado_actual = estado_fisico(unidad)
     if _paso_asignacion_dyp(unidad):
         # La unidad ya tiene proveedor DYP asignado: el estado se mantiene y el
@@ -396,7 +432,7 @@ def guardar_pdi(id_unidad):
     })
 
     db = _db()
-    db.execute("""
+    cur = db.execute("""
         INSERT INTO pdi_regla
           (unidad_id, movimiento_id, vin, fecha_pdi, tipo_combu, bateria,
            scanner, a_c, ob_mecanica, fr_mecanica, aceite_coco, sistema_audio,
@@ -410,7 +446,81 @@ def guardar_pdi(id_unidad):
         datos["aceite_diferencial"], estado_actual, estado_hacia,
         nombre_actual(), id_actual(),
         datetime.now().isoformat(timespec="seconds")))
+    pdi_id = cur.lastrowid
+
+    # -- El push al legado ---------------------------------------------------
+    #
+    # PDI REPETIDA: NO SE EMPUJA. Es el criterio del PHP, replicado tal cual --
+    # su bloque entero cuelga de
+    #
+    #     if($fecha_pdi == NULL || $fecha_pdi == '')
+    #
+    # o sea que una unidad que YA TENIA fecha de PDI antes de este guardado no
+    # entra: no se actualiza, no se crea OT y no se descuenta combustible. La
+    # pantalla del legado no avisa nada; simplemente no pasa.
+    #
+    # `ya_tenia_pdi` se calcula ANTES del INSERT de arriba a proposito. Si se
+    # mirara despues, nuestra propia fila recien escrita contaria como "ya
+    # tenia" y no se empujaria NUNCA ninguna PDI. Es el mismo orden que hay que
+    # cuidar en `_ya_tiene_pdi`, que mira las dos fuentes.
+    #
+    # Y ojo: esto NO impide guardar la PDI de este lado. REGLA registra la
+    # segunda PDI en su tabla -- es informacion real, la inspeccion se hizo --
+    # y lo que no hace es mandarsela al legado, porque el legado la habria
+    # descartado. Divergir para bien sigue siendo divergir.
+    #
+    # SON HASTA CUATRO ENTRADAS DE COLA Y TIENEN ORDEN. El movimiento lo encola
+    # `registrar()` mas arriba, por su propio camino; las otras tres cuelgan de
+    # el con `depende_de`:
+    #
+    #     movimiento  (registros + la unidad, en la transaccion del endpoint)
+    #        |
+    #        +-- pdi              las 14 columnas
+    #        +-- ot_pdi           las dos OT
+    #        +-- stock_consumibles  el descuento, si consume
+    #
+    # Las tres dependientes se escriben AHORA, en la misma transaccion que la
+    # PDI, y no despues de que el movimiento vuelva OK. La diferencia importa:
+    # encolarlas despues las pierde si el proceso muere en el medio, y eso
+    # dejaria una PDI aplicada en el legado y sin cobrar.
+    #
+    # Y no se intentan hasta que el movimiento este resuelto SIN error. Un 409
+    # en el movimiento significa que el legado gano, o sea que no hay PDI que
+    # cobrar -- y `orden_trabajo` es append-only, la OT de mas no se borra.
+    ids_cola = []
+    if not ya_tenia_pdi:
+        from modulos.push_legado import (asegurar_tablas, campos_pdi,
+                                         encolar_descuento, encolar_ot_pdi,
+                                         encolar_pdi)
+        asegurar_tablas(db)
+
+        # El id de cola del movimiento que `registrar()` acaba de encolar para
+        # ESTA unidad. Se busca en vez de devolverse porque `registrar()` lo
+        # llaman seis pantallas y cambiarle la firma para una sola las toca a
+        # las seis.
+        fila = db.execute(
+            "SELECT id FROM sync_push_pendientes "
+            " WHERE entidad = 'movimientos' AND python_id = ? "
+            " ORDER BY id DESC LIMIT 1", (movimiento_id,)).fetchone()
+        id_movimiento = fila["id"] if fila else None
+
+        ids_cola.append(encolar_pdi(db, unidad, pdi_id,
+                                    campos_pdi(datos, id_actual())))
+        ids_cola.append(encolar_ot_pdi(db, unidad, pdi_id, datos,
+                                       id_actual(), id_movimiento))
+        if compuerta["consume"]:
+            fila_stock = combustible.fila_de(compuerta["combustible"])
+            ids_cola.append(encolar_descuento(
+                db, pdi_id, fila_stock["id"],
+                ot_pdi.litros_de(compuerta["combustible"],
+                                 unidad["marca"], unidad["modelo"]),
+                id_movimiento))
     db.commit()
+
+    for id_cola in ids_cola:
+        if id_cola:
+            from modulos.push_legado import disparar_push
+            disparar_push(id_cola)
 
     return _volver(id_unidad, "taller.lista_pdi", "pdi",
                    unidad["vin"], estado_hacia)
