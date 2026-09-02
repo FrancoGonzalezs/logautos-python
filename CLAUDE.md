@@ -301,11 +301,15 @@ magia de la que vale.
 > resto, y es hábito, no código.
 
 **Y un doble escrito desde la misma cabeza que la spec confirma la spec.** El
-2026-09-02 el push real encontró tres defectos que el simulado no podía ver
-—entre ellos que `actualizar()` está clavado en `newstocks_cidef`— porque el
+2026-09-02 el push real encontró dos defectos que el simulado no podía ver —el
+`qb_set` protegido y el `updated_at` en una tabla que no lo tiene— porque el
 doble implementaba lo que yo *había especificado*, no lo que `Api_regla.php`
 *hace*. La spec y el doble salieron de la misma lectura, así que coincidían por
 construcción.
+
+El corolario, que ese mismo día costó un informe equivocado: **el doble tampoco
+sirve para AVERIGUAR qué hace producción.** Cuando algo falla allá, se lee el
+archivo desplegado. Ver la nota del pendiente 5e.
 
 > **LA REGLA:** un script que habla con producción usa **el mismo cliente que
 > produce el tráfico real**, no `requests` pelado ni un doble. Si no, prueba
@@ -392,25 +396,59 @@ Ida y vuelta automática entre Railway y `claude.logautos.cl` desde el
 | `check_mecanica_unidad` | actualizar | `PUT /api_regla/unidades/{id}` | ídem, con `fecha_check_list_mecanica` en la lista blanca (bloque H) |
 | `check_list` (ingreso) | crear | `POST /api_regla/check_list` | **el PHP está desplegado y Python NO la tiene** — ver pendiente 9 |
 
-**El push real del mecánico SE CORRIÓ el 2026-09-02 y ENCONTRÓ TRES DEFECTOS.**
-Los bloques G–K responden pero **no funcionan**. Ver el bloque M de
-`scripts/Api_regla_check_list.php`, sin desplegar:
+**El push real del mecánico corrió el 2026-09-02.** El paso 1 anda contra
+producción; el paso 2 todavía no. Estado por criterio:
 
-| | Qué | Gravedad |
-|---|---|---|
-| **M1** | `actualizar()` está clavado en `newstocks_cidef` — no usa `tabla_de($entidad)`. `check_list_mecanica_falla/2961` fue a buscar la **unidad** 2961 (un CIDEF real) en vez de la fila del check list. | **Casi escribe en un auto ajeno.** No lo hizo porque de las 7 columnas de la lista blanca `newstocks_cidef` tiene 1 (`modalidad`) y el UPDATE falló entero. Suerte, no diseño. |
-| **M2** | `$this->db->qb_set` del bloque J es **protected** en CI3 → fatal 500 cuando `$cambios` está vacío. | Regresión viva: la sonda 4 de `verificar_push_produccion.py` —la única que prueba el locking sin escribir— devuelve 500 en vez de 400 desde que se desplegó J. |
-| **M3** | `legado_updated_at_conocido` cuenta como columna ignorada en `crear_fila`. | Cosmético, pero arruina `ignoradas`, que existe justamente para poder afirmar que nada se perdió en silencio. |
+| Criterio | Estado |
+|---|---|
+| A. las 82 columnas, `ignoradas` vacío | ✅ **verificado** contra el endpoint real |
+| B. dos fallas acumuladas, tres listas alineadas | ❌ el PUT devuelve 500 |
+| C. `contador` = 2 | ❌ ídem |
 
-**Lo que quedó en producción de esa corrida:** dos filas huérfanas en
-`check_list_mecanica` (id **2960** y **2961**, las dos de la unidad 66505 de
-PRUEBA, `ABIERTO`, sin fallas, `contador` 0) y `fecha_check_list_mecanica =
-2026-09-02` en la 66505. Nada en una unidad real.
+**Falta una línea de PHP: el bloque N.** `actualizar()` hace
+`$cambios['updated_at'] = $ahora` siempre, y `check_list_mecanica` no tiene esa
+columna (`check_list` tampoco; `newstocks_cidef` sí, y era la única entidad que
+existía cuando esa línea se escribió). Medido con tres pedidos sobre la misma
+fila: `{"contador":1}` → 500, `{"observacion":"X"}` → 500, `{"estado":"ABIERTO"}`
+→ 400 correcto. Las dos que fallan son las que pasan por `set()` y dejan
+`$cambios` vacío, de modo que `updated_at` queda como única columna del UPDATE.
 
-**Y una lección que ya está al lado de la Regla 4:** ninguno de los tres los
-podía atrapar el legado simulado, porque el doble implementaba **lo que la spec
-decía**, no lo que `Api_regla.php` hace. Un doble escrito desde la misma cabeza
-que la spec confirma la spec.
+**Lo que ya se arregló y desplegó:** el `qb_set` del bloque J (era `protected`
+→ fatal 500 cuando `$cambios` está vacío, que es justo el caso del paso 2), y
+del lado Python el campo de protocolo `legado_updated_at_conocido`, que ya no
+viaja en los `crear` sin locking y por eso `ignoradas` volvió a servir.
+
+**En producción quedan tres filas huérfanas** en `check_list_mecanica` — 2960,
+2961 y 2962 — todas de la unidad 66505 de PRUEBA, `ABIERTO`, sin fallas. Se
+quedan: la copia se descarta en el corte.
+
+### Lo que costó más que los bugs: leí la spec en vez del archivo desplegado
+
+El 2026-09-02 reporté que `actualizar()` estaba clavado en `newstocks_cidef` y
+que un push de falla podía escribirle a una unidad ajena. **Era falso.** El
+método resuelve `tabla_de($entidad)` y lo usa en el SELECT y en el UPDATE; quedó
+completo cuando se armó el archivo con los bloques E y F, porque el bloque A
+había quedado a medio aplicar.
+
+Dos errores encadenados, y el segundo es el que importa:
+
+1. Tomé como evidencia el mensaje del 404 —`"unidad no encontrada"` para
+   cualquier entidad—, que es texto viejo que yo mismo dejé así a propósito en
+   el bloque A. Un mensaje no dice qué tabla se consultó.
+2. **Leí el bloque que *especifica* `actualizar()` en este repo, no el
+   `Api_regla.php` que corre en el servidor.** La spec y el desplegado se habían
+   separado, y ganó la spec.
+
+> **CUANDO ALGO FALLA CONTRA PRODUCCIÓN, LA FUENTE ES EL ARCHIVO DESPLEGADO.**
+> No el documento que dice cómo debería ser. La spec describe una intención; el
+> servidor ejecuta un archivo. Cuando no coinciden, el que tiene razón sobre lo
+> que pasó es el archivo. Se lee sin bajarlo:
+> `sed -n '/function actualizar/,/^    }/p' ~/public_html/application/controllers/Api_regla.php`
+
+Y una consecuencia de haber retirado el bloque M entero: traía tres arreglos,
+uno falso y dos buenos. **Retirar un bloque completo porque un ítem está mal se
+lleva puesto lo que sí servía** — el `updated_at` volvió como bloque N tres
+horas después. Un bloque es una unidad de despliegue, no una unidad de verdad.
 
 **El estado anterior de esta nota, para referencia:** `scripts/verificar_check_mecanico_produccion.py`, dry-run por defecto, `--escribir` para el push de verdad. Faltan dos cosas, ninguna de código:
 

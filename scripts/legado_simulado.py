@@ -455,6 +455,14 @@ class Handler(BaseHTTPRequestHandler):
         ignoradas = []
         for k, v in datos.items():
             if k == "legado_updated_at_conocido":
+                # El original SI lo cuenta como ignorada -- no lo excluye. Aca
+                # se lo saltea igual porque Python dejo de mandarlo (ver
+                # `manda_conocido` en ENTIDADES): si llegara, seria un error de
+                # Python, y el `ignoradas` de la prueba lo tiene que mostrar
+                # como cualquier otra columna de mas.
+                ignoradas.append(k)
+                IGNORADAS.add(k)
+                CONTADORES["ignoradas"] += 1
                 continue
             if k in CLM_PERMITIDAS:
                 fila[k] = v

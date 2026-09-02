@@ -803,219 +803,223 @@ public function leer_fila($entidad = null, $id = null)
 
 
 /* ===========================================================================
-   BLOQUE M -- TRES ARREGLOS, y el primero es urgente
+   BLOQUE M -- el `qb_set` del bloque J. YA DESPLEGADO el 2026-09-02.
    ===========================================================================
 
-   Salieron del push REAL contra produccion el 2026-09-02. Ninguno los podia
-   atrapar el legado simulado, y el motivo vale mas que los bugs: el doble
-   implementaba lo que la spec DECIA, no lo que `Api_regla.php` HACE. Un doble
-   escrito desde la misma cabeza que la spec confirma la spec.
+   Se deja escrito porque el archivo tiene que contar que se cambio y por que,
+   no solo lo que falta hacer.
 
-   ---------------------------------------------------------------------------
-   M1. `actualizar()` ESTA CLAVADO EN `newstocks_cidef`  -- URGENTE
-   ---------------------------------------------------------------------------
+   EL BUG
 
-   El bloque A generalizo `mapa_entidades` / `columnas_permitidas` / `tabla_de`.
-   NO generalizo `actualizar()`: el metodo busca y escribe en `newstocks_cidef`
-   a mano, en dos lugares.
+   El bloque J dejo esta linea:
 
-   O sea que `PUT /api_regla/check_list_mecanica_falla/2961` -- donde 2961 es el
-   id de una fila de `check_list_mecanica` -- va a buscar la UNIDAD 2961 de
-   `newstocks_cidef`, que es otra fila, de otra tabla, de otro auto.
+       if (!$cambios && !$this->db->qb_set) {
 
-   EN LA PRUEBA REAL ESO PASO. La unidad 2961 existe: es un CIDEF DESPACHADO,
-   VIN LGG8E2D16NZ352329. El UPDATE fallo con 500 y no escribio nada -- pero
-   por casualidad, no por diseño: de las siete columnas de la lista blanca de
-   `check_list_mecanica_falla`, `newstocks_cidef` tiene UNA, `modalidad`. Si
-   hubiera tenido las siete, el push le habria escrito las fallas de un check
-   list a un auto ajeno, con 200 y sin que nada se quejara.
-
-   El sintoma que se ve hoy es un 500 con el mensaje 'no se pudo actualizar la
-   unidad'. La palabra "unidad" en ese mensaje es la pista: no deberia estar
-   hablando de unidades.
-
-   ---------------------------------------------------------------------------
-   M2. `$this->db->qb_set` ES PROTECTED  -- REGRESION VIVA
-   ---------------------------------------------------------------------------
-
-   Del bloque J. `qb_set` es una propiedad PROTECTED de `CI_DB_mysqli_driver`,
-   asi que leerla desde el controlador es
+   `qb_set` es una propiedad PROTECTED de `CI_DB_mysqli_driver`, asi que leerla
+   desde el controlador es
 
        Error: Cannot access protected property CI_DB_mysqli_driver::$qb_set
 
-   -- un 500 fatal. Se dispara solo cuando `$cambios` esta vacio, porque PHP
-   corta el `&&` antes de llegar ahi; por eso los push normales siguen andando
-   y esto no se noto al desplegar.
+   -- un 500 fatal.
 
-   Pero la rama "ningun campo actualizable" ahora devuelve 500 en vez de 400, y
-   esa rama la usa la sonda 4 de `verificar_push_produccion.py`, que es la
-   unica que prueba el locking contra la base real sin escribir. O sea que la
-   herramienta de verificacion del IT y de la PDI esta rota desde que se
-   desplego el bloque J.
+   POR QUE NO SE NOTO AL DESPLEGAR, y por que reventaba justo en el paso 2
 
-   ---------------------------------------------------------------------------
-   M3. `legado_updated_at_conocido` CUENTA COMO COLUMNA IGNORADA
-   ---------------------------------------------------------------------------
+   PHP corta el `&&` cuando el primer operando es falso. `!$cambios` es falso
+   siempre que haya UNA columna normal en el cuerpo, asi que ningun push del IT
+   ni de la PDI llegaba a tocar `qb_set`.
 
-   `crear()` de Python lo manda siempre dentro del cuerpo -- el POST no tiene
-   un id en la URL donde colgarlo --, y `crear_fila` lo mete en `ignoradas`
-   porque no esta en la lista blanca.
+   El paso 2 del check list mecanico es el unico caso donde TODAS las columnas
+   del cuerpo son acumulativas o sumativas: las siete pasan por `set()` y
+   ninguna entra en `$cambios`. Entonces `$cambios` queda vacio, PHP NO corta,
+   y revienta. Era el 500 entero -- no habia un segundo bug debajo.
 
-   No rompe nada, pero arruina el unico indicador que tenemos: `ignoradas` se
-   agrego para poder AFIRMAR que ninguna columna se perdio en silencio, y con
-   un falso positivo fijo adentro deja de servir para eso. Es un campo del
-   protocolo, no una columna.
+   LA OTRA VICTIMA, que estuvo rota varios dias en silencio
+
+   La rama "ningun campo actualizable en el body" es exactamente la que usa la
+   SONDA 4 de `scripts/verificar_push_produccion.py`: manda un timestamp del
+   ano 2000 y NINGUN campo, y espera 409 o 400. Es la unica sonda que prueba el
+   locking optimista contra la base real sin escribir. Desde que se desplego el
+   bloque J devolvia 500, o sea que esa verificacion no estaba corriendo.
+
+   Un bug en el camino de error solo se ve cuando algo falla, y lo que mira si
+   los errores fallan bien es la herramienta de verificacion -- que era
+   justamente la que estaba rota.
+
+   EL ARREGLO, tal como quedo desplegado
+
+   El bucle lleva su propia bandera en vez de espiar el estado interno del
+   query builder:
+
+       $hubo_sql = FALSE;                        // arriba del foreach
+
+       ... adentro, donde antes decia $cambios['__acumulado'] = TRUE;
+       $hubo_sql = TRUE;
+
+       if (!$cambios && !$hubo_sql) {            // en vez de !$this->db->qb_set
+
+   y el `unset($cambios['__acumulado']);` se fue: ya no hay nada que sacar.
+
+   Ademas de que compila, no depende de como CodeIgniter guarde su estado
+   interno -- que es un detalle de implementacion de una libreria ajena y puede
+   cambiar sin avisar.
    =========================================================================== */
 
 
-/* ---------------------------------------------------------------------------
-   M1 -- LOS DOS LUGARES A CAMBIAR EN `actualizar()`.
+/* ===========================================================================
+   LO QUE **NO** HAY QUE TOCAR, y por que esta escrito aca
+   ===========================================================================
 
-   PRIMERO. Buscar la linea
+   `actualizar()` YA RESUELVE LA TABLA POR ENTIDAD. Hace
+   `$tabla = $this->tabla_de($entidad)` y lo usa en el SELECT y en el UPDATE.
+   Quedo completo cuando se armo el archivo con los bloques E y F, porque el
+   bloque A habia quedado a medio aplicar.
 
-       $consulta = $this->db->get_where('newstocks_cidef', array('id' => $id));
+   El 2026-09-02 esta spec llego a decir lo contrario -- que el metodo estaba
+   clavado en `newstocks_cidef` y que un PUT de falla iba a escribirle a una
+   unidad ajena. ERA FALSO, y la correccion importa mas que el error:
 
-   y las cinco que la siguen, hasta
+     * La "evidencia" era el mensaje del 404, que dice "unidad no encontrada"
+       para CUALQUIER entidad. Es texto viejo que quedo asi a proposito desde
+       el bloque A; no dice nada sobre que tabla se consulto.
 
-           $this->json(404, array('error' => 'unidad no encontrada: ' . $id));
-       }
+     * Y el metodo se leyo del BLOQUE QUE LO ESPECIFICA en este archivo, no del
+       `Api_regla.php` que esta corriendo en el servidor. La spec y el
+       desplegado se habian separado, y gano la spec.
 
-   Se reemplaza ese bloque entero por:
-   --------------------------------------------------------------------------- */
+   > CUANDO ALGO FALLA CONTRA PRODUCCION, LA FUENTE ES EL ARCHIVO DESPLEGADO.
+   > No el documento que dice como deberia ser. La spec describe una intencion;
+   > el servidor ejecuta un archivo. Cuando no coinciden, el que tiene razon
+   > sobre lo que paso es el archivo.
 
-        // LA TABLA SALE DE LA ENTIDAD, no esta clavada.
-        //
-        // Antes decia 'newstocks_cidef' a mano, y con eso
-        // `check_list_mecanica_falla/2961` iba a buscar la UNIDAD 2961 en vez
-        // de la fila 2961 del check list. Ver el encabezado del bloque M.
-        $tabla = $this->tabla_de($entidad);
-        if (!$tabla) {
-            $this->json(404, array('error' => 'entidad sin tabla: ' . $entidad));
-        }
+   Para leerlo sin bajarlo, desde cPanel Terminal:
 
-        $consulta = $this->db->get_where($tabla, array('id' => $id));
-        if ($consulta === FALSE) {               // mismo motivo que arriba
-            $this->json(500, array('error' => 'no se pudo leer ' . $tabla));
-        }
-        $fila = $consulta->row_array();
-        if (!$fila) {
-            // El mensaje nombra la ENTIDAD. El anterior decia "unidad" para
-            // todas, y eso mando a buscar el problema al lugar equivocado.
-            $this->json(404, array(
-                'error' => 'no existe ' . $entidad . ' ' . $id));
-        }
+       sed -n '/function actualizar/,/^    }/p' \
+           ~/public_html/application/controllers/Api_regla.php
+   =========================================================================== */
 
-/* ---------------------------------------------------------------------------
-   SEGUNDO. Mas abajo, la linea
+
+/* ===========================================================================
+   BLOQUE N -- `updated_at` solo en las tablas que lo tienen
+   ===========================================================================
+
+   ES UNA LINEA. Es lo que falta para que el paso 2 del check list mecanico
+   funcione.
+
+   EL SINTOMA
+
+   Con el bloque M ya desplegado, `PUT /api_regla/check_list_mecanica_falla/<id>`
+   sigue devolviendo
+
+       500 {"error":"no se pudo actualizar la unidad"}
+
+   LA MEDICION QUE LO SEÑALA
+
+   Tres pedidos sobre la MISMA fila, cambiando solo el cuerpo:
+
+       {"contador": 1}              -> 500      (columna SUMATIVA)
+       {"observacion": "SONDA A"}   -> 500      (columna ACUMULATIVA)
+       {"estado": "ABIERTO"}        -> 400      (fuera de la lista blanca; correcto)
+
+   Las dos que 500 son exactamente las que pasan por `$this->db->set()` y NO
+   por `$cambios`. El 400 de la tercera prueba que el `if (!$cambios &&
+   !$hubo_sql)` del bloque M quedo bien.
+
+   O sea: cuando TODAS las columnas del cuerpo son acumulativas o sumativas,
+   `$cambios` llega vacio a la linea
 
        $cambios['updated_at'] = $ahora;
 
-   se reemplaza por lo de abajo: `check_list_mecanica` NO TIENE `updated_at`, y
-   escribirsela es un "Unknown column" que tumba el UPDATE entero.
+   y esa linea lo deja con UNA sola clave: `updated_at`. El UPDATE sale con una
+   columna que la tabla no tiene.
+
+       check_list_mecanica   ->  NO tiene updated_at   (ni created_at)
+       check_list            ->  NO tiene updated_at
+       newstocks_cidef       ->  SI
+
+   `unidades` es la unica entidad cuya tabla la tiene, y era la unica que
+   existia cuando esa linea se escribio.
+
+   POR QUE NO SE VIO ANTES, y por que el paso 1 si anda
+
+   El paso 1 va por `crear_fila`, que es otro metodo y no toca `updated_at`.
+   Y en `actualizar()`, hasta el bloque K todas las entidades eran `unidades`.
+   El check list mecanico es la primera que actualiza otra tabla, y ademas la
+   primera cuyo cuerpo puede ser 100% columnas de `set()`. Las dos condiciones
+   juntas hacen falta para llegar a este error.
+
+   LO QUE QUEDA POR CONFIRMAR, y como
+
+   La evidencia es fuerte pero indirecta: se dedujo del esquema y de que las
+   dos ramas de `set()` fallan igual. Lo que lo cierra del todo es el error de
+   MySQL, que CodeIgniter escribe en su log:
+
+       tail -50 ~/public_html/application/logs/log-$(date +%Y-%m-%d).php
+
+   Tiene que decir algo como
+
+       Unknown column 'updated_at' in 'field list'
+
+   Si dijera otra cosa -- un error de sintaxis en el CONCAT o en el CASE --,
+   entonces el problema es la SQL del bloque K y no esta linea. Vale mirarlo
+   antes de dar esto por cerrado.
+   =========================================================================== */
+
+/* ---------------------------------------------------------------------------
+   EL CAMBIO. En `actualizar()`, la linea
+
+       $cambios['updated_at'] = $ahora;
+
+   se reemplaza por lo de abajo. Es la unica linea que se toca.
    --------------------------------------------------------------------------- */
 
-        // Solo si la tabla la tiene. `$fila` ya vino de la base, asi que sus
-        // claves SON las columnas reales -- no hace falta preguntarle al
-        // esquema.
+        // Solo si la tabla la tiene. `$fila` ya vino de la base unas lineas mas
+        // arriba, asi que sus claves SON las columnas reales de esta tabla --
+        // no hace falta preguntarle al esquema ni mantener una lista.
+        //
+        // `check_list_mecanica` y `check_list` no tienen `updated_at`: no la
+        // necesitan, porque su locking no es optimista sino la
+        // Idempotency-Key. Escribirsela igual es un "Unknown column" que tumba
+        // el UPDATE entero -- y el mensaje que sale es el generico
+        // 'no se pudo actualizar la unidad', que no dice nada de columnas.
         if (array_key_exists('updated_at', $fila)) {
             $cambios['updated_at'] = $ahora;
         }
 
 /* ---------------------------------------------------------------------------
-   TERCERO. La linea
+   DESPUES DE SUBIR, dos sondas. La primera NO escribe (id inexistente); la
+   segunda escribe sobre la fila 2962, que es de la unidad 66505 de PRUEBA.
 
-       $this->db->update('newstocks_cidef', $cambios);
-
-   se reemplaza por
-
-       $this->db->update($tabla, $cambios);
-
-   `$tabla` ya quedo definida arriba.
-   --------------------------------------------------------------------------- */
-
-
-/* ---------------------------------------------------------------------------
-   M2 -- EL `qb_set`.
-
-   La linea que dejo el bloque J
-
-       if (!$cambios && !$this->db->qb_set) {
-
-   se reemplaza por
-
-       if (!$cambios && !$hubo_sql) {
-
-   y ARRIBA del `foreach` que arma `$cambios` -- junto a las lineas
-   `$acumulan = ...` y `$suman = ...` -- se agrega
-
-       $hubo_sql = FALSE;
-
-   y adentro del bucle, las DOS lineas que hoy dicen
-
-       $cambios['__acumulado'] = TRUE;
-
-   pasan a decir
-
-       $hubo_sql = TRUE;
-
-   con lo cual el `unset($cambios['__acumulado']);` de mas abajo SE BORRA: ya
-   no hay nada que sacar.
-
-   Es lo mismo que se intentaba con `qb_set` -- "hubo un set() de SQL crudo" --
-   pero con una variable nuestra en vez de espiar el interior del query
-   builder. Ademas de que compila, no depende de como CodeIgniter guarde su
-   estado interno.
-   --------------------------------------------------------------------------- */
-
-
-/* ---------------------------------------------------------------------------
-   M3 -- EL CAMPO DE PROTOCOLO NO ES UNA COLUMNA IGNORADA.
-
-   En `crear_fila`, el bucle de la lista blanca dice hoy
-
-       foreach ($datos as $columna => $valor) {
-           if (in_array($columna, $columnas, TRUE)) {
-               $fila[$columna] = $valor;
-           } else {
-               $ignoradas[] = $columna;
-           }
-       }
-
-   Se le agrega una linea al principio del cuerpo del `foreach`:
-   --------------------------------------------------------------------------- */
-
-        foreach ($datos as $columna => $valor) {
-            // Campo del PROTOCOLO, no una columna. `crear()` lo manda siempre
-            // porque el POST no tiene un id en la URL donde colgarlo. Contarlo
-            // como ignorado le mete un falso positivo fijo al unico indicador
-            // que dice si algo se perdio en silencio.
-            if ($columna === 'legado_updated_at_conocido') {
-                continue;
-            }
-            if (in_array($columna, $columnas, TRUE)) {
-                $fila[$columna] = $valor;
-            } else {
-                $ignoradas[] = $columna;
-            }
-        }
-
-/* ---------------------------------------------------------------------------
-   DESPUES DE SUBIR
-
-       php -l ~/public_html/application/controllers/Api_regla.php
-       grep -c "newstocks_cidef" .../Api_regla.php    -> ninguna dentro de actualizar()
-       grep -c "qb_set" .../Api_regla.php             -> 0
-
-   Y las dos sondas que no escriben:
-
-       # M1: ahora tiene que decir "no existe check_list_mecanica_falla", no "unidad"
+       # sigue dando 404 y no rompio nada
        curl -s -X PUT -H "X-API-Key: $CLAVE" -H "Content-Type: application/json" \
             -H "Idempotency-Key: $(uuidgen)" \
             -d '{"observacion":"SONDA","legado_updated_at_conocido":""}' \
             https://claude.logautos.cl/api_regla/check_list_mecanica_falla/999999999
 
-       # M2: 400 "ningun campo actualizable", NO 500
+       # ahora tiene que dar 200
        curl -s -X PUT -H "X-API-Key: $CLAVE" -H "Content-Type: application/json" \
-            -d '{"legado_updated_at_conocido":"2000-01-01 00:00:00"}' \
-            https://claude.logautos.cl/api_regla/unidades/2961
+            -H "Idempotency-Key: $(uuidgen)" \
+            -d '{"contador":1,"legado_updated_at_conocido":""}' \
+            https://claude.logautos.cl/api_regla/check_list_mecanica_falla/2962
+
+   Y con eso corre entero:
+
+       LEGADO_API_KEY=... python scripts/verificar_check_mecanico_produccion.py --escribir
    --------------------------------------------------------------------------- */
+
+
+/* ===========================================================================
+   NOTA SOBRE EL BLOQUE M QUE SE RETIRO
+   ===========================================================================
+
+   El bloque M original traia TRES arreglos a `actualizar()`. El primero --
+   "esta clavado en newstocks_cidef" -- era FALSO, y con razon se descarto
+   entero.
+
+   Pero traia dos que no lo eran, y se fueron con el: el `qb_set` (que ya se
+   arreglo por otro lado) y este `updated_at`. Retirar un bloque completo
+   porque uno de sus items esta mal se lleva puesto lo que si servia.
+
+   > Cuando se retira una correccion equivocada, hay que mirar si arrastra
+   > alguna que no lo era. Un bloque es una unidad de despliegue, no una
+   > unidad de verdad.
+   =========================================================================== */

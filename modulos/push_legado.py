@@ -302,6 +302,15 @@ ENTIDADES = {
         "tabla_origen": "check_list_mecanica_regla",
         "tabla_espejo": "newstocks_cidef",
         "ruta": "check_list_mecanica",
+        # `crear_fila` NO hace locking optimista: inserta una fila nueva, no
+        # hay version previa contra la cual chocar. Por eso exige
+        # Idempotency-Key en su lugar.
+        #
+        # Y por eso `legado_updated_at_conocido` NO viaja: alla no lo mira
+        # nadie, y como no esta en la lista blanca vuelve dentro de
+        # `ignoradas` -- que es el UNICO indicador que dice si una columna se
+        # perdio en silencio. Un falso positivo fijo adentro lo inutiliza.
+        "manda_conocido": False,
         # El id que devuelve el legado al crear la fila se guarda aca y se le
         # pasa a las entradas que dependen de esta. Ver `_propagar_id_creado`.
         "guarda_id_en": ("check_list_mecanica_regla", "legado_id"),
@@ -1485,9 +1494,14 @@ def ejecutar_entrada(id_cola, cliente=None, db_path=None):
             elif entrada["operacion"] == "crear":
                 # El conocido viaja DENTRO del cuerpo: el POST no tiene un id
                 # en la URL donde colgarlo, a diferencia del PUT.
+                #
+                # Salvo en las entidades que declaran `manda_conocido: False`,
+                # porque su endpoint no hace locking. Ver la nota de
+                # `check_list_mecanica` en ENTIDADES.
                 cuerpo = dict(campos)
-                cuerpo["legado_updated_at_conocido"] = (
-                    entrada["legado_updated_at_conocido"] or "")
+                if conf.get("manda_conocido", True):
+                    cuerpo["legado_updated_at_conocido"] = (
+                        entrada["legado_updated_at_conocido"] or "")
                 resp = cliente.crear(conf["ruta"], cuerpo,
                                      idem_key=entrada["idempotency_key"] or "")
             else:
