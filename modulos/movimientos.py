@@ -151,10 +151,15 @@ PASOS = {
         "formulario": "inspeccion_despacho.entrada",
     },
     "check_mecanica": {
-        "titulo": "Check de Mecánica",
-        "detalle": "Revisión mecánica (alimenta check_list_mecanica).",
+        "titulo": "Check List Mecánico",
+        "detalle": "Los 65 puntos del estado del vehículo, y las fallas con "
+                   "su foto.",
         "estado_destino": "INGRESO A TALLER",
         "pide": [],
+        # Como el check list de ingreso, este paso no se confirma en la
+        # tarjeta sino en su propio formulario (modulos/check_list_mecanica.py):
+        # son 65 campos y después una segunda pantalla para las fallas.
+        "formulario": "check_list_mecanica.formulario",
     },
 }
 
@@ -1305,7 +1310,7 @@ def registrar(unidad, datos):
     # Import diferido: `push_legado` no importa `movimientos`, pero `taller` si
     # importa los dos y el orden se vuelve fragil al hacerlo arriba.
     # `empuja_movimiento=False` lo pasa la pantalla cuyo paso YA tiene su propia
-    # entidad de push. Hoy es una sola: el IT.
+    # entidad de push. Hoy son dos: el IT y el check list mecanico.
     #
     # No es para evitar un choque tecnico -- aunque tambien lo evita: las dos
     # entradas saldrian con el mismo `legado_updated_at_conocido`, la primera
@@ -1321,6 +1326,20 @@ def registrar(unidad, datos):
     #
     # El PDI es al reves: su bloque llama a registromov() dos veces, asi que
     # cuando entre esa entidad el movimiento SI se empuja.
+    #
+    # EL CHECK LIST MECANICO ES COMO EL IT. Contado igual, sobre
+    # `Nota.php:check_list_mecanica_proces()`: registromov() cero veces,
+    # `actualizar_vin()` UNA -- y esa unica escritura es
+    # `fecha_check_list_mecanica`, que el modulo empuja por la entidad
+    # `unidades`. La fila de `registros` no la genera el legado, asi que
+    # tampoco se la mandamos.
+    #
+    # OJO, PENDIENTE: `check_list_ingreso` esta en la misma situacion --
+    # `Nota.php:check_list()` tambien llama a registromov() cero veces -- y HOY
+    # SI empuja el movimiento. Se descubrio al construir el mecanico. No se
+    # cambio en la misma tanda a proposito: es codigo desplegado y en uso, y
+    # cambiarle el push a un modulo vivo no es un detalle de esta entrega.
+    # Anotado en CLAUDE.md.
     from modulos.push_legado import asegurar_tablas, encolar_movimiento
     asegurar_tablas(db)
     id_cola = None

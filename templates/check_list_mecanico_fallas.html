@@ -1,0 +1,133 @@
+{% extends "base.html" %}
+{% block titulo %}Fallas — {{ c['vin'] | mostrar }}{% endblock %}
+
+{#
+  La pantalla del paso 2. Es de a UNA falla, como el original, y a propósito.
+
+  En el check list de ingreso desviamos: aquel manda un daño por envío y el
+  nuestro acepta N filas de una, porque el operario está en el patio con la
+  unidad delante y seis viajes al servidor son seis esperas.
+
+  Acá NO. Cada falla lleva una foto, y una foto es una subida: seis fallas son
+  seis subidas de archivo pase lo que pase. Agrupar las seis en un envío no
+  ahorra tiempo, sólo hace que un fallo de red a mitad de camino pierda las
+  seis en vez de una. La diferencia entre las dos pantallas no es de estilo:
+  es que allá el costo es el viaje y acá el costo es el archivo.
+#}
+
+{% block contenido %}
+  <p class="volver">
+    <a href="{{ url_for('movimientos.unidad', id_unidad=c['unidad_id']) }}">‹ volver a la unidad</a>
+  </p>
+
+  <h1>Fallas del check list mecánico</h1>
+  <p class="subtitulo">
+    {{ c['vin'] | mostrar }}
+    · {{ c['marca'] | mostrar }} {{ c['modelo'] | mostrar }}
+    · <strong>{{ c['cliente'] | mostrar }}</strong>
+    · check list <strong>{{ c['estado'] | mostrar }}</strong>
+  </p>
+
+  {% if reabierto %}
+    <div class="aviso">
+      Este check list está <strong>REABIERTO</strong>. Las fallas que cargues
+      ahora van a las columnas de la segunda pasada
+      (<code>fallas_adicionales</code>) y no se mezclan con las de la primera
+      — es como el sistema anterior las distingue.
+    </div>
+  {% endif %}
+
+  {% if errores %}
+    <div class="aviso aviso-malo">
+      <strong>No se guardó la falla.</strong>
+      <ul class="lista-errores">
+        {% for e in errores %}<li>{{ e }}</li>{% endfor %}
+      </ul>
+      <p class="nota-errores">La foto hay que volver a elegirla.</p>
+    </div>
+  {% endif %}
+
+  <form method="post" enctype="multipart/form-data" class="form-paso"
+        action="{{ url_for('check_list_mecanica.agregar', id_check=c['id']) }}">
+    <section class="grupo">
+      <h2 class="bloque-titulo">Agregar una falla</h2>
+      <div class="campos-paso">
+        <label class="ancho">
+          <span>Falla</span>
+          {# Lista abierta: sugiere lo que ya se escribió, ordenado por cuántas
+             veces apareció, pero deja escribir cualquier cosa. Cerrarla a una
+             lista con 1.142 valores distintos adentro — que es lo que hay —
+             sería volver obligatorio el desorden. #}
+          <input type="text" name="falla" list="fallas_conocidas"
+                 value="{{ v['falla'] if v else '' }}"
+                 autocomplete="off" required
+                 placeholder="Por ejemplo: EXTINTOR VENCIDO">
+          <datalist id="fallas_conocidas">
+            {% for f in sugeridas %}<option value="{{ f }}">{% endfor %}
+          </datalist>
+        </label>
+        <label>
+          <span>Modalidad</span>
+          <select name="modalidad" required>
+            <option value="">—</option>
+            {% for valor, etiqueta in modalidades %}
+              <option value="{{ valor }}"
+                {% if v and v['modalidad'] == valor %}selected{% endif %}>{{ etiqueta }}</option>
+            {% endfor %}
+          </select>
+        </label>
+        <label>
+          <span>Foto de la falla</span>
+          <input type="file" name="foto" accept="image/*" capture="environment" required>
+        </label>
+      </div>
+      <div class="acciones">
+        <button type="submit" class="btn btn-principal">Agregar falla</button>
+      </div>
+    </section>
+  </form>
+
+  <section class="grupo">
+    <h2 class="bloque-titulo">
+      Fallas cargadas
+      <span class="pista">{{ cargadas | length }}</span>
+    </h2>
+    {% if cargadas %}
+      <table class="tabla">
+        <thead>
+          <tr><th>#</th><th>Falla</th><th>Modalidad</th><th>Foto</th></tr>
+        </thead>
+        <tbody>
+          {% for f in cargadas %}
+            <tr>
+              <td>{{ f.n }}</td>
+              <td>{{ f.falla }}</td>
+              <td>{{ f.modalidad }}</td>
+              <td>
+                {% if f.foto %}
+                  <a href="{{ f.foto }}" target="_blank" rel="noopener">ver</a>
+                {% else %}—{% endif %}
+              </td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+      <p class="pista">
+        Las fotos se sirven con un enlace público y no se pueden despublicar:
+        una vez que el enlace salió, sigue funcionando. Es lo mismo que hace el
+        sistema anterior, y es lo que permite que se vean en sus pantallas.
+      </p>
+    {% else %}
+      <p class="vacio">Todavía no hay fallas cargadas.</p>
+    {% endif %}
+  </section>
+
+  <section class="grupo">
+    <h2 class="bloque-titulo">Qué falta para cerrarlo</h2>
+    <p class="pista">
+      El correo al cliente y el paso a <strong>CERRADO</strong> los hace
+      administración desde el sistema anterior. REGLA lo va a ver cuando el
+      estado vuelva por la sincronización — puede tardar unos minutos.
+    </p>
+  </section>
+{% endblock %}

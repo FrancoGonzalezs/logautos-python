@@ -16,7 +16,9 @@ from core import (DB_PATH, cerrar_db, clave_de_sesion, instalar_guardas,
 from modulos.acceso import bp as bp_acceso, registrar_guardia, usuario_actual
 from modulos.catalogos import bp as bp_catalogos
 from modulos.check_list import bp as bp_check_list
+from modulos.check_list_mecanica import bp as bp_check_list_mecanica
 from modulos.facturacion import bp as bp_facturacion
+from modulos.fotos_publicas import bp as bp_fotos_publicas
 from modulos.inspeccion_despacho import bp as bp_inspeccion_despacho
 from modulos.kpis import bp as bp_kpis
 from modulos.movimientos import bp as bp_movimientos
@@ -66,6 +68,8 @@ def crear_app():
     app.register_blueprint(bp_unidades)
     app.register_blueprint(bp_movimientos)
     app.register_blueprint(bp_check_list)
+    app.register_blueprint(bp_check_list_mecanica)
+    app.register_blueprint(bp_fotos_publicas)
     app.register_blueprint(bp_revision_contenedor)
     app.register_blueprint(bp_inspeccion_despacho)
     app.register_blueprint(bp_taller)

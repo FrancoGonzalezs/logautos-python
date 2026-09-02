@@ -1,0 +1,205 @@
+{% extends "base.html" %}
+{% block titulo %}Check List Mecánico — {{ u['vin'] | mostrar }}{% endblock %}
+
+{#
+  La pantalla del paso 1: 65 campos, casi todos de cuatro opciones.
+
+  POR QUÉ ES UNA TABLA Y NO TARJETAS
+  ----------------------------------
+  Medimos quién la usa y dónde. Cuatro personas hacen el 98% de los check
+  lists mecánicos de 2026, a 8,2 por día, en horario de taller (09 a 18, con
+  el bajón del almuerzo), y la vista original tiene 1.435 líneas, diez tablas
+  y ni `table-responsive` ni meta viewport. Esto se llena en un escritorio con
+  el auto en el foso, no en el patio con el teléfono en la mano.
+
+  Así que la forma correcta es la que ya usan: una grilla densa donde las
+  columnas de opciones están alineadas y se puede bajar marcando sin leer cada
+  etiqueta. Una pantalla de tarjetas grandes sería más linda y haría scrollear
+  sesenta y cinco veces.
+
+  Es distinta de la del check list de ingreso, que sí es de patio, y tiene que
+  serlo. Lo que comparten es el encabezado, el aviso de desvío, el bloque de
+  errores y los colores — que se note que son el mismo sistema.
+#}
+
+{% block contenido %}
+  <p class="volver">
+    <a href="{{ url_for('movimientos.unidad', id_unidad=u['id']) }}">‹ volver a la unidad</a>
+  </p>
+
+  <h1>Check List Mecánico</h1>
+  <p class="subtitulo">
+    {{ u['vin'] | mostrar }}
+    · {{ u['marca'] | mostrar }} {{ u['modelo'] | mostrar }}
+    · patente {{ u['patente'] | mostrar }}
+    · <strong>{{ u['clientecompleto'] | mostrar }}</strong>
+  </p>
+
+  {% if errores %}
+    <div class="aviso aviso-malo">
+      <strong>No se guardó nada.</strong>
+      <ul class="lista-errores">
+        {% for e in errores %}<li>{{ e }}</li>{% endfor %}
+      </ul>
+    </div>
+  {% endif %}
+
+  {% if es_desvio %}
+    <div class="aviso">
+      El paso sugerido para esta unidad
+      {% if recomendado %}es <strong>{{ recomendado.titulo }}</strong>{% else %}no es el check list mecánico{% endif %}.
+      Se puede hacer igual — es la operación, no un error — pero queda
+      registrado como desvío y hay que decir por qué.
+    </div>
+  {% endif %}
+
+  <form method="post" class="form-paso form-mecanico"
+        action="{{ url_for('check_list_mecanica.confirmar', id_unidad=u['id']) }}">
+
+    {% if es_desvio %}
+      <section class="grupo">
+        <h2 class="bloque-titulo">Motivo del desvío</h2>
+        <div class="campos-paso">
+          <label>
+            <span>Por qué se hace el check list mecánico ahora</span>
+            <input type="text" name="motivo" value="{{ motivo }}" required>
+          </label>
+          <label>
+            <span>Detalle (opcional)</span>
+            <input type="text" name="motivo_detalle" value="{{ motivo_detalle }}">
+          </label>
+        </div>
+      </section>
+    {% endif %}
+
+    <section class="grupo">
+      <h2 class="bloque-titulo">La unidad</h2>
+      <div class="campos-paso">
+        <label>
+          <span>Guía de ingreso</span>
+          <input type="text" name="guia" value="{{ v['guia'] or '' }}">
+        </label>
+        <label>
+          <span>Fecha de ingreso</span>
+          <input type="date" name="fecha_ingreso"
+                 value="{{ v['fecha_ingreso'] or hoy }}">
+        </label>
+        <label>
+          <span>Encargado</span>
+          {# De la sesión y sólo de lectura: el que firma es el que lo hace.
+             El valor que viaje en el POST se ignora. #}
+          <input type="text" value="{{ encargado }}" readonly>
+        </label>
+        <label>
+          <span>Kilometraje</span>
+          <input type="text" name="kilometraje" inputmode="numeric"
+                 value="{{ v['kilometraje'] or '' }}" required>
+        </label>
+        <label>
+          <span>Estado Carflex</span>
+          <select name="estado_carflex" required>
+            <option value="">—</option>
+            {% for e in estados_carflex %}
+              <option value="{{ e }}" {% if v['estado_carflex'] == e %}selected{% endif %}>{{ e }}</option>
+            {% endfor %}
+          </select>
+        </label>
+        <label>
+          <span>Estanque <small class="pista" id="estanque_valor">{{ v['estanque'] or 1 }}</small> / 10</span>
+          {# El original arranca en 1 y el 89% de las filas históricas dice 1:
+             casi nadie lo mueve. Se deja el mismo valor inicial para no
+             cambiar la comparación durante el mes en paralelo, pero el número
+             se muestra al lado para que se note que hay que moverlo. #}
+          <input type="range" name="estanque" min="0" max="10" step="1"
+                 value="{{ v['estanque'] or 1 }}"
+                 oninput="document.getElementById('estanque_valor').textContent = this.value">
+        </label>
+      </div>
+    </section>
+
+    {% for titulo, campos in secciones %}
+      <section class="grupo">
+        <h2 class="bloque-titulo">{{ titulo }}</h2>
+        <table class="tabla-mecanica">
+          <tbody>
+            {% for columna, etiqueta, tipo, opciones in campos %}
+              <tr>
+                <th scope="row">{{ etiqueta }}</th>
+                <td>
+                  {% if tipo == 'opcion' %}
+                    <div class="opciones">
+                      {% for o in opciones %}
+                        <label class="opcion">
+                          <input type="radio" name="{{ columna }}" value="{{ o }}"
+                                 {% if v[columna] == o %}checked{% endif %} required>
+                          <span>{{ o }}</span>
+                        </label>
+                      {% endfor %}
+                    </div>
+                  {% elif tipo == 'porcentaje' %}
+                    <input type="range" name="{{ columna }}" min="0" max="100" step="10"
+                           value="{{ (v[columna] or '10') | replace('%','') }}"
+                           oninput="this.nextElementSibling.textContent = this.value + '%'">
+                    <span class="pista">{{ v[columna] or '10%' }}</span>
+                  {% elif tipo == 'bateria' %}
+                    <input type="text" name="{{ columna }}" class="corto"
+                           value="{{ v[columna] or '' }}"
+                           placeholder="12.60 — o «Cambio»" required>
+                  {% else %}
+                    <input type="text" name="{{ columna }}" class="corto"
+                           value="{{ v[columna] or '' }}" required>
+                  {% endif %}
+                </td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </section>
+    {% endfor %}
+
+    <section class="grupo">
+      <h2 class="bloque-titulo">Observación general</h2>
+      <div class="campos-paso">
+        <label class="ancho">
+          <span>Observación general (opcional)</span>
+          <textarea name="obs_general" rows="3">{{ v['obs_general'] or '' }}</textarea>
+        </label>
+      </div>
+    </section>
+
+    <div class="acciones">
+      <button type="submit" class="btn btn-principal">Guardar y cargar fallas</button>
+      <p class="pista">
+        Al guardar se abre la pantalla de fallas, que es donde van las piezas
+        con su foto. El check list queda <strong>ABIERTO</strong> hasta que
+        administración lo cierre desde el sistema anterior.
+      </p>
+    </div>
+  </form>
+
+  {% if anteriores %}
+    <section class="grupo">
+      <h2 class="bloque-titulo">Check lists mecánicos anteriores de este VIN</h2>
+      <table class="tabla">
+        <thead>
+          <tr><th>Fecha</th><th>Encargado</th><th>Km</th><th>Estado</th><th>Fallas</th></tr>
+        </thead>
+        <tbody>
+          {% for a in anteriores %}
+            <tr>
+              <td>{{ a['creado_en'] | mostrar }}</td>
+              <td>{{ a['encargado'] | mostrar }}</td>
+              <td>{{ a['kilometraje'] | mostrar }}</td>
+              <td>{{ a['estado'] | mostrar }}</td>
+              <td>
+                <a href="{{ url_for('check_list_mecanica.fallas', id_check=a['id']) }}">
+                  {{ a['contador'] or 0 }}
+                </a>
+              </td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </section>
+  {% endif %}
+{% endblock %}

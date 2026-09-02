@@ -1520,3 +1520,96 @@ body.con-visor { overflow: hidden; }
 }
 .pie-version a { color: var(--tinta-suave); text-decoration: none; }
 .pie-version a:hover { color: var(--acento); }
+
+/* ===========================================================================
+   CHECK LIST MECANICO -- la grilla de 65 puntos
+   ===========================================================================
+
+   Es densa a proposito, y es la unica pantalla del proyecto que lo es.
+
+   Medimos quien la usa: cuatro personas hacen el 98% de los check lists
+   mecanicos de 2026, a 8,2 por dia, entre las 09 y las 18 con el bajon del
+   almuerzo. La vista original tiene 1.435 lineas, diez tablas y ni
+   `table-responsive` ni meta viewport: se llena en un escritorio con el auto
+   en el foso, no en el patio con el telefono en la mano.
+
+   Asi que las opciones van alineadas en columna y se puede bajar marcando sin
+   releer cada etiqueta. Tarjetas grandes serian mas lindas y costarian
+   sesenta y cinco scrolls.
+
+   Comparte con el check list de ingreso el encabezado, el aviso de desvio, el
+   bloque de errores y la paleta -- tienen que verse del mismo sistema -- y no
+   comparte la densidad, porque no se usan en el mismo lugar. */
+
+.form-mecanico section.grupo {
+  background: var(--tarjeta);
+  border: 1px solid var(--linea);
+  border-radius: var(--r-tarjeta);
+  padding: var(--aire);
+  margin-bottom: 16px;
+}
+
+.tabla-mecanica { width: 100%; border-collapse: collapse; font-size: 13px; }
+
+.tabla-mecanica th[scope=row] {
+  text-align: left;
+  font-weight: 500;
+  color: var(--tinta-media);
+  padding: 5px 12px 5px 0;
+  width: 42%;
+  vertical-align: middle;
+}
+
+.tabla-mecanica tr + tr th[scope=row],
+.tabla-mecanica tr + tr td { border-top: 1px solid var(--linea); }
+
+.tabla-mecanica td { padding: 4px 0; }
+
+/* Las opciones de un campo. `flex` y no una columna por opcion: los grupos
+   tienen 2, 3 y 4 opciones y una tabla de columnas fijas dejaria huecos
+   justo donde la asimetria importa (`tet` tiene tres, `aa` cuatro). */
+.opciones { display: flex; flex-wrap: wrap; gap: 4px; }
+
+.opcion {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 9px;
+  border: 1px solid var(--linea-fuerte);
+  border-radius: var(--r-control);
+  background: var(--tarjeta-alt);
+  cursor: pointer;
+  white-space: nowrap;
+  font-size: 12px;
+  color: var(--tinta-media);
+}
+.opcion:hover { border-color: var(--acento-borde); }
+
+/* El estado marcado se ve sin tener que mirar el punto del radio: con 65
+   filas, buscar cual quedo sin marcar mirando radios chiquitos es el error
+   que la pantalla tiene que hacer imposible. */
+.opcion:has(input:checked) {
+  background: var(--acento-suave);
+  border-color: var(--acento);
+  color: var(--tinta);
+  font-weight: 500;
+}
+.opcion:has(input:focus-visible) {
+  outline: 2px solid var(--acento);
+  outline-offset: 1px;
+}
+
+.tabla-mecanica input[type=text].corto { width: 150px; }
+.tabla-mecanica input[type=range] { width: 160px; vertical-align: middle; }
+.tabla-mecanica .pista { margin-left: 8px; color: var(--tinta-suave); }
+
+/* Debajo de 900 px la etiqueta y las opciones se apilan. No es la resolucion
+   objetivo -- ver arriba -- pero que sea usable si alguien la abre en una
+   tablet cuesta cuatro lineas. */
+@media (max-width: 900px) {
+  .tabla-mecanica th[scope=row],
+  .tabla-mecanica td { display: block; width: auto; }
+  .tabla-mecanica th[scope=row] { padding-bottom: 2px; border-top: none; }
+  .tabla-mecanica tr + tr th[scope=row] { border-top: 1px solid var(--linea); padding-top: 10px; }
+  .tabla-mecanica tr + tr td { border-top: none; }
+}

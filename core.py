@@ -146,6 +146,7 @@ TABLAS_CON_UNIDAD = {
     "check_list_regla": "unidad_id",
     "revision_unidad_regla": "unidad_id",
     "validacion_color_regla": "id_unidad",
+    "check_list_mecanica_regla": "unidad_id",
 }
 
 
