@@ -5,7 +5,9 @@ probar_check_list_mecanica.py -- los pasos 1 y 2 del check list mecanico.
     python scripts/probar_check_list_mecanica.py
 
 Corre sobre una base temporal, nunca sobre `local.db` ni contra el legado: el
-nombre `probar_*` activa la guarda de `core.exigir_destino_local`.
+nombre `probar_*` activa las DOS guardas de core --
+`exigir_destino_local` para el HTTP y `exigir_replica_de_prueba` para las
+escrituras.
 
 Lo que se prueba, y por que cada cosa:
 
@@ -26,10 +28,15 @@ Lo que se prueba, y por que cada cosa:
   5. UNA FOTO PUBLICADA SE SIRVE SIN SESION, Y UNA QUE NO SE PUBLICO NO --
      aunque el archivo exista en el mismo volumen. Es la condicion que hace
      que la ruta publica no arrastre las fotos de otros modulos.
+
+  6. LA GUARDA DE LA REPLICA MUERDE. Nacio de esta misma suite: una prueba de
+     humo escribio sobre una unidad real. Se prueba por `conectar_db`, que es
+     el camino que uso el daño.
 """
 
 import io
 import os
+import shutil
 import sqlite3
 import sys
 import tempfile
@@ -202,6 +209,67 @@ def probar_ruta_publica(app):
             "y el resto del sitio sigue pidiendo sesion")
 
 
+def probar_guarda_de_replica():
+    """La guarda que salio de esta misma suite.
+
+    El 2026-09-02 una prueba de humo de este modulo escribio en `local.db` un
+    movimiento sobre la unidad 92095 -- una unidad real -- con su entrada de
+    cola sin resolver y `push_pendiente = 1`. La guarda de destino no la
+    frena: esa cubre el HTTP, no las escrituras.
+
+    Se prueba por el camino que uso el daño de verdad -- `conectar_db`, que es
+    el que hay debajo del `get_db()` de Flask -- y no por una llamada
+    inventada."""
+    import core
+    print("\n5. LA GUARDA DE LA REPLICA REAL")
+
+    real = os.path.join(RAIZ, "local.db")
+    if not os.path.exists(real):
+        print("   --   sin local.db, se saltea")
+        return
+
+    previo = os.environ.get("REGLA_SOLO_LOCAL")
+    os.environ["REGLA_SOLO_LOCAL"] = "1"
+    try:
+        try:
+            core.conectar_db(real).close()
+            afirmar(False, "abrir la replica real desde una prueba REVIENTA")
+        except RuntimeError as e:
+            afirmar("GUARDA DE REPLICA" in str(e),
+                    "abrir la replica real desde una prueba REVIENTA")
+            afirmar("shutil.copy" in str(e),
+                    "y el mensaje dice como arreglarlo, no solo que esta mal")
+
+        # La misma ruta escrita distinto. Sin normalizar, esta pasaria.
+        revuelta = real.replace("\\", "/").lower()
+        try:
+            core.conectar_db(revuelta).close()
+            afirmar(False, "la misma ruta con otra caja tambien se rechaza")
+        except RuntimeError:
+            afirmar(True, "la misma ruta con otra caja tambien se rechaza")
+
+        # Y la copia, que es lo que las pruebas tienen que usar.
+        copia = os.path.join(os.environ["DATA_DIR"], "copia.db")
+        shutil.copy(real, copia)
+        try:
+            core.conectar_db(copia).close()
+            afirmar(True, "una COPIA se abre sin problema")
+        except RuntimeError:
+            afirmar(False, "una COPIA se abre sin problema")
+
+        os.environ["REGLA_SOLO_LOCAL"] = "0"
+        try:
+            core.conectar_db(real).close()
+            afirmar(True, "REGLA_SOLO_LOCAL=0 apaga las DOS guardas")
+        except RuntimeError:
+            afirmar(False, "REGLA_SOLO_LOCAL=0 apaga las DOS guardas")
+    finally:
+        if previo is None:
+            os.environ.pop("REGLA_SOLO_LOCAL", None)
+        else:
+            os.environ["REGLA_SOLO_LOCAL"] = previo
+
+
 def main():
     tmp = tempfile.mkdtemp(prefix="regla_clm_")
     os.environ["DB_PATH"] = os.path.join(tmp, "prueba.db")
@@ -215,6 +283,7 @@ def main():
 
     probar_acumulacion(app)
     probar_ruta_publica(app)
+    probar_guarda_de_replica()
 
     print("\n" + "=" * 62)
     if FALLOS:

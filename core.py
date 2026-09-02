@@ -73,7 +73,11 @@ def conectar_db(path=None):
     hay una escritura en curso (sin el, cualquier pantalla de listado se
     bloquea cuando alguien guarda), y busy_timeout hace que una escritura
     que se encuentra la base tomada espere en vez de reventar al toque con
-    'database is locked'."""
+    'database is locked'.
+
+    Y la guarda de la REPLICA: una prueba no abre la replica real. Ver
+    `exigir_replica_de_prueba`."""
+    exigir_replica_de_prueba(path or DB_PATH)
     db = sqlite3.connect(path or DB_PATH, timeout=DB_BUSY_TIMEOUT_MS / 1000.0)
     db.row_factory = sqlite3.Row
     db.execute("PRAGMA journal_mode = WAL")
@@ -369,6 +373,94 @@ def _es_prueba():
         return forzado not in ("0", "no", "false")
     guion = os.path.basename(sys.argv[0] or "")
     return guion.startswith("probar_")
+
+
+# Las bases que son LA REPLICA DE VERDAD y no una copia. Una prueba no las
+# abre.
+#
+# `BASE_DIR/local.db` es la de la notebook. `DATA_DIR/local.db` es la del
+# volumen de Railway -- en el contenedor las dos rutas son distintas, y en la
+# notebook DATA_DIR cae adentro del repo, asi que nombrar las dos no es
+# redundante: es cubrir los dos despliegues con la misma linea.
+def _replicas_reales():
+    return {
+        _normal(os.path.join(BASE_DIR, "local.db")),
+        _normal(os.path.join(DATA_DIR, "local.db")),
+    }
+
+
+def _normal(ruta):
+    """Para comparar rutas: resuelve enlaces y '..', y en Windows aplana
+    mayusculas. Sin esto, 'C:/Regla_Python/local.db' y
+    'c:\\regla_python\\local.db' serian dos bases distintas -- y la guarda
+    dejaria pasar la que se escribio con otra caja."""
+    try:
+        return os.path.normcase(os.path.realpath(ruta))
+    except Exception:                            # noqa: BLE001
+        return os.path.normcase(os.path.abspath(ruta))
+
+
+def exigir_replica_de_prueba(path):
+    """Revienta si una prueba intenta abrir la replica REAL.
+
+    POR QUE EXISTE
+    --------------
+    `exigir_destino_local` cubre las llamadas HTTP: una prueba no le habla al
+    legado de produccion. No cubria las ESCRITURAS, y el agujero no era
+    teorico -- el 2026-09-02 una prueba de humo del check list mecanico
+    escribio en `local.db` un movimiento sobre la unidad 92095, que es una
+    unidad real, con su entrada de cola sin resolver y `push_pendiente = 1`.
+
+    Las tres consecuencias, de menor a mayor:
+
+      1. Una fila de mas en el historial de REGLA.
+      2. Una entrada de cola viva: si el demonio de push hubiera corrido, esa
+         prueba habria escrito en el LEGADO DE PRODUCCION. La guarda de
+         destino no la habria frenado, porque el demonio no corre bajo un
+         `probar_*`.
+      3. `push_pendiente = 1` sobre una unidad real. El UPSERT del pull
+         SALTEA las filas con ese flag, asi que esa unidad deja de recibir
+         actualizaciones del legado -- en silencio, sin que ningun error lo
+         diga, para siempre.
+
+    Se limpio a mano y quedo bien. Pero limpiar a mano depende de acordarse, y
+    acá la disciplina ya fallo siete veces.
+
+    MISMO CRITERIO Y MISMO LUGAR QUE LA OTRA GUARDA. Se activa sola por el
+    nombre del script (`probar_*`), se apaga con la misma variable
+    (`REGLA_SOLO_LOCAL=0`) y vive al lado. Dos guardas que se activan igual
+    son una regla; dos que se activan distinto son dos reglas que recordar.
+
+    VA EN `conectar_db` Y NO EN CADA PRUEBA. Es el unico camino por el que se
+    abre la base -- lo usan `get_db()` de Flask, los scripts y los hilos del
+    push --, asi que una linea cubre los tres. Puesta prueba por prueba, la
+    proxima quedaba sin guarda y sin que nadie lo note; que es exactamente el
+    argumento por el que el push se engancho en `registrar()`.
+
+    LO QUE NO CUBRE, dicho para que nadie se confie: un `sqlite3.connect`
+    escrito a mano la saltea. La prueba de humo que origino esto era un
+    `python - <<EOF` suelto, que ni siquiera se llama `probar_*`. Esta guarda
+    protege el camino que usa la aplicacion, que es por donde entro el daño
+    de verdad -- las tres consecuencias de arriba salieron del `get_db()` de
+    Flask, no del `connect` suelto."""
+    if not _es_prueba():
+        return path
+    if _normal(path) not in _replicas_reales():
+        return path
+    raise RuntimeError(
+        "GUARDA DE REPLICA: una prueba intento abrir la replica REAL\n"
+        "  {}\n"
+        "  Las pruebas trabajan sobre una COPIA. Las dos formas de hacerlo, "
+        "las dos ya usadas en el proyecto:\n"
+        "    tmp = tempfile.mkdtemp()\n"
+        "    shutil.copy(os.path.join(RAIZ, 'local.db'), "
+        "os.path.join(tmp, 'prueba.db'))   # necesita datos reales\n"
+        "    os.environ['DB_PATH'] = os.path.join(tmp, 'prueba.db')\n"
+        "  o, si no necesita datos, apuntar DB_PATH a una base vacia del "
+        "tempdir.\n"
+        "  Si de verdad hace falta tocar la replica -- un script de "
+        "mantenimiento que se llame probar_* --, REGLA_SOLO_LOCAL=0 apaga "
+        "las DOS guardas.".format(path))
 
 
 def exigir_destino_local(url, quien=""):
