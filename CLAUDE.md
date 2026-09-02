@@ -96,7 +96,7 @@ fila —o UNA variable— de la clave que vas a usar. Si representa dos cosas
 distintas, vas a razonar sobre una mientras el dato es la otra** — y no se ve,
 porque sale un número redondo y con volumen, o una frase que suena obvia.
 
-Apareció **cinco veces**, en formas que parecen no tener nada que ver:
+Apareció **seis veces**, en formas que parecen no tener nada que ver:
 
 | El nombre que se usó | Lo que cubría en realidad | Lo que dio |
 |---|---|---|
@@ -105,6 +105,7 @@ Apareció **cinco veces**, en formas que parecen no tener nada que ver:
 | `calle` | el estacionamiento y **la etapa de proceso** | `A` → PATIO 2 al 78,8%, "el único caso ambiguo" |
 | `$patio` en `actulocproccess` | el patio de la unidad y **lo que el operario eligió en el formulario** | "las unidades con patio sucio no se pueden mover" — y se mueven igual |
 | `observacion` / `requerimiento` / `gravedad` en `check_list` | **las piezas, los tipos de daño y los niveles** — ninguna guarda lo que su nombre dice | y al lado existe `observaciones`, en plural, que sí es la observación libre |
+| `check_list_mecanica.estado` | el estado de **ahora** y el de **cuando se subió la foto** | la rama de reapertura medía 1 en vez de 68 — "está muerta, no se modela" |
 
 Los tres primeros se arreglan igual: **partir la clave hasta que una fila sea
 una cosa sola.** `vin` → `id` de la pasada. El histórico → los últimos 6 meses.
@@ -142,6 +143,37 @@ memoria, la equivocada devuelve texto plausible y nadie se entera.
 Verificado contra el modelo (`getPiezas_CLI` lee `observacion`, `getTipoDano_CLI`
 lee `requerimiento`, `getNivelDano_CLI` lee `gravedad`) y contra el dato: fila
 20100, seis piezas / seis tipos / seis niveles, alineados por posición.
+
+**El sexto es el único donde la clave está bien y el ERROR es del tiempo**, y
+por eso cierra la lista: no se arregla partiendo la columna.
+
+`subida_foto_check_list_mecanico_proces()` elige a qué columnas escribir según
+`if ($estado == 'REABIERTO')`. La pregunta era *"¿esta rama se sigue usando o se
+puede no modelar?"*, y la respuesta parecía estar en la misma columna que decide:
+
+    SELECT COUNT(*) ... WHERE estado = 'REABIERTO'   -->   1
+
+Uno. Rama muerta, no se modela. **Y está mal por 67.** Son 68, y la prueba es
+otra columna:
+
+    SELECT COUNT(*) ... WHERE fallas_adicionales <> ''   -->   68
+    de esas 68, hoy:  CERRADO 67   REABIERTO 1
+
+`estado` es el estado **de ahora**. La rama se eligió con el estado **de
+entonces**, y después el check list siguió caminando hasta cerrarse. La única
+huella de que la rama corrió es **la columna que esa rama escribe**.
+
+Es la misma forma de las otras cinco — una clave que cubre dos cosas — pero el
+eje que las mezcla es el tiempo, no el significado. Y engaña más, porque el
+número que sale es plausible: un 1 en una columna de estados no tiene nada raro.
+
+> **LA GUARDA:** para medir si una rama de código se sigue usando, no se cuenta
+> por la variable que la decide: **se cuenta por el efecto que deja**. La
+> variable puede haber cambiado después; el efecto queda escrito.
+
+Aplicado a la inversa el mismo día y con el mismo método: `precios` se descartó
+contando `precios <> 0` (16 filas, última hace seis meses) y no `estado`, y
+`faltante` se descartó por la vista —no tiene campo— más que por el dato.
 
 Las tres señales de que estás por pisarla:
 
@@ -289,6 +321,9 @@ Ida y vuelta automática entre Railway y `claude.logautos.cl` desde el
 |---|---|---|---|
 | `it` | actualizar | `PUT /api_regla/unidades/{id}` | producción, 2026-08-26 |
 | `movimientos` | crear | `POST /api_regla/movimientos` | **producción, verificado contra el endpoint real**, 2026-08-27 |
+| `check_list_mecanica` | crear | `POST /api_regla/check_list_mecanica` | Python listo; **el PHP NO está desplegado** (bloques G–K) |
+| `check_list_mecanica_falla` | actualizar | `PUT /api_regla/check_list_mecanica_falla/{id}` | ídem |
+| `check_mecanica_unidad` | actualizar | `PUT /api_regla/unidades/{id}` | ídem — necesita `fecha_check_list_mecanica` en la lista blanca (bloque H) |
 
 **`movimientos` se verificó contra el endpoint desplegado, no contra el
 simulado**: tres sondas (401 sin clave / 400 `unidad_id es obligatorio` / 404
@@ -313,6 +348,23 @@ Cosas del push que no se deducen del código:
   `registromov()` **cero veces**, así que empujarlo le metería al historial una
   fila que su propia pantalla nunca genera. El PDI llama **dos** veces, así que
   ahí sí va.
+- **El check list mecánico también pasa `empuja_movimiento=False`**, por lo
+  mismo y contado igual: `check_list_mecanica_proces()` llama a `registromov()`
+  cero veces y a `actualizar_vin()` una — con `fecha_check_list_mecanica`, que
+  se empuja por la entidad `check_mecanica_unidad`.
+- **`check_list_ingreso` está en la misma situación y HOY SÍ empuja el
+  movimiento.** `Nota.php:check_list()` también llama a `registromov()` cero
+  veces. Se descubrió el 2026-09-02 al construir el mecánico, contando las
+  llamadas de las cuatro funciones de una. **No se cambió en la misma tanda**:
+  es código desplegado y en uso, y cambiarle el push a un módulo vivo no es un
+  detalle de otra entrega. Ver el pendiente 8.
+
+**Y una entidad puede compartir ruta sin compartir nombre.** `it`, `pdi` y
+`check_mecanica_unidad` son las tres un `PUT /api_regla/unidades/{id}`. Aun así
+cada una tiene su nombre, porque lo que se lee en la cola, en el log y en la
+reconciliación es el nombre — y una entrada que dijera `it` para un check list
+mecánico manda a buscar el problema al lugar equivocado. Es la Regla 0 aplicada
+a la cola.
 - **El origen no viaja; el destino sí, los tres.** `newcalle`/`newestado`/
   `newpatio` los resuelve el endpoint leyendo la fila dentro de su transacción:
   mandarlos sería mandar lo que REGLA *cree* que el legado tenía, con hasta una
@@ -578,6 +630,55 @@ En REGLA van en una **tabla**. Es un problema heredado que no vale la pena
 copiar, y la lista de a quién le llega un correo con daños de un vehículo es
 justo lo que cambia sin avisar cuando alguien entra o sale de un puesto.
 
+### 5e. El check list mecánico — pasos 1 y 2 construidos el 2026-09-02
+
+**Dónde quedó cada cosa:** el Python está en el árbol de trabajo (sin commitear
+al escribir esto); **el PHP no está desplegado** — los bloques G, H, I, J y K de
+`scripts/Api_regla_check_list.php` siguen esperando. Hasta que lo estén, el push
+del módulo va a fallar con 404, que es ruidoso y por lo tanto está bien.
+
+**Lo que hace REGLA:** los pasos 1 (los 65 campos) y 2 (las fallas con su foto).
+**El paso 3 no** — el correo que cierra el check list lo aprieta administración
+en el sistema viejo y el estado vuelve por el pull. Mismo criterio que el check
+list de ingreso; mantenerlos iguales vale más que optimizar cada uno.
+
+**Divergencias conscientes, con su número al lado:**
+
+| Qué | Por qué no se replica |
+|---|---|
+| `precios` / `precios_adicionales` | Comentados en el código del legado, y **16 filas de 2.956**; la última con valor ≠ 0 es del **2026-02-13**, seis meses. |
+| `faltante` | No es que se use poco: **inalcanzable**. La línea que la leería está comentada y la vista no tiene ningún campo con ese nombre. 0 filas en 2026. |
+| `servicios_mecanicos` | **No está replicada** — la única tabla del módulo que el pull no trae. REGLA sugiere contra lo que realmente se escribió, ordenado por frecuencia, que es mejor fuente además de ser la única. |
+
+**Lo que sí se replicó y casi no se ve: la REAPERTURA.** Un check list en
+`REABIERTO` escribe en `fallas_adicionales` / `modalidad_adicional` /
+`fotos_adicionales` en vez de las tres normales. Son 68 filas, **todos los meses
+desde que hay datos, 40 en 2026**. Ver el ejemplo nuevo de la Regla 0 sobre cómo
+casi se mide mal.
+
+**El catálogo salió del MENÚ, no del dato**, y la diferencia se midió: por
+valores observados salen 19 vocabularios, por lo que el formulario ofrece salen
+**7**. Los otros doce son espejismos — `bocina` aparece siempre como `Bueno`
+porque a nadie se le rompió una, no porque el formulario ofrezca una sola opción.
+Validado contra **89.760 valores históricos: 0 fuera del menú** (16 son el corte
+de `varchar` de MySQL, que ya conocíamos).
+
+**Las fotos van por una ruta pública con token**, `/f/<43 caracteres>`, y eso
+sube la barra respecto del legado, que tiene la carpeta abierta con el nombre del
+archivo adivinable (lleva el VIN y la fecha). Dos condiciones que son de diseño y
+están construidas así:
+
+1. **La ruta resuelve por TOKEN contra `fotos_publicadas`, nunca por ruta de
+   archivo.** Si fuera `/f/<hmac(ruta)>`, toda foto de REGLA quedaría alcanzable
+   para quien conozca el esquema — incluidas las de `check_list_regla`, que
+   llevan `link_guia`, la guía con nombres y RUT. Publicar es un acto, no una
+   propiedad de estar guardado en el disco.
+2. **No se revoca.** La URL es la credencial: una vez que salió, queda en
+   `link_unidades`, en los logs y en el historial de quien la abrió. Para fotos
+   de daños de un vehículo es aceptable; para un documento con datos de una
+   persona no lo sería, y por eso la condición 1 importa más que el largo del
+   token.
+
 ### 6. Migraciones versionadas — aprobado, sin construir
 
 Variante de fuente única. Migración 1 = esquema completo; migración 2 = arreglo
@@ -585,6 +686,27 @@ explícito del `unidad_id` que falta en `inspeccion_despacho_regla` en Railway.
 Correr `estado` justo después de la 1 es **obligatorio** en el runbook.
 
 `PRAGMA foreign_keys=ON` queda **explícitamente afuera**.
+
+### 8. `check_list_ingreso` empuja un movimiento que el legado no genera
+
+Descubierto el 2026-09-02 contando las llamadas a `registromov()` de las cuatro
+funciones de check list de una sola pasada:
+
+| Función del legado | `registromov()` | `actualizar_vin()` |
+|---|---|---|
+| `check_list()` | **0** | 1 |
+| `check_list_mecanica_proces()` | **0** | 1 |
+| `subida_foto_check_list_mecanico_proces()` | 0 | 0 |
+
+El mecánico se construyó con `empuja_movimiento=False` desde el principio. El de
+ingreso **está desplegado empujando**, así que cada check list hecho en REGLA le
+mete a `registros` una fila que la pantalla del legado nunca genera.
+
+No es urgente ni pierde datos: agrega historial de más, no de menos. Pero durante
+el mes en paralelo alguien va a comparar los dos historiales y esa diferencia va
+a aparecer. **Antes de tocarlo hay que contar cuántas filas ya se metieron** —
+son pocas, pero hay que saber cuántas y cuáles antes de cambiar el
+comportamiento, no después.
 
 ### 7. Decisiones que esperan datos, no código
 

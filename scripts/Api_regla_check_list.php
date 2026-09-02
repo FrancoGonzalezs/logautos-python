@@ -454,3 +454,230 @@ public function crear_fila($entidad = null)
    de CodeIgniter y depende de la version. Una bandera propia dice lo mismo y
    no se rompe con un upgrade.
    --------------------------------------------------------------------------- */
+
+
+/* ===========================================================================
+   BLOQUE K -- el PASO 2 del check list mecanico: las fallas
+   ===========================================================================
+
+   !!! ANTES DE NADA: ESTE BLOQUE REEMPLAZA `columnas_que_acumulan` !!!
+
+   El bloque J trae ese mismo metodo con una sola clave. El K lo trae con dos.
+   Si se pegan los DOS en la clase, PHP tira
+
+       Fatal error: Cannot redeclare Api_regla::columnas_que_acumulan()
+
+   y con eso se caen TODAS las rutas del controlador, no solo la nueva -- que
+   es exactamente lo que paso con `columnas_permitidas` duplicada.
+
+   Asi que, al desplegar:
+
+     * si el bloque J YA ESTA puesto -> BORRAR su `columnas_que_acumulan`
+       entero (desde su linea `private function columnas_que_acumulan($entidad)`
+       hasta el `}` que la cierra) y dejar el de aca.
+     * si el bloque J todavia NO esta -> poner el de aca y saltear el de alla.
+
+   Para comprobarlo despues de subir, desde cPanel Terminal:
+
+       grep -c "function columnas_que_acumulan" Api_regla.php     # tiene que dar 1
+       grep -n "private function" Api_regla.php | \
+           awk '{print $NF}' | sort | uniq -d                     # no tiene que imprimir nada
+       php -l Api_regla.php
+
+   ---------------------------------------------------------------------------
+
+   El bloque G le dio a `check_list_mecanica` el verbo 'crear', que cubre el
+   paso 1: la fila nace con sus 82 columnas y `estado='ABIERTO'`.
+
+   El paso 2 es OTRA cosa. Cada falla que se carga hace un UPDATE sobre esa
+   misma fila, y ese UPDATE no reemplaza: CONCATENA.
+
+       $link_total = $link.' | '.$link_i_1;
+       $obs_total  = $obs.' | '.$observacion;
+       $modalidad_total = $modalidad_anterior.' | '.$modalidad;
+       $cont_total = $contador + 1;
+
+   Son 2.635 filas de 2.956 con al menos una falla cargada. No es un caso
+   raro: es la salida del modulo.
+
+   POR QUE UNA ENTIDAD NUEVA Y NO UN SEGUNDO VERBO EN LA MISMA
+   -----------------------------------------------------------
+   `check_list_mecanica` ya significa 'crear'. Meterle un segundo verbo a la
+   misma clave obliga a mirar el cuerpo del pedido para saber que va a hacer,
+   y a partir de ahi el nombre de la entidad ya no dice que operacion es.
+
+   Una clave, un verbo. La entidad nueva se llama `check_list_mecanica_falla`
+   -- el nombre dice que agrega UNA falla, que es exactamente lo que hace.
+
+   LAS TRES COLUMNAS SE MUEVEN JUNTAS, Y POR ESO VA DEL LADO DEL SERVIDOR
+   ---------------------------------------------------------------------
+   `observacion`, `modalidad` y `link_unidades` son tres listas PARALELAS: la
+   falla numero 3 es el tercer pedazo de las tres. Si se desalinean, la foto
+   de una falla queda pegada al texto de otra -- y no hay error, solo un
+   informe que miente.
+
+   Concatenar del lado de Python seria leer las tres, pegarles lo nuevo y
+   mandar el resultado. Dos cargas simultaneas sobre el mismo check list leen
+   lo mismo y la segunda pisa a la primera: se pierde una falla ENTERA, con
+   su foto.
+
+   Con el CONCAT del lado del servidor las tres viajan en UNA sentencia, y
+   MySQL la aplica sobre la fila bloqueada: dos cargas simultaneas quedan una
+   detras de la otra y las tres listas siguen alineadas. Es el mismo criterio
+   que `stock = stock - ?` en el descuento de combustible, y aca el argumento
+   es mas fuerte todavia, porque lo que se pierde no es un numero sino la
+   correspondencia entre tres columnas.
+
+   Y `contador` NO se manda como valor: se INCREMENTA. Si Python mandara el
+   numero que calculo contra SU fila, y el legado tuviera otro -- porque
+   alguien cargo una falla desde el sistema viejo durante el mes en paralelo
+   --, el contador quedaria mal y las fotos siguientes se llamarian igual que
+   las anteriores.
+   =========================================================================== */
+
+    /**
+     * En `mapa_entidades()`, junto a las dos del bloque G.
+     */
+            'check_list_mecanica_falla' => array(
+                'tabla'    => 'check_list_mecanica',
+                'verbo'    => 'actualizar',
+                'columnas' => array(
+                    // Las tres listas paralelas de la PRIMERA pasada.
+                    'observacion', 'modalidad', 'link_unidades',
+                    // Y las tres de un check list REABIERTO. Son 68 filas
+                    // historicas, en TODOS los meses desde que hay datos y 40
+                    // de ellas en 2026 -- no es una rama muerta.
+                    //
+                    // Ojo si alguna vez se vuelve a medir: hoy 67 de esas 68
+                    // filas dicen `estado='CERRADO'`, porque la rama se elige
+                    // por el estado que la fila tenia al subir la foto y
+                    // despues el estado sigue caminando. Contarlas con
+                    // `WHERE estado='REABIERTO'` da 1 y hace concluir que
+                    // esto no se usa.
+                    'fallas_adicionales', 'modalidad_adicional',
+                    'fotos_adicionales',
+                    // El contador. Va en la lista blanca para pasar el
+                    // filtro, pero NO se escribe con el valor recibido: ver
+                    // `columnas_que_suman` mas abajo.
+                    'contador',
+                ),
+            ),
+
+/* ---------------------------------------------------------------------------
+   Y las dos listas de verbos por columna.
+
+   `columnas_que_acumulan` YA EXISTE (bloque J). Se le AGREGA una clave; el
+   metodo entero queda como esto, no se agrega un segundo metodo.
+   --------------------------------------------------------------------------- */
+
+    private function columnas_que_acumulan($entidad)
+    {
+        $mapa = array(
+            // El historial de daños de TODAS las pasadas del VIN. Ver el
+            // encabezado del bloque J: pisarla borra historia.
+            'unidades' => array('observaciones'),
+
+            // Las tres listas paralelas de fallas, en sus dos versiones. Ver
+            // el encabezado del bloque K: si se desalinean, la foto de una
+            // falla queda pegada al texto de otra.
+            'check_list_mecanica_falla' => array(
+                'observacion', 'modalidad', 'link_unidades',
+                'fallas_adicionales', 'modalidad_adicional', 'fotos_adicionales',
+            ),
+        );
+        return isset($mapa[$entidad]) ? $mapa[$entidad] : array();
+    }
+
+    /**
+     * Metodo NUEVO. Columnas que se SUMAN en vez de escribirse.
+     *
+     * Es la tercera forma de escribir una columna, despues de reemplazar y
+     * concatenar, y existe por la misma razon que las otras dos: la operacion
+     * correcta se expresa en SQL, no en la aplicacion. Un contador que el
+     * cliente calcula es un contador que dos clientes calculan igual y pisan.
+     */
+    private function columnas_que_suman($entidad)
+    {
+        $mapa = array(
+            'check_list_mecanica_falla' => array('contador'),
+        );
+        return isset($mapa[$entidad]) ? $mapa[$entidad] : array();
+    }
+
+/* ---------------------------------------------------------------------------
+   Y el bucle de `actualizar()`.
+
+   QUE BORRAR, EXACTAMENTE. Lo que dejo el bloque J: desde la linea
+
+       $cambios = array();
+
+   hasta la linea
+
+       unset($cambios['__acumulado']);          // no es una columna real
+
+   inclusive. Se reemplaza por lo de abajo, que es lo mismo con una rama mas.
+   El `if (!$cambios && !$this->db->qb_set)` que viene despues NO se toca:
+   `qb_set` tambien recoge lo que agrega la suma, asi que un cuerpo que traiga
+   solo `contador` sigue pasando.
+   --------------------------------------------------------------------------- */
+
+        $cambios  = array();
+        $acumulan = $this->columnas_que_acumulan($entidad);
+        $suman    = $this->columnas_que_suman($entidad);
+
+        foreach ($datos as $columna => $valor) {
+            if (!in_array($columna, $columnas, TRUE)) {
+                continue;                        // la lista blanca, igual que antes
+            }
+
+            if (in_array($columna, $acumulan, TRUE)) {
+                // ACUMULA. El separador es UN espacio para `observaciones` de
+                // `unidades` --el `.= ' '.` del legado-- y ' | ' para las
+                // listas de fallas. La diferencia importa: `unidades` guarda
+                // un texto corrido y las fallas guardan una lista que despues
+                // se parte por '|'. Un separador equivocado no falla: arma una
+                // lista con la cantidad de elementos equivocada.
+                if ($valor === '' || $valor === NULL) {
+                    continue;                    // nada que agregar
+                }
+                $sep = ($entidad === 'unidades') ? ' ' : ' | ';
+                // El CASE y no un CONCAT pelado: con la columna vacia, un
+                // CONCAT dejaria el separador ADELANTE del primer valor y la
+                // lista tendria un elemento vacio al principio. El legado
+                // resuelve lo mismo con su `if($link == NULL)`.
+                $this->db->set(
+                    $columna,
+                    "CASE WHEN `{$columna}` IS NULL OR `{$columna}` = '' "
+                        . "THEN " . $this->db->escape($valor) . " "
+                        . "ELSE CONCAT(`{$columna}`, "
+                        . $this->db->escape($sep) . ", "
+                        . $this->db->escape($valor) . ") END",
+                    FALSE);
+                $cambios['__acumulado'] = TRUE;
+                continue;
+            }
+
+            if (in_array($columna, $suman, TRUE)) {
+                // SUMA. El valor recibido es CUANTO sumar, no el total.
+                $n = (int) $valor;
+                $this->db->set(
+                    $columna,
+                    "COALESCE(`{$columna}`, 0) + " . $n,
+                    FALSE);
+                $cambios['__acumulado'] = TRUE;
+                continue;
+            }
+
+            $cambios[$columna] = $valor;
+        }
+        unset($cambios['__acumulado']);          // no es una columna real
+
+/* ---------------------------------------------------------------------------
+   Y la ruta, en routes.php, junto a las dos del bloque H:
+
+       $route['api_regla/check_list_mecanica_falla']['POST'] =
+           'api_regla/actualizar/check_list_mecanica_falla';
+
+   Va DESPUES de la de `check_list_mecanica` para que el prefijo mas corto no
+   se coma al mas largo.
+   --------------------------------------------------------------------------- */
