@@ -472,11 +472,18 @@ class Handler(BaseHTTPRequestHandler):
         fila["contador"] = 0
         CHECK_LIST_MECANICA[nuevo_id] = fila
 
-        cuerpo = {"ok": True, "id": nuevo_id,
-                  "updated_at": _reloj(), "ignoradas": ignoradas}
+        # 201 Y SIN `updated_at`, exactamente como el bloque I.
+        #
+        # Antes esto devolvia 200 y un `updated_at` inventado, y eso TAPABA dos
+        # bugs de Python: que `crear()` tenia que aceptar 201, y que el camino
+        # de exito pisaba el `updated_at` de la unidad con la cadena vacia
+        # cuando la respuesta no traia ninguno. El doble tiene que parecerse al
+        # original tambien en lo que NO manda -- ahi es donde un doble
+        # generoso se vuelve un sello de goma.
+        cuerpo = {"ok": True, "id": nuevo_id, "ignoradas": ignoradas}
         if idem:
             IDEMPOTENCIA[idem] = cuerpo
-        return self._json(200, cuerpo)
+        return self._json(201, cuerpo)
 
     def _agregar_falla(self, check_id):
         """PUT /api_regla/check_list_mecanica_falla/<id> -- el paso 2.

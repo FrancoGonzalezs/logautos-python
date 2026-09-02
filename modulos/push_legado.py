@@ -674,6 +674,18 @@ def asegurar_tablas(db):
     if "depende_de" not in cols_cola:
         db.execute("ALTER TABLE sync_push_pendientes ADD COLUMN depende_de INTEGER")
 
+    # `respuesta_json`: el cuerpo que devolvio el legado cuando la entrada
+    # salio bien.
+    #
+    # Existe por `ignoradas`. El bloque I devuelve que columnas del cuerpo NO
+    # estaban en la lista blanca, y ese numero es lo unico que convierte el
+    # silencio de la lista blanca en algo afirmable -- ese silencio ya nos
+    # costo una semana con las catorce columnas de la PDI. Guardarlo en la cola
+    # y no solo en el log significa que una verificacion puede AFIRMAR sobre
+    # el en vez de pedirle a alguien que lea un log.
+    if "respuesta_json" not in cols_cola:
+        db.execute("ALTER TABLE sync_push_pendientes ADD COLUMN respuesta_json TEXT")
+
     ya_estan = {r[1] for r in db.execute("PRAGMA table_info(newstocks_cidef)")}
     if "push_pendiente" not in ya_estan:
         db.execute("ALTER TABLE newstocks_cidef "
@@ -993,7 +1005,7 @@ def encolar_check_list_mecanico(db, unidad, fila_id, campos):
         requiere_unidad=0)
 
 
-def encolar_fecha_check_mecanico(db, unidad, fila_id, fecha):
+def encolar_fecha_check_mecanico(db, unidad, fila_id, fecha, depende_de=None):
     """La UNICA columna que el legado le escribe a la unidad en el paso 1.
 
     Va por su propia entidad, `check_mecanica_unidad`, aunque su ruta sea la
@@ -1015,7 +1027,8 @@ def encolar_fecha_check_mecanico(db, unidad, fila_id, fecha):
         operacion="actualizar",
         campos={"fecha_check_list_mecanica": fecha},
         legado_updated_at_conocido=(unidad["updated_at"] or ""),
-        requiere_unidad=0)
+        requiere_unidad=0,
+        depende_de=depende_de)
 
 
 def encolar_falla_mecanica(db, fila, falla, modalidad, url_foto, columnas,
@@ -1540,10 +1553,35 @@ def ejecutar_entrada(id_cola, cliente=None, db_path=None):
         # la condicion real es "esta fila es una unidad", y eso ya lo dice
         # `tabla_espejo`.
         if espejo == "newstocks_cidef":
-            db.execute('UPDATE "{}" SET updated_at = ?, push_pendiente = 0 '
-                       ' WHERE id = ?'.format(espejo),
-                       (resp.get("updated_at") or "", legado_id))
+            # EL `updated_at` SOLO SE PISA SI VINO UNO.
+            #
+            # `crear_fila` (bloque I) devuelve `{ok, id, ignoradas}` y NO
+            # devuelve `updated_at` -- no toca la unidad, asi que no tiene cual
+            # informar. Con el `or ""` de antes, un push de check list dejaba
+            # el `updated_at` de la unidad en la cadena vacia, y el SIGUIENTE
+            # push de esa unidad salia con `conocido = ''`: 409 seguro, o peor,
+            # una escritura perdida si el endpoint tratara el vacio como
+            # "no verifiques".
+            #
+            # Lo tapaba el legado simulado, que devolvia `updated_at` en el
+            # POST de creacion. Un doble mas generoso que el original es un
+            # sello de goma (regla 4) -- y esta vez el doble era mio.
+            marca = resp.get("updated_at")
+            if marca:
+                db.execute('UPDATE "{}" SET updated_at = ?, push_pendiente = 0 '
+                           ' WHERE id = ?'.format(espejo), (marca, legado_id))
+            else:
+                db.execute('UPDATE "{}" SET push_pendiente = 0 WHERE id = ?'
+                           .format(espejo), (legado_id,))
         _propagar_id_creado(db, conf, entrada, resp)
+        try:
+            db.execute(
+                "UPDATE sync_push_pendientes SET respuesta_json = ? WHERE id = ?",
+                (json.dumps(resp, ensure_ascii=False)[:4000], id_cola))
+        except Exception:                        # noqa: BLE001
+            # Una base vieja sin la columna no puede tumbar un push que ya
+            # salio bien del otro lado.
+            pass
         _resolver_entrada(db, id_cola)
         db.commit()
         _log.info("push %s ok: legado_id=%s campos=%s%s",

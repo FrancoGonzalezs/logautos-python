@@ -283,7 +283,31 @@ demonio no corre bajo un `probar_*`).
 **Lo que NO cubre**, dicho para que nadie se confíe: un `sqlite3.connect` escrito
 a mano la saltea. La prueba de humo que la originó era un `python - <<EOF` suelto
 que ni siquiera se llamaba `probar_*`. La guarda protege el camino de la
-aplicación, que es por donde entró el daño de verdad.
+aplicación, que es por donde entró el daño de verdad — **y está bien que sea
+así**: hacerla universal significaría interceptar `sqlite3` entero, que es más
+magia de la que vale.
+
+> **LA REGLA DE HÁBITO, para todo lo que la guarda no alcanza:** ningún script
+> suelto apunta a la réplica real. Ni a `/data/local.db` ni a la del repo. Si un
+> script de exploración necesita datos de verdad, **copia primero**:
+>
+> ```
+> shutil.copy(os.path.join(RAIZ, 'local.db'), os.path.join(tempfile.mkdtemp(), 'x.db'))
+> ```
+>
+> Leer de la réplica real está bien y se hace todo el tiempo (el oráculo del
+> catálogo mecánico lo hace). **Lo que no se hace es abrirla para escribir desde
+> algo que no es la aplicación.** La guarda cubre la aplicación; esto cubre el
+> resto, y es hábito, no código.
+
+**Y el doble puede ser generoso en lo que NO manda.** El 2026-09-02 el legado
+simulado devolvía `200` con un `updated_at` inventado en la creación del check
+list mecánico, donde el bloque I devuelve `201` sin ninguno. Eso tapó dos bugs
+del lado de Python: que `crear()` tenía que aceptar 201, y que el camino de
+éxito pisaba el `updated_at` de la unidad con la cadena vacía cuando la
+respuesta no traía uno — dejando el siguiente push de esa unidad con
+`conocido = ''`. El doble era nuestro, lo habíamos escrito ese mismo día, y aun
+así mintió. **Un doble se parece al original también en lo que no devuelve.**
 
 ### 4. Un doble más permisivo que el original es un sello de goma
 
@@ -352,6 +376,11 @@ Ida y vuelta automática entre Railway y `claude.logautos.cl` desde el
 | `check_list_mecanica_falla` | actualizar | `PUT /api_regla/check_list_mecanica_falla/{id}` | ídem. **La ruta se corrigió al desplegar**: la spec decía `POST` sin id y habría dado 405 — el cliente manda `PUT /<ruta>/<legado_id>` para todo verbo `actualizar` |
 | `check_mecanica_unidad` | actualizar | `PUT /api_regla/unidades/{id}` | ídem, con `fecha_check_list_mecanica` en la lista blanca (bloque H) |
 | `check_list` (ingreso) | crear | `POST /api_regla/check_list` | **el PHP está desplegado y Python NO la tiene** — ver pendiente 9 |
+
+**El push real del mecánico está armado y NO corrido.** `scripts/verificar_check_mecanico_produccion.py`, dry-run por defecto, `--escribir` para el push de verdad. Faltan dos cosas, ninguna de código:
+
+1. **El bloque L** (`GET /api_regla/check_list_mecanica/<id>`) sin desplegar. Es la mirilla: los bloques G–K escriben y no había forma de leer. Sin él la verificación termina en «devolvió 201» más un favor en phpMyAdmin, y una verificación que depende de un favor se deja de hacer.
+2. **Red.** `claude.logautos.cl` está bloqueado desde el entorno donde corro; `github.com` y `example.com` responden. No es el sitio.
 
 **`movimientos` se verificó contra el endpoint desplegado, no contra el
 simulado**: tres sondas (401 sin clave / 400 `unidad_id es obligatorio` / 404
@@ -740,10 +769,15 @@ empuja NADA.** Su entidad `check_list` (bloque G, 24 columnas) está desplegada
 del lado PHP, pero Python no la tiene en `ENTIDADES` — nunca se construyó. Ver
 el pendiente 9.
 
-### 9. El check list de INGRESO no tiene push
+### 9. El check list de INGRESO no empuja NADA — lo que sigue
 
-Es el único de los dos que quedó a medio camino: el PHP lo espera y el Python no
-lo manda.
+**Hoy, cero.** No es que empuje poco o mal: no empuja. La entidad `check_list`
+está desplegada del lado PHP —24 columnas, bloque G— y **Python nunca la tuvo en
+`ENTIDADES`**. Lo único que salía era el movimiento espurio del pendiente 8, y
+al sacarlo quedó en cero.
+
+O sea que un check list de ingreso cargado en REGLA hoy **no existe para el
+sistema viejo**. El PHP lo espera y el Python no lo manda.
 
 | | ingreso | mecánico |
 |---|---|---|

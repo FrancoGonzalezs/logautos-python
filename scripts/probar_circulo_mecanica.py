@@ -25,9 +25,17 @@ Lo que verifica, en orden:
 
   3. EL CONTADOR SE SUMA, no se asigna.
 
-  4. EL ORDEN. Si la falla sale antes que el check list, el legado responde
-     404 y la entrada espera. Se prueba a proposito ejecutando la hija
-     primero.
+  4. EL ORDEN, en sus dos direcciones. Si la falla sale antes que el check
+     list, el legado responde 404 y la entrada espera -- se prueba a proposito
+     ejecutando la hija primero. Y la marca en la UNIDAD depende de la fila,
+     que es el orden que pide el bloque I: al reves, la unidad diria que tiene
+     check list mecanico sin que exista ninguno.
+
+  5. EL `updated_at` DE LA UNIDAD NO QUEDA EN BLANCO. `crear_fila` no
+     devuelve uno -- no toca la unidad, no tiene cual informar -- y el camino
+     de exito lo pisaba igual con la cadena vacia. Lo tapaba este mismo doble,
+     que devolvia un `updated_at` inventado en la creacion: un doble mas
+     generoso que el original es un sello de goma, y ese doble era nuestro.
 """
 
 import io
@@ -179,12 +187,14 @@ def main():
 
         db = conectar_db()
         pend = db.execute(
-            "SELECT entidad, legado_id, resuelto_en, ultimo_error "
-            "  FROM sync_push_pendientes WHERE entidad LIKE 'check_list_mec%' "
+            "SELECT entidad, legado_id, resuelto_en, ultimo_error, depende_de "
+            "  FROM sync_push_pendientes WHERE entidad LIKE 'check%' "
             " ORDER BY id").fetchall()
         fila_local = db.execute(
             "SELECT legado_id FROM check_list_mecanica_regla WHERE id = ?",
             (id_check,)).fetchone()
+        unidad_local = db.execute(
+            "SELECT updated_at FROM newstocks_cidef WHERE id = 4242").fetchone()
         db.close()
         for p in pend:
             print("      {:<28} legado_id={:<4} {}".format(
@@ -192,7 +202,22 @@ def main():
                 "resuelta" if p["resuelto_en"] else
                 ("ERROR: " + (p["ultimo_error"] or ""))))
         afirmar(all(p["resuelto_en"] and not p["ultimo_error"] for p in pend),
-                "las tres entradas se resolvieron sin error")
+                "las cuatro entradas se resolvieron sin error")
+
+        # -- las dos regresiones que el doble generoso estaba tapando --------
+        #
+        # `crear_fila` (bloque I) devuelve 201 y NO devuelve `updated_at`. El
+        # camino de exito pisaba la columna con la cadena vacia, y el proximo
+        # push de esa unidad habria salido con `conocido = ''`.
+        afirmar((unidad_local["updated_at"] or "") != "",
+                "el `updated_at` de la unidad NO quedo en blanco ({!r})".format(
+                    unidad_local["updated_at"]))
+
+        # Y el orden que pide el bloque I: si la unidad entra y el check list
+        # no, la unidad DICE que tiene check list y no hay ninguno.
+        marca = [p for p in pend if p["entidad"] == "check_mecanica_unidad"]
+        afirmar(len(marca) == 1 and marca[0]["depende_de"],
+                "la marca en la unidad DEPENDE de la fila del check list")
         afirmar((fila_local["legado_id"] or 0) > 0,
                 "el id del legado quedo guardado en la fila de REGLA")
         afirmar(all((p["legado_id"] or 0) == fila_local["legado_id"]

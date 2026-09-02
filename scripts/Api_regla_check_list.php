@@ -687,3 +687,116 @@ public function crear_fila($entidad = null)
    Va DESPUES de la de `check_list_mecanica` para que el prefijo mas corto no
    se coma al mas largo.
    --------------------------------------------------------------------------- */
+
+
+/* ===========================================================================
+   BLOQUE L -- leer UNA fila de check list, para poder verificar de verdad
+   ===========================================================================
+
+   POR QUE HACE FALTA
+
+   Los bloques G a K escriben. No hay forma de LEER lo que quedó escrito: el
+   unico GET que existe es `cambios/unidades`, y esta clavado en esa entidad --
+   ademas de que su marca de agua sale de `updated_at`/`created_at`, columnas
+   que `check_list_mecanica` no tiene.
+
+   Sin esto, la verificacion del push termina en "el endpoint devolvio 201" y
+   hay que ir a phpMyAdmin a mirar si las tres listas quedaron alineadas. Eso
+   convierte una verificacion repetible en un favor que alguien tiene que
+   hacer, y las verificaciones que dependen de un favor se dejan de hacer.
+
+   Las tres cosas que hay que poder afirmar sobre la fila, y ninguna se puede
+   hoy:
+
+     - `ignoradas` vacio         (esa si vuelve en el 201, ver el bloque I)
+     - las tres listas de fallas con la misma cantidad de elementos y el
+       n-esimo de cada una correspondiendose
+     - `contador` = 2 despues de dos vueltas, o sea que el endpoint lo
+       INCREMENTO en vez de escribir lo que mando Python
+
+   ES DE SOLO LECTURA Y ESTRECHO A PROPOSITO
+
+   Un id, una fila, y nada de listar ni filtrar. No es una API de consulta: es
+   la mirilla que hace verificable lo que los otros bloques escriben. Si alguna
+   vez hace falta listar check lists, eso es otro endpoint con su propia
+   decision sobre paginado y sobre que columnas salen.
+
+   Va detras de la API key como todo lo demas. La fila no tiene datos
+   personales mas alla del nombre del encargado, que es un empleado y ya
+   aparece en el resto de la API.
+   =========================================================================== */
+
+// ---------------------------------------------------------------------------
+// GET /api_regla/check_list_mecanica/<id>
+//     GET /api_regla/check_list/<id>
+// ---------------------------------------------------------------------------
+//
+//   200 {"ok":true,"fila":{...}}
+//   404 {"error":"no existe ..."}
+//
+// Metodo NUEVO. Se agrega junto a los otros publicos, antes del `}` que cierra
+// la clase. NO reemplaza nada.
+public function leer_fila($entidad = null, $id = null)
+{
+    if (strtolower($this->input->method()) !== 'get') {
+        $this->json(405, array('error' => 'metodo no permitido'));
+    }
+    $this->exigir_api_key();
+
+    // Solo las entidades de verbo 'crear'. `unidades` NO se lee por aca: para
+    // eso esta `cambios/unidades`, que ademas pagina y respeta la marca de
+    // agua. Dos puertas a la misma tabla es una que se olvida de arreglar.
+    $mapa = $this->mapa_entidades();
+    if (!isset($mapa[$entidad]) || $mapa[$entidad]['verbo'] !== 'crear') {
+        $this->json(404, array(
+            'error' => 'entidad no soportada para leer: ' . $entidad));
+    }
+
+    $id = (int) $id;
+    if ($id <= 0) {
+        $this->json(400, array('error' => 'id invalido'));
+    }
+
+    $tabla = $mapa[$entidad]['tabla'];
+    $consulta = $this->db->get_where($tabla, array('id' => $id), 1);
+    if ($consulta === FALSE) {
+        $this->json(500, array('error' => 'no se pudo leer ' . $tabla));
+    }
+    $fila = $consulta->row_array();
+    if (!$fila) {
+        $this->json(404, array(
+            'error' => 'no existe ' . $entidad . ' ' . $id));
+    }
+
+    $this->json(200, array('ok' => TRUE, 'fila' => $fila));
+}
+
+/* ---------------------------------------------------------------------------
+   Y las dos rutas, en routes.php.
+
+   VAN ANTES que las de POST de los bloques G/H. CodeIgniter resuelve por
+   ORDEN, y `api_regla/check_list_mecanica` a secas ya esta mapeada al POST de
+   `crear_fila`: si estas quedaran despues, el segmento numerico se comeria
+   como parametro de aquella y este metodo no se llamaria nunca.
+
+       $route['api_regla/check_list_mecanica/(:num)']['GET'] =
+           'api_regla/leer_fila/check_list_mecanica/$1';
+       $route['api_regla/check_list/(:num)']['GET'] =
+           'api_regla/leer_fila/check_list/$1';
+
+   COMPROBAR DESPUES DE SUBIR, desde cPanel Terminal:
+
+       php -l ~/public_html/application/controllers/Api_regla.php
+       grep -o "function [a-z_]*" .../Api_regla.php | sort | uniq -d   -> vacio
+
+   Y una sonda que no escribe nada:
+
+       curl -s -o /dev/null -w '%{http_code}\n' \
+         -H "X-API-Key: $CLAVE" \
+         https://claude.logautos.cl/api_regla/check_list_mecanica/999999999
+       -> 404
+
+       curl -s -o /dev/null -w '%{http_code}\n' \
+         https://claude.logautos.cl/api_regla/check_list_mecanica/999999999
+       -> 401
+   --------------------------------------------------------------------------- */

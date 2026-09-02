@@ -255,7 +255,7 @@ def guardar(unidad, cabecera, campos, movimiento_id):
         fila = db.execute(
             "SELECT * FROM check_list_mecanica_regla WHERE id = ?",
             (fila_id,)).fetchone()
-        encolar_check_list_mecanico(
+        id_cola_paso1 = encolar_check_list_mecanico(
             db, unidad, fila_id,
             campos_check_list_mecanico(unidad, fila))
         # Y LA UNICA COLUMNA QUE EL LEGADO LE ESCRIBE A LA UNIDAD.
@@ -264,8 +264,15 @@ def guardar(unidad, cabecera, campos, movimiento_id):
         # legado sin la marca de que tiene check list mecanico -- y esa
         # columna es la que `movimientos.hitos_de()` lee para saber si el paso
         # ya esta hecho, de los DOS lados.
+        #
+        # DEPENDE DE LA FILA, y el orden es al reves que en la PDI. Lo dice el
+        # bloque I: si el check list entra y la unidad no, queda un check list
+        # sin efecto -- se reintenta. Si la unidad entra y el check list no, la
+        # unidad DICE que tiene check list mecanico y no hay ninguno, y nadie
+        # lo va a notar porque la marca es una fecha plausible.
         encolar_fecha_check_mecanico(db, unidad, fila_id,
-                                     (fila["creado_en"] or "")[:10])
+                                     (fila["creado_en"] or "")[:10],
+                                     depende_de=id_cola_paso1)
     except Exception:                            # noqa: BLE001
         # Que el encolado falle NO puede perder el check list: son 65 campos
         # cargados con el auto delante. Queda en el log y la reconciliacion lo
