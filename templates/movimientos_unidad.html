@@ -34,9 +34,6 @@
   <div class="estado-actual">
     <span class="rotulo">Estado actual</span>
     <span class="valor">{{ badge_estado(estado) }}</span>
-    {% if estado_desde_regla %}
-      <span class="etiqueta">según el último movimiento registrado en REGLA</span>
-    {% endif %}
     {% if retorno %}<span class="etiqueta">retorno · ya pasó antes por el sistema</span>{% endif %}
   </div>
 

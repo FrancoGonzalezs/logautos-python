@@ -675,23 +675,19 @@ def _lista(titulo, bajada, endpoint_lista, destino_form):
     texto = request.args.get("q", "").strip()
     resultados = _buscar(texto) if texto else []
 
-    # El estado que ve el movilizador tiene que ser el de REGLA, no el crudo.
-    # Es la pantalla donde mas importa: el jefe de taller encadena VIN de una
-    # lista en papel, y despues de cargar el primer PDI la columna cruda de esa
-    # unidad sigue diciendo lo de antes -- su propio trabajo desactualizando la
-    # pantalla desde la que trabaja.
-    from modulos.movimientos import difieren_estados, estados_regla_de
-    de_regla = estados_regla_de([r["id"] for r in resultados])
-    difieren = {r["id"] for r in resultados
-                if difieren_estados(r["despachado"], de_regla.get(r["id"]))}
+    # El estado que ve el movilizador es el de la FILA, y desde el 2026-08-27
+    # eso ya incluye lo que REGLA acaba de hacer: `registrar()` la escribe al
+    # guardar. Antes habia que superponerle el estado derivado con una marca,
+    # porque la columna cruda seguia diciendo lo de antes -- el propio trabajo
+    # del jefe de taller desactualizando la pantalla desde la que trabaja.
 
     # `fragmento=1` lo manda la busqueda en vivo: solo el bloque de
     # resultados, sin recargar. Y nunca redirige, por lo mismo que en
     # Movimientos -- si redirigiera, el fetch traeria la pagina equivocada.
     if request.args.get("fragmento") == "1":
         return render_template("_resultados_taller.html", texto=texto,
-                               resultados=resultados, destino_form=destino_form,
-                               estado_regla=de_regla, filas_que_difieren=difieren)
+                               resultados=resultados, destino_form=destino_form)
+
 
     # Con un solo resultado y confirmacion explicita (Enter o el boton) se
     # entra derecho al formulario: es lo que hace rapido el encadenado.
@@ -703,7 +699,6 @@ def _lista(titulo, bajada, endpoint_lista, destino_form):
         "taller_lista.html", titulo=titulo, bajada=bajada,
         endpoint_lista=endpoint_lista, destino_form=destino_form,
         texto=texto, resultados=resultados,
-        estado_regla=de_regla, filas_que_difieren=difieren,
         hecho=request.args.get("hecho"), quedo=request.args.get("quedo"))
 
 

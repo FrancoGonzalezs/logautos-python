@@ -840,54 +840,18 @@ def estado_de_movimiento(paso, estado_hacia):
     return None
 
 
-def estados_regla_de(ids):
-    """{unidad_id: estado} con el ULTIMO movimiento de cada unidad, en UNA
-    consulta.
-
-    POR unidad_id Y NO POR VIN, y no es un detalle. `newstocks_cidef` tiene
-    71.546 filas para 61.447 VIN: cada fila es UNA PASADA del vehiculo por el
-    flujo, no el vehiculo. Un VIN puede tener tres pasadas -- dos despachadas
-    hace meses y una viva --, y los movimientos de la viva no dicen nada de las
-    otras dos.
-
-    Agrupar por VIN parecia funcionar y estaba mal. La primera version de este
-    helper lo hacia asi y marcaba como divergentes tres unidades DESPACHADAS
-    (80022, 87179, 90389) porque su VIN habia vuelto a entrar despues bajo otro
-    id. Tres de cuatro marcas eran falsas, y de las falsas la mas peligrosa:
-    decian que REGLA tenia una unidad en STOCK cuando esa pasada habia
-    terminado hace meses.
-
-    Es la misma regla que el pull ya habia fijado -- "el match es por `id`,
-    jamas por VIN" (nota 2 de sync_legado.py) -- aplicada donde faltaba.
-
-    En UNA consulta porque el listado pinta 50 filas por pagina: preguntando de
-    a una serian 50 consultas por pantalla."""
-    ids = [i for i in set(ids or ()) if i is not None]
-    if not ids:
-        return {}
-    marcas = ", ".join("?" * len(ids))
-    filas = consultar(
-        "SELECT m.unidad_id, m.paso, m.estado_hacia FROM movimientos_regla m "
-        "JOIN (SELECT unidad_id, MAX(id) AS id FROM movimientos_regla "
-        "       WHERE unidad_id IN ({0}) GROUP BY unidad_id) u ON u.id = m.id"
-        .format(marcas), ids)
-    resuelto = {}
-    for f in filas:
-        estado = estado_de_movimiento(f["paso"], f["estado_hacia"])
-        if estado:
-            resuelto[f["unidad_id"]] = estado
-    return resuelto
-
-
-def difieren_estados(crudo, de_regla):
-    """Si los dos estados de una unidad son distintos para el que mira.
-
-    Se compara normalizado: el sistema anterior escribe 'Navegando' y REGLA
-    guarda 'NAVEGANDO', y esa no es una divergencia -- es la misma palabra con
-    otra caja. Marcarla entrenaria a ignorar el aviso."""
-    if not de_regla:
-        return False
-    return normalizar_estado(crudo) != normalizar_estado(de_regla)
+# `estados_regla_de` y `difieren_estados` VIVIERON ACA y se borraron el
+# 2026-08-27. Servian para superponer "lo que REGLA sabe" sobre la columna
+# cruda del listado, con una marca cuando los dos no coincidian.
+#
+# Dejaron de tener sentido cuando el estado paso a salir de la FILA: la columna
+# ES lo que REGLA sabe, porque `registrar()` la escribe al guardar. La marca
+# habria quedado apagada para siempre, que es la peor forma de morir de un
+# aviso -- sigue en la pantalla y ya no significa nada.
+#
+# La pregunta que respondian de verdad -- "¿se entero el sistema anterior?" --
+# no se perdio: se la hace la reconciliacion a la COLA, que la contesta mejor
+# porque distingue en camino, trabado y conflicto.
 
 
 def viaja_al_legado(clave_paso):
@@ -939,9 +903,10 @@ def estado_efectivo(unidad):
     round trip. Si el push choca 409, el pull la corrige -- gana el legado, que
     es la regla que ya tenemos.
 
-    Devuelve `(estado, False)`. El segundo valor queda por compatibilidad con
-    los llamadores y ES SIEMPRE False: ya no hay un estado "de REGLA" distinto
-    del de la fila.
+    Devuelve el estado, a secas. Devolvia una tupla `(estado, desde_regla)` y
+    el segundo valor se borro el 2026-08-27: era siempre False, y un booleano
+    que nunca cambia es peor que no estar -- invita a escribir un `if` que
+    nadie va a ejecutar.
 
 
     EL SUPUESTO SOBRE EL QUE SE APOYA TODO ESTO
@@ -969,7 +934,7 @@ def estado_efectivo(unidad):
     es esta rama: un trigger del lado MySQL que lo mantenga, o una
     reconciliacion periodica completa que ignore la marca de agua -- el pull ya
     sabe hacerla, es `--desde ''`."""
-    return unidad["despachado"], False
+    return unidad["despachado"]
 
 
 def _tiene_contenedor_por_vin(vin):
@@ -1015,7 +980,7 @@ def estado_fisico(unidad):
     estado. Si la unidad quedo marcada con uno de ellos, su estado fisico es
     el ultimo que si lo era -- se busca hacia atras en el historial en vez de
     recomendar desde un no-estado."""
-    crudo, _ = estado_efectivo(unidad)
+    crudo = estado_efectivo(unidad)
     estado = normalizar_estado(crudo)
     if estado not in NO_SON_ESTADO:
         return estado
@@ -1134,7 +1099,7 @@ def recomendar(unidad):
     if por_matriz is not None:
         return por_matriz
 
-    crudo, _ = estado_efectivo(unidad)
+    crudo = estado_efectivo(unidad)
     estado = normalizar(crudo)
 
     # `ingresada` cubre el caso de una unidad que sigue marcada Navegando en la
@@ -1620,14 +1585,14 @@ def unidad(id_unidad):
     otros = [dict(PASOS[c], clave=c) for c in PASOS
              if not PASOS[c].get("solo_lectura")
              and (not recomendado or c != recomendado["clave"])]
-    estado, desde_regla = estado_efectivo(fila)
+    estado = estado_efectivo(fila)
     fisico = estado_fisico(fila)
     perfil, supuesto = perfil_de(fila["clientecompleto"])
 
     return render_template(
         "movimientos_unidad.html",
         u=fila, recomendado=recomendado, otros=otros,
-        estado=estado, estado_desde_regla=desde_regla,
+        estado=estado,
         estado_fisico=fisico, perfil=perfil, perfil_supuesto=supuesto,
         # Que motivo pedir para cada destino posible, para que el formulario
         # sepa cual lista mostrar sin repetir la regla en el template.

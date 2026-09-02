@@ -58,6 +58,35 @@ Un 500 en un endpoint se arregla y se vuelve a intentar. Una fila de más en
 
 ---
 
+### La fuente del estado es la FILA
+
+`newstocks_cidef.despachado`, y nada más. **No** se deriva del historial de
+REGLA. Cambiado el 2026-08-27, y es lo que ordenó dos semanas de enredo.
+
+El motivo es de dato: `registros` —el historial del legado— tiene agujeros. El
+**18,4%** de los cambios de estado no deja fila ahí, porque 58 lugares del PHP
+actualizan la unidad sin llamar a `registromov()`. Un historial con agujeros no
+puede ser la fuente de un estado; una fila que siempre está, sí. Que REGLA
+derivara de SU historial era el mismo error espejado: completo para lo que REGLA
+hizo, ciego para todo lo demás.
+
+`movimientos_regla` **no se toca**: sigue siendo el registro de lo que REGLA
+hizo y quién lo hizo, y de ahí salen los KPI y el push. Dejó de ser lo que
+decide dónde está la unidad.
+
+Al guardar, `registrar()` escribe también la fila — **sólo si el movimiento
+viaja**. Si no encola, no se escribe: REGLA no puede afirmar un estado que nunca
+va a entregar, y el pull lo revertiría a los 300 s de todos modos.
+
+> **EL SUPUESTO QUE SOSTIENE TODO ESTO: que todo cambio del legado mueve
+> `updated_at`.** Si una grilla escribe `despachado` sin tocarlo, el pull no ve
+> la fila y REGLA muestra un estado viejo **como si fuera certero** — antes se
+> mostraban los dos valores y la discrepancia saltaba sola. `updated_at` está
+> poblado en el 85,6% de las filas y hay 111 escrituras a `despachado` en 24
+> funciones; **cuántas lo tocan no está medido**. Si resulta que hay caminos que
+> no lo hacen, las salidas son un trigger del lado MySQL o una reconciliación
+> periódica completa que ignore la marca de agua (`--desde ''`).
+
 ## Las cinco reglas que no se negocian
 
 ### 0. La clave tiene que separar lo que la pregunta separa
