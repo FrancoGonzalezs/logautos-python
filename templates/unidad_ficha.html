@@ -13,41 +13,19 @@
     · id {{ fila['id'] }}
   </p>
 
-  {#- Los DOS estados, y no uno.
-      El de REGLA cambia apenas alguien registra un paso; el del sistema
-      anterior solo cuando el sync lo trae de alla. Mientras el envio
-      automatico no cubra ese paso son distintos, y los dos son ciertos --
-      cada uno sobre su sistema. Antes la ficha mostraba solo el segundo y la
-      pantalla de Movimientos solo el primero, sin avisar que eran cosas
-      distintas: dos pantallas contradiciendose sobre la misma unidad. -#}
+    {#
+    UN SOLO ESTADO, desde el 2026-08-27. Antes eran dos columnas -- "Estado en
+    REGLA" y "Confirmado en el sistema anterior" -- porque el estado se derivaba
+    del historial de REGLA y el de la fila podia decir otra cosa. Ahora sale de
+    la fila, y `registrar()` la escribe al guardar: no hay dos valores que
+    mostrar. Si el sistema anterior se entero o no, lo dice la reconciliacion.
+  #}
   <div class="estados-unidad">
-    {% if estado_regla %}
-      <div class="estado-col">
-        <span class="estado-rotulo">Estado en REGLA</span>
-        {{ badge_estado(estado_regla) }}
-      </div>
-    {% endif %}
     <div class="estado-col">
-      <span class="estado-rotulo">
-        {% if estado_regla %}Confirmado en el sistema anterior{% else %}Estado{% endif %}
-      </span>
-      {{ badge_estado(estado_anterior) }}
+      <span class="estado-rotulo">Estado</span>
+      {{ badge_estado(estado) }}
     </div>
-    {% if not estado_regla %}
-      <div class="estado-col">
-        <span class="estado-rotulo">Estado en REGLA</span>
-        <span class="estado-sin">sin movimientos registrados</span>
-      </div>
-    {% endif %}
   </div>
-
-  {% if estados_difieren %}
-    <p class="estado-desfase">
-      El sistema anterior todavía no tiene este paso. Es lo esperado mientras
-      el envío automático no cubra este tipo de movimiento — el dato está
-      guardado en REGLA y no se pierde.
-    </p>
-  {% endif %}
 
   {% if otras %}
     <div class="aviso">

@@ -713,20 +713,13 @@ def listado():
 
     columnas = [(c, titulo_de(c)) for c in CAMPOS_LISTADO]
 
-    # El estado de REGLA de las 50 filas de la pagina, en UNA consulta. El
-    # listado sigue FILTRANDO y ORDENANDO por la columna cruda -- eso no se
-    # toca acá --, pero al menos deja de esconder que REGLA sabe otra cosa.
-    #
-    # Import diferido por el mismo motivo que en la ficha: `movimientos`
-    # importa TABLA de este modulo.
-    from modulos.movimientos import difieren_estados, estados_regla_de
-    de_regla = estados_regla_de([f["id"] for f in filas])
-    difieren = {f["id"] for f in filas
-                if difieren_estados(f["despachado"], de_regla.get(f["id"]))}
+    # Ya no hace falta superponer "lo que REGLA sabe" sobre la columna cruda:
+    # desde el 2026-08-27 la columna ES lo que REGLA sabe -- `registrar()` la
+    # escribe al guardar. Si el sistema anterior se entero o no, lo dice la
+    # reconciliacion preguntandole a la cola, que es donde vive esa pregunta.
 
     contexto = dict(
         filas=filas, columnas=columnas, total=total,
-        estado_regla=de_regla, filas_que_difieren=difieren,
         pagina=pagina, por_pagina=POR_PAGINA,
         paginas=max(1, (total + POR_PAGINA - 1) // POR_PAGINA),
         busqueda=busqueda, estado=estado, estados=estados,
@@ -843,47 +836,19 @@ def _revision_de_contenedor_por_vin(vin):
 
 
 def _estados_de(fila):
-    """Los DOS estados de la unidad, para que la ficha muestre los dos.
+    """El estado de la unidad, para la ficha.
 
-    POR QUE SON DOS. `newstocks_cidef.despachado` es lo que tiene el sistema
-    anterior, y solo cambia cuando el pull lo trae de alla. El estado de REGLA
-    sale de `movimientos_regla` y cambia en cuanto alguien registra un paso.
-    Mientras el push no cubra ese paso, los dos son distintos -- y los dos son
-    ciertos, cada uno sobre su sistema.
+    ERA DOS Y AHORA ES UNO. Hasta el 2026-08-27 devolvia el estado de REGLA
+    -- derivado del ultimo movimiento -- y el del sistema anterior, y la ficha
+    pintaba los dos porque los dos eran ciertos, cada uno sobre su sistema.
 
-    Hasta ahora la ficha mostraba solo el crudo y la pantalla de Movimientos
-    solo el derivado, sin decir en ningun lado que eran cosas distintas. Paso
-    de verdad y costo una investigacion: la unidad 91953 tenia cuatro
-    movimientos registrados en REGLA -- el ultimo un PDI -- y la ficha seguia
-    diciendo 'Navegando', que es donde el dump la habia dejado. Las dos
-    pantallas se contradecian y ninguna admitia la existencia de la otra.
+    Desde que el estado sale de la FILA no hay dos. `movimientos.registrar()`
+    escribe la fila al guardar, asi que el valor que se muestra ya incluye lo
+    que REGLA acaba de hacer. La pregunta que quedaba sin responder -- "¿se
+    entero el sistema anterior?" -- se la hace la reconciliacion a la cola, y
+    la responde mejor: distingue en camino, trabado y conflicto.
 
-    Se muestran los dos y no se reemplaza uno por el otro: mostrar solo el
-    derivado escondería que el sistema anterior todavia no se entero, y mostrar
-    solo el crudo esconde el trabajo que el operario acaba de cargar.
-
-    Import diferido por el mismo motivo que `_revision_de_contenedor_por_vin`:
-    `movimientos` importa TABLA de este modulo."""
-    from modulos.movimientos import estado_efectivo
-
-    estado_regla, desde_regla = estado_efectivo(fila)
-    del_anterior = fila["despachado"]
-
-    # `desde_regla` False significa que REGLA no tiene ni un movimiento de esta
-    # unidad, y entonces `estado_efectivo` devuelve el crudo: son el mismo
-    # valor y pintar dos veces lo mismo es ruido, no transparencia.
-    if not desde_regla:
-        return {"estado_regla": None, "estado_anterior": del_anterior,
-                "estados_difieren": False}
-
-    # La comparacion es sobre el valor normalizado y no sobre el texto: el
-    # sistema anterior escribe 'Navegando' y REGLA guarda 'NAVEGANDO', y eso no
-    # es una divergencia -- es la misma palabra con otra caja. Marcarlo como
-    # diferencia entrenaria a ignorar el aviso.
-    from modulos.movimientos import normalizar_estado
-    return {
-        "estado_regla": estado_regla,
-        "estado_anterior": del_anterior,
-        "estados_difieren": (normalizar_estado(estado_regla)
-                             != normalizar_estado(del_anterior)),
-    }
+    Se conserva la funcion en vez de inlinear `fila["despachado"]` en la vista
+    porque el dia que haya algo mas que decir sobre el estado -- por ejemplo
+    cuanto hace que el pull no lo confirma -- este es el lugar donde va."""
+    return {"estado": fila["despachado"]}

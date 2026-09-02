@@ -58,6 +58,35 @@ Un 500 en un endpoint se arregla y se vuelve a intentar. Una fila de más en
 
 ---
 
+### La fuente del estado es la FILA
+
+`newstocks_cidef.despachado`, y nada más. **No** se deriva del historial de
+REGLA. Cambiado el 2026-08-27, y es lo que ordenó dos semanas de enredo.
+
+El motivo es de dato: `registros` —el historial del legado— tiene agujeros. El
+**18,4%** de los cambios de estado no deja fila ahí, porque 58 lugares del PHP
+actualizan la unidad sin llamar a `registromov()`. Un historial con agujeros no
+puede ser la fuente de un estado; una fila que siempre está, sí. Que REGLA
+derivara de SU historial era el mismo error espejado: completo para lo que REGLA
+hizo, ciego para todo lo demás.
+
+`movimientos_regla` **no se toca**: sigue siendo el registro de lo que REGLA
+hizo y quién lo hizo, y de ahí salen los KPI y el push. Dejó de ser lo que
+decide dónde está la unidad.
+
+Al guardar, `registrar()` escribe también la fila — **sólo si el movimiento
+viaja**. Si no encola, no se escribe: REGLA no puede afirmar un estado que nunca
+va a entregar, y el pull lo revertiría a los 300 s de todos modos.
+
+> **EL SUPUESTO QUE SOSTIENE TODO ESTO: que todo cambio del legado mueve
+> `updated_at`.** Si una grilla escribe `despachado` sin tocarlo, el pull no ve
+> la fila y REGLA muestra un estado viejo **como si fuera certero** — antes se
+> mostraban los dos valores y la discrepancia saltaba sola. `updated_at` está
+> poblado en el 85,6% de las filas y hay 111 escrituras a `despachado` en 24
+> funciones; **cuántas lo tocan no está medido**. Si resulta que hay caminos que
+> no lo hacen, las salidas son un trigger del lado MySQL o una reconciliación
+> periódica completa que ignore la marca de agua (`--desde ''`).
+
 ## Las cinco reglas que no se negocian
 
 ### 0. La clave tiene que separar lo que la pregunta separa
@@ -461,6 +490,26 @@ Cómo se llegó acá, para no repetirlo: el PHP se desplegó primero a propósit
 con buen motivo — la lista blanca ignora en silencio, así que cablear sólo
 Python da 200 y cero efecto. Ese orden es el correcto **sobre la copia**. Sobre
 el sistema vivo se invierte, y hay que acordarse de invertirlo.
+
+### 5b. Que DYP empuje de verdad
+
+Hoy DYP es **el único paso que la pantalla deja elegir y que no viaja**. Se
+guarda en `movimientos_regla`, no se escribe la fila, y la pantalla lo dice:
+*"Este paso todavía no viaja al sistema anterior"*.
+
+El obstáculo escrito en `SIN_CALLE` es que la rama del legado **manda un correo
+al cliente** con la patente de la unidad entregada al proveedor, así que empujar
+sólo la columna deja media entrega hecha.
+
+**Ese obstáculo ya no es lo que era.** Para las OT de la PDI decidimos que los
+efectos que el query builder no dispara **los hace REGLA** — por eso existe
+`ot_pdi.py` y el endpoint estrecho del bloque D. Mismo criterio: REGLA manda el
+correo, o lo manda un endpoint estrecho como el de las OT.
+
+La calle es determinista (`ENTREGADO DYP`, 92,6%) y el patio también (PATIO 2),
+así que la traducción no es el problema. Lo que falta es el correo.
+
+Más adelante, no ahora.
 
 ### 6. Migraciones versionadas — aprobado, sin construir
 

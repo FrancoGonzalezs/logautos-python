@@ -16,23 +16,26 @@
         la 2 porque administración sigue trabajando en el sistema anterior. -#}
     <h2>Estados <span class="cuenta">{{ r.estados.unidades_miradas }} unidades que REGLA tocó</span></h2>
     <div class="kpis">
-      <div class="kpi"><span class="kpi-n">{{ r.estados.conteo.de_acuerdo }}</span>
-        <span class="kpi-t">de acuerdo</span></div>
-      <div class="kpi"><span class="kpi-n">{{ r.estados.conteo.regla_adelante }}</span>
-        <span class="kpi-t">REGLA adelante<br><small>tiene que caer con cada enlace</small></span></div>
-      <div class="kpi"><span class="kpi-n">{{ r.estados.conteo.legado_adelante }}</span>
-        <span class="kpi-t">el anterior adelante<br><small>trabajo de administración</small></span></div>
-      <div class="kpi {% if r.estados.conteo.contradiccion %}kpi-malo{% endif %}">
-        <span class="kpi-n">{{ r.estados.conteo.contradiccion }}</span>
-        <span class="kpi-t">contradicciones<br><small>lo único a mirar a mano</small></span></div>
+      <div class="kpi"><span class="kpi-n">{{ r.estados.conteo.entregado }}</span>
+        <span class="kpi-t">entregado<br><small>el anterior lo sabe</small></span></div>
+      <div class="kpi"><span class="kpi-n">{{ r.estados.conteo.en_camino }}</span>
+        <span class="kpi-t">en camino<br><small>encolado, sin resolver</small></span></div>
+      <div class="kpi {% if r.estados.conteo.no_viaja %}kpi-espera{% endif %}">
+        <span class="kpi-n">{{ r.estados.conteo.no_viaja }}</span>
+        <span class="kpi-t">no viaja<br><small>falta el enlace</small></span></div>
+      <div class="kpi"><span class="kpi-n">{{ r.estados.conteo.el_legado_siguio }}</span>
+        <span class="kpi-t">el anterior siguió<br><small>lo trabajó después</small></span></div>
+      <div class="kpi {% if r.estados.conteo.trabado or r.estados.conteo.conflicto %}kpi-malo{% endif %}">
+        <span class="kpi-n">{{ r.estados.conteo.trabado + r.estados.conteo.conflicto }}</span>
+        <span class="kpi-t">trabadas + conflictos<br><small>lo único a mirar a mano</small></span></div>
     </div>
 
-    {% if r.estados.contradicciones %}
+    {% if r.estados.trabadas %}
       <div class="tabla-scroll">
         <table>
           <thead><tr><th>Unidad</th><th>VIN</th><th>Sistema anterior</th><th>REGLA</th><th>Venía de</th><th>Paso</th></tr></thead>
           <tbody>
-            {% for d in r.estados.contradicciones %}
+            {% for d in r.estados.trabadas %}
               <tr>
                 <td><a href="{{ url_for('unidades.ficha', id_unidad=d.unidad) }}">{{ d.unidad }}</a></td>
                 <td>{{ d.vin | mostrar }}</td>
@@ -86,15 +89,21 @@
       <h2>Corridas anteriores</h2>
       <div class="tabla-scroll">
         <table>
-          <thead><tr><th>Cuándo</th><th>De acuerdo</th><th>REGLA adelante</th><th>Anterior adelante</th><th>Contradicciones</th><th>PDI sin OT</th></tr></thead>
+          {# Las corridas VIEJAS tienen las categorías anteriores al cambio del
+             2026-08-27 y no se pueden traducir a las nuevas: `de_acuerdo`
+             mezclaba entregado con lo que ni siquiera se había empujado. Se
+             muestran con `| default(...)` para que la fila no reviente, y en
+             blanco cuando el dato no existe -- que es la verdad. #}
+          <thead><tr><th>Cuándo</th><th>Entregado</th><th>En camino</th><th>No viaja</th><th>El anterior siguió</th><th>Trabadas</th><th>PDI sin OT</th></tr></thead>
           <tbody>
             {% for s in serie %}
               <tr>
                 <td>{{ s.corrida_en }}</td>
-                <td>{{ s.conteo.de_acuerdo }}</td>
-                <td>{{ s.conteo.regla_adelante }}</td>
-                <td>{{ s.conteo.legado_adelante }}</td>
-                <td>{{ s.conteo.contradiccion }}</td>
+                <td>{{ s.conteo.entregado | default('—', true) }}</td>
+                <td>{{ s.conteo.en_camino | default('—', true) }}</td>
+                <td>{{ s.conteo.no_viaja | default('—', true) }}</td>
+                <td>{{ s.conteo.el_legado_siguio | default('—', true) }}</td>
+                <td>{{ (s.conteo.trabado | default(0, true)) + (s.conteo.conflicto | default(0, true)) }}</td>
                 <td>{{ s.sin_ot }}</td>
               </tr>
             {% endfor %}

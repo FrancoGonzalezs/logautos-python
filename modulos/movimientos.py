@@ -840,83 +840,101 @@ def estado_de_movimiento(paso, estado_hacia):
     return None
 
 
-def estados_regla_de(ids):
-    """{unidad_id: estado} con el ULTIMO movimiento de cada unidad, en UNA
-    consulta.
-
-    POR unidad_id Y NO POR VIN, y no es un detalle. `newstocks_cidef` tiene
-    71.546 filas para 61.447 VIN: cada fila es UNA PASADA del vehiculo por el
-    flujo, no el vehiculo. Un VIN puede tener tres pasadas -- dos despachadas
-    hace meses y una viva --, y los movimientos de la viva no dicen nada de las
-    otras dos.
-
-    Agrupar por VIN parecia funcionar y estaba mal. La primera version de este
-    helper lo hacia asi y marcaba como divergentes tres unidades DESPACHADAS
-    (80022, 87179, 90389) porque su VIN habia vuelto a entrar despues bajo otro
-    id. Tres de cuatro marcas eran falsas, y de las falsas la mas peligrosa:
-    decian que REGLA tenia una unidad en STOCK cuando esa pasada habia
-    terminado hace meses.
-
-    Es la misma regla que el pull ya habia fijado -- "el match es por `id`,
-    jamas por VIN" (nota 2 de sync_legado.py) -- aplicada donde faltaba.
-
-    En UNA consulta porque el listado pinta 50 filas por pagina: preguntando de
-    a una serian 50 consultas por pantalla."""
-    ids = [i for i in set(ids or ()) if i is not None]
-    if not ids:
-        return {}
-    marcas = ", ".join("?" * len(ids))
-    filas = consultar(
-        "SELECT m.unidad_id, m.paso, m.estado_hacia FROM movimientos_regla m "
-        "JOIN (SELECT unidad_id, MAX(id) AS id FROM movimientos_regla "
-        "       WHERE unidad_id IN ({0}) GROUP BY unidad_id) u ON u.id = m.id"
-        .format(marcas), ids)
-    resuelto = {}
-    for f in filas:
-        estado = estado_de_movimiento(f["paso"], f["estado_hacia"])
-        if estado:
-            resuelto[f["unidad_id"]] = estado
-    return resuelto
+# `estados_regla_de` y `difieren_estados` VIVIERON ACA y se borraron el
+# 2026-08-27. Servian para superponer "lo que REGLA sabe" sobre la columna
+# cruda del listado, con una marca cuando los dos no coincidian.
+#
+# Dejaron de tener sentido cuando el estado paso a salir de la FILA: la columna
+# ES lo que REGLA sabe, porque `registrar()` la escribe al guardar. La marca
+# habria quedado apagada para siempre, que es la peor forma de morir de un
+# aviso -- sigue en la pantalla y ya no significa nada.
+#
+# La pregunta que respondian de verdad -- "¿se entero el sistema anterior?" --
+# no se perdio: se la hace la reconciliacion a la COLA, que la contesta mejor
+# porque distingue en camino, trabado y conflicto.
 
 
-def difieren_estados(crudo, de_regla):
-    """Si los dos estados de una unidad son distintos para el que mira.
+def viaja_al_legado(clave_paso):
+    """Si un movimiento por ese paso llega al sistema anterior.
 
-    Se compara normalizado: el sistema anterior escribe 'Navegando' y REGLA
-    guarda 'NAVEGANDO', y esa no es una divergencia -- es la misma palabra con
-    otra caja. Marcarla entrenaria a ignorar el aviso."""
-    if not de_regla:
-        return False
-    return normalizar_estado(crudo) != normalizar_estado(de_regla)
+    La pantalla lo usa para avisarle al operario. Sin el aviso, elegir DYP se
+    ve exactamente igual que elegir STOCK y no pasa nada del otro lado -- que
+    es la queja que origino todo este trabajo.
+
+    TOMA EL PASO Y NO EL ESTADO, y esa distincion costo un bug. `calle_para`
+    devuelve None para STOCK, porque su calle NO sale de `CALLE_POR_ESTADO`
+    sino del formulario -- es el unico estado asi. Mirando solo el estado, la
+    pantalla avisaba que STOCK no viaja, que es exactamente lo contrario de lo
+    que acabamos de construir.
+
+    Import diferido: `push_legado` no importa `movimientos`, pero `taller` si
+    importa los dos y el orden se vuelve fragil arriba."""
+    from modulos.push_legado import calle_para
+    paso = PASOS.get(clave_paso) or {}
+    if clave_paso in PASOS_CON_UBICACION:
+        # Su calle la pone el operario, asi que viaja aunque la tabla no la
+        # sepa deducir.
+        return True
+    return calle_para(paso.get("estado_destino")) is not None
 
 
 def estado_efectivo(unidad):
-    """El estado que corresponde mostrar: el ultimo registrado desde REGLA si
-    lo hay, y si no el de la replica."""
-    # Por `unidad_id` y no por VIN: los movimientos de OTRA pasada del mismo
-    # vehiculo no son de esta. Ver la nota larga en estados_regla_de.
-    if unidad["id"]:
-        ultimo = consultar(
-            "SELECT paso, estado_hacia FROM movimientos_regla WHERE unidad_id = ? "
-            "ORDER BY id DESC LIMIT 1", (unidad["id"],), una=True)
-        if ultimo:
-            # `estado_hacia` es donde la unidad quedo DE VERDAD, y manda sobre
-            # el `estado_destino` del paso. Dos razones:
-            #
-            #   - hay pasos con destino condicional. La PDI termina en
-            #     FR - MECANICA o en EN ESPERA DYP CONSOLIDADO segun el tilde
-            #     del jefe de taller, y si la unidad ya tiene proveedor DYP no
-            #     se mueve de donde esta: un solo valor fijo no puede
-            #     representar eso.
-            #   - los pasos que son hito -- check list, revision de contenedor,
-            #     inspeccion de despacho -- declaran como destino el estado en
-            #     que suelen ocurrir. Derivar de ahi hacia que una unidad que
-            #     recibio el check list estando en STOCK pasara a figurar en
-            #     ZONA DE RECEPCION, que es falso. El arco guardado no miente.
-            declarado = estado_de_movimiento(ultimo["paso"], ultimo["estado_hacia"])
-            if declarado:
-                return declarado, True
-    return unidad["despachado"], False
+    """El estado de la unidad: LA FILA DE LA REPLICA, siempre.
+
+    CAMBIO DE ARQUITECTURA (2026-08-27). Hasta hoy esta funcion DERIVABA el
+    estado del ultimo movimiento de `movimientos_regla` y caia al crudo solo si
+    no habia ninguno. De ahi salian dos verdades que conciliar, y de las dos
+    verdades salio casi todo el enredo: los dos estados en la ficha, la marca de
+    divergencia en el listado, las categorias 1 y 2 de la reconciliacion.
+
+    EL MOTIVO ES DE DATO, NO DE GUSTO. `registros` -- el historial del legado --
+    no sirve como fuente: el 18,4% de los cambios de estado no deja fila ahi,
+    porque hay 58 lugares del PHP que actualizan la unidad sin llamar a
+    `registromov()`. `newstocks_cidef` tiene el estado completo SIEMPRE, sin
+    importar por que camino se escribio. Un historial con agujeros no puede ser
+    la fuente de un estado; una fila que siempre esta, si.
+
+    Que REGLA derivara de SU historial era el mismo error del otro lado: el
+    historial de REGLA es completo para lo que REGLA hizo, y ciego para todo lo
+    demas.
+
+    Y no se pierde nada: al guardar un movimiento REGLA escribe TAMBIEN la fila
+    (ver `registrar`), asi que la pantalla refleja el cambio sin esperar el
+    round trip. Si el push choca 409, el pull la corrige -- gana el legado, que
+    es la regla que ya tenemos.
+
+    Devuelve el estado, a secas. Devolvia una tupla `(estado, desde_regla)` y
+    el segundo valor se borro el 2026-08-27: era siempre False, y un booleano
+    que nunca cambia es peor que no estar -- invita a escribir un `if` que
+    nadie va a ejecutar.
+
+
+    EL SUPUESTO SOBRE EL QUE SE APOYA TODO ESTO
+    ===========================================
+
+    **Que TODO cambio del legado mueve `updated_at`.** Es lo que hace que el
+    pull vea el cambio y que la fila siga siendo cierta.
+
+    Si una grilla de administracion escribe `despachado` sin tocar
+    `updated_at`, el pull no trae esa fila -- filtra por marca de agua -- y
+    REGLA muestra un estado viejo COMO SI FUERA CERTERO. Antes de este cambio,
+    la pantalla mostraba los dos valores y la discrepancia se veia sola; ahora
+    hay uno solo y no hay con que compararlo.
+
+    ESTA RAMA NO LO RESUELVE Y NO PRETENDE HACERLO. Queda escrito porque es el
+    supuesto que sostiene la arquitectura nueva, y porque el dia que falle no
+    se va a ver como un error sino como un dato correcto.
+
+    Lo que se sabe hoy: `newstocks_cidef.updated_at` esta poblado en el 85,6%
+    de las filas -- o sea que el 14,4% nunca lo tuvo --, y hay 111 escrituras a
+    `despachado` repartidas en 24 funciones del legado. Cuantas de esas 111
+    tocan `updated_at` NO ESTA MEDIDO. Franco lo esta averiguando.
+
+    Si resulta que hay caminos que no lo tocan, las salidas son dos y ninguna
+    es esta rama: un trigger del lado MySQL que lo mantenga, o una
+    reconciliacion periodica completa que ignore la marca de agua -- el pull ya
+    sabe hacerla, es `--desde ''`."""
+    return unidad["despachado"]
 
 
 def _tiene_contenedor_por_vin(vin):
@@ -962,7 +980,7 @@ def estado_fisico(unidad):
     estado. Si la unidad quedo marcada con uno de ellos, su estado fisico es
     el ultimo que si lo era -- se busca hacia atras en el historial en vez de
     recomendar desde un no-estado."""
-    crudo, _ = estado_efectivo(unidad)
+    crudo = estado_efectivo(unidad)
     estado = normalizar_estado(crudo)
     if estado not in NO_SON_ESTADO:
         return estado
@@ -1081,7 +1099,7 @@ def recomendar(unidad):
     if por_matriz is not None:
         return por_matriz
 
-    crudo, _ = estado_efectivo(unidad)
+    crudo = estado_efectivo(unidad)
     estado = normalizar(crudo)
 
     # `ingresada` cubre el caso de una unidad que sigue marcada Navegando en la
@@ -1311,6 +1329,54 @@ def registrar(unidad, datos):
                                      datos.get("estado_hacia"), id_actual(),
                                      calle=datos.get("calle"),
                                      patio=datos.get("patio"))
+
+    # -- Y LA FILA DE LA REPLICA ---------------------------------------------
+    #
+    # Desde el cambio de arquitectura del 2026-08-27, el estado que ven las
+    # pantallas sale de la FILA, no de este historial. Si el movimiento no la
+    # escribiera, la pantalla mostraria el estado viejo hasta la proxima vuelta
+    # del pull -- hasta 300 s de "no pasó nada" despues de confirmar.
+    #
+    # VA DESPUES DE `encolar_movimiento` Y NO ANTES, y el orden importa dos
+    # veces:
+    #
+    #   1. `encolar_movimiento` lee `unidad["updated_at"]` para el locking
+    #      optimista. `unidad` es la fila tal como la leyo el endpoint, asi que
+    #      no cambiaria igual -- pero dejar la escritura despues hace que no
+    #      dependa de eso.
+    #   2. `encolar_movimiento` pone `push_pendiente = 1`, y ESA es la marca que
+    #      impide que el proximo pull pise lo que acabamos de escribir. El
+    #      UPSERT del pull saltea las filas con el flag en 1.
+    #
+    # `updated_at` NO SE TOCA. Es el reloj del legado y es contra el que se hace
+    # el locking: escribirlo con el nuestro seria inventar una version. Regla 3.
+    #
+    # SOLO SI EL MOVIMIENTO VIAJA. Decidido el 2026-08-27 despues de medirlo:
+    # para los estados de SIN_CALLE -- hoy DYP es el unico que la pantalla deja
+    # elegir -- `encolar_movimiento` devuelve None y `push_pendiente` queda en
+    # 0, asi que el proximo pull PISA esta escritura con el valor del legado.
+    # Medido: la fila quedaba en 'DYP' y volvia a 'EN ESPERA DYP CONSOLIDADO'
+    # en la vuelta siguiente. La pantalla mostraba el cambio y lo perdia, en
+    # silencio, hasta 300 s despues.
+    #
+    # Escribirla igual seria peor que no escribirla: REGLA estaria afirmando un
+    # estado que nunca va a entregar. La pantalla avisa en su lugar -- ver
+    # `viaja_al_legado` y el aviso de `movimientos_unidad.html`.
+    #
+    # `updated_at` NO SE TOCA, ni siquiera cuando si viaja: es el reloj del
+    # legado y es contra el que se hace el locking. Regla 3.
+    if id_cola and datos.get("estado_hacia"):
+        columnas = ["despachado = ?"]
+        valores = [datos["estado_hacia"]]
+        if datos.get("patio"):
+            columnas.append("patio = ?")
+            valores.append(datos["patio"])
+        if datos.get("calle"):
+            columnas.append("calle = ?")
+            valores.append(datos["calle"])
+        db.execute('UPDATE "{}" SET {} WHERE id = ?'.format(
+            TABLA, ", ".join(columnas)), valores + [unidad["id"]])
+
     db.commit()
 
     # Despues del commit, nunca antes, y detras de PUSH_LEGADO_ACTIVO.
@@ -1519,14 +1585,14 @@ def unidad(id_unidad):
     otros = [dict(PASOS[c], clave=c) for c in PASOS
              if not PASOS[c].get("solo_lectura")
              and (not recomendado or c != recomendado["clave"])]
-    estado, desde_regla = estado_efectivo(fila)
+    estado = estado_efectivo(fila)
     fisico = estado_fisico(fila)
     perfil, supuesto = perfil_de(fila["clientecompleto"])
 
     return render_template(
         "movimientos_unidad.html",
         u=fila, recomendado=recomendado, otros=otros,
-        estado=estado, estado_desde_regla=desde_regla,
+        estado=estado,
         estado_fisico=fisico, perfil=perfil, perfil_supuesto=supuesto,
         # Que motivo pedir para cada destino posible, para que el formulario
         # sepa cual lista mostrar sin repetir la regla en el template.
@@ -1539,6 +1605,14 @@ def unidad(id_unidad):
         # selector de desvio y ahi el bloque tiene que aparecer igual.
         ubic=ubicacion.sugerencia(get_db(), fila, id_actual()),
         pasos_con_ubicacion=PASOS_CON_UBICACION,
+        # Que pasos NO llegan al sistema anterior. La pantalla lo dice ANTES de
+        # que el operario confirme y despues de que confirmo: elegir uno de
+        # estos se ve identico a elegir cualquier otro, y el movimiento queda
+        # guardado en REGLA y en ningun lado mas.
+        pasos_que_no_viajan={c for c in PASOS
+                             if not PASOS[c].get("solo_lectura")
+                             and PASOS[c].get("estado_destino")
+                             and not viaja_al_legado(c)},
         historial=movimientos_de_unidad(fila["id"]))
 
 

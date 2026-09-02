@@ -6,9 +6,20 @@
   <p class="volver"><a href="{{ url_for('movimientos.buscar') }}">‹ buscar otra unidad</a></p>
 
   {% if request.args.get('registrado') %}
-    <div class="aviso aviso-ok">
-      Movimiento registrado. El siguiente paso ya está recalculado abajo.
-    </div>
+    {% if request.args.get('registrado') in pasos_que_no_viajan %}
+      {# NO es un error y por eso no va en rojo: el movimiento se guardó bien.
+         Pero este paso todavía no tiene enlace con el sistema anterior, así
+         que allá no va a aparecer — y sin decirlo, se ve igual que uno que sí
+         viaja. Es la queja que originó todo este trabajo. #}
+      <div class="aviso">
+        Movimiento registrado en REGLA. <strong>Este paso todavía no viaja al
+        sistema anterior</strong>, así que allá la unidad sigue como estaba.
+      </div>
+    {% else %}
+      <div class="aviso aviso-ok">
+        Movimiento registrado. El siguiente paso ya está recalculado abajo.
+      </div>
+    {% endif %}
   {% endif %}
 
   <h1>{{ u['vin'] | mostrar }}</h1>
@@ -23,9 +34,6 @@
   <div class="estado-actual">
     <span class="rotulo">Estado actual</span>
     <span class="valor">{{ badge_estado(estado) }}</span>
-    {% if estado_desde_regla %}
-      <span class="etiqueta">según el último movimiento registrado en REGLA</span>
-    {% endif %}
     {% if retorno %}<span class="etiqueta">retorno · ya pasó antes por el sistema</span>{% endif %}
   </div>
 
@@ -135,6 +143,12 @@
            adónde va a quedar la unidad ANTES de escribirla. Sin javascript el
            texto se queda en el genérico y el servidor rechaza si falta la
            calle. #}
+        {% if recomendado.clave in pasos_que_no_viajan %}
+          <p class="paso-porque">
+            <strong>Ojo:</strong> este paso todavía no viaja al sistema
+            anterior. Se registra en REGLA y allá la unidad sigue como está.
+          </p>
+        {% endif %}
         {# Sale HABILITADO del servidor y lo deshabilita el javascript al
            cargar. Al revés dejaría la pantalla inutilizable si el javascript
            no corre —un teléfono viejo, la red que se cortó a mitad— y el

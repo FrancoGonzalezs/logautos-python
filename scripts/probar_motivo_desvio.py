@@ -22,6 +22,8 @@ mide la calidad de la preparacion.
 
 import importlib.util
 import os
+import re
+import sqlite3
 import shutil
 import sys
 import tempfile
@@ -30,13 +32,67 @@ RAIZ = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, RAIZ)
 os.environ["SECRET_KEY"] = "prueba"
 
-# Se reusan el armado de base y el cliente de prueba de la otra suite: son la
-# misma necesidad y dos copias se desincronizarian a la primera tabla nueva.
-_spec = importlib.util.spec_from_file_location(
-    "_pf", os.path.join(RAIZ, "scripts", "probar_ficha_estados.py"))
-_pf = importlib.util.module_from_spec(_spec)
-_spec.loader.exec_module(_pf)
-base_con, texto_visible = _pf.base_con, _pf.texto_visible
+# ARMADO DE BASE. Vivian en `probar_ficha_estados.py` y se mudaron aca el
+# 2026-08-27, cuando esa suite se borro junto con el comportamiento que
+# probaba: los dos estados de la ficha. Los helpers no eran de ese
+# comportamiento -- son fixture -- asi que se conservan.
+#
+# Si una tercera suite los necesita, van a un modulo compartido. Con dos, la
+# mudanza es mas barata que la indireccion.
+
+
+def base_con(ruta, despachado, movimientos):
+    """Una replica VACIA con el esquema completo, mas la unidad de prueba.
+
+    Se copia el esquema entero de local.db en vez de enumerar las tablas que
+    hacen falta. Enumerarlas fue el primer intento y fallo enseguida: la ficha
+    toca `inspeccion_despacho`, `contenedor`, `check_list`, `piezas` y varias
+    mas, y la lista se desincronizaria con la primera pantalla nueva. Copiar el
+    esquema no se desincroniza nunca."""
+    if os.path.exists(ruta):
+        os.remove(ruta)
+    origen = sqlite3.connect(os.path.join(RAIZ, "local.db"))
+    db = sqlite3.connect(ruta)
+    for (sql,) in origen.execute(
+            "SELECT sql FROM sqlite_master WHERE sql IS NOT NULL "
+            "AND name NOT LIKE 'sqlite_%'"):
+        try:
+            db.execute(sql)
+        except sqlite3.OperationalError:
+            # Indices sobre tablas que no se crearon todavia, o vistas que
+            # dependen de otra: no importan para esta prueba.
+            pass
+
+    cols = [r[1] for r in origen.execute("PRAGMA table_info(newstocks_cidef)")]
+    fila = origen.execute(
+        "SELECT * FROM newstocks_cidef WHERE vin <> '' LIMIT 1").fetchone()
+    origen.close()
+
+    valores = list(fila)
+    valores[cols.index("id")] = 90001
+    valores[cols.index("vin")] = "VINDEPRUEBA123456"
+    valores[cols.index("despachado")] = despachado
+    valores[cols.index("clientecompleto")] = "CIDEF"
+    db.execute("INSERT INTO newstocks_cidef ({}) VALUES ({})".format(
+        ", ".join('"{}"'.format(c) for c in cols), ", ".join("?" * len(cols))),
+        valores)
+
+    for paso_, hacia in movimientos:
+        db.execute(
+            "INSERT INTO movimientos_regla (unidad_id, vin, paso, estado_hacia, "
+            "creado_en) VALUES (?,?,?,?,?)",
+            (90001, "VINDEPRUEBA123456", paso_, hacia, "2026-08-26T10:00:00"))
+    db.commit()
+    db.close()
+
+
+
+def texto_visible(html):
+    """El HTML sin etiquetas, para buscar lo que un humano leeria."""
+    sin_estilo = re.sub(r"<(style|script)\b.*?</\1>", " ", html, flags=re.S)
+    return re.sub(r"\s+", " ", re.sub(r"<[^>]+>", " ", sin_estilo))
+
+
 
 fallos = []
 
