@@ -96,7 +96,7 @@ fila —o UNA variable— de la clave que vas a usar. Si representa dos cosas
 distintas, vas a razonar sobre una mientras el dato es la otra** — y no se ve,
 porque sale un número redondo y con volumen, o una frase que suena obvia.
 
-Apareció **cuatro veces**, en cuatro formas que parecen no tener nada que ver:
+Apareció **cinco veces**, en formas que parecen no tener nada que ver:
 
 | El nombre que se usó | Lo que cubría en realidad | Lo que dio |
 |---|---|---|
@@ -104,6 +104,7 @@ Apareció **cuatro veces**, en cuatro formas que parecen no tener nada que ver:
 | todo el histórico | el código de hoy y **años de versiones viejas** | `IT` 69,9% / `It` 30% "conviviendo", cuando `It` es la forma vieja |
 | `calle` | el estacionamiento y **la etapa de proceso** | `A` → PATIO 2 al 78,8%, "el único caso ambiguo" |
 | `$patio` en `actulocproccess` | el patio de la unidad y **lo que el operario eligió en el formulario** | "las unidades con patio sucio no se pueden mover" — y se mueven igual |
+| `observacion` / `requerimiento` / `gravedad` en `check_list` | **las piezas, los tipos de daño y los niveles** — ninguna guarda lo que su nombre dice | y al lado existe `observaciones`, en plural, que sí es la observación libre |
 
 Los tres primeros se arreglan igual: **partir la clave hasta que una fila sea
 una cosa sola.** `vin` → `id` de la pasada. El histórico → los últimos 6 meses.
@@ -122,6 +123,25 @@ Lo que lo destapó no fue mirar más código: fue **preguntar de dónde sale el
 valor**, y después buscar la huella que tendría que haber dejado. Si el
 desplegable hubiera ofrecido `PATIO 4 B` alguna vez, esa cadena estaría en
 `registros.patio`, porque el `$mov` la copia. No está. Ahí se cayó.
+
+**El quinto es el más peligroso de leer, porque no hay nada raro que notar.**
+`check_list.observacion` guarda las piezas dañadas, `requerimiento` los tipos de
+daño y `gravedad` los niveles — tres listas paralelas unidas por `-`. Y al lado,
+`observaciones` en plural sí es la observación que escribió el encargado.
+
+**Una letra de diferencia entre una columna y la otra.** En una revisión de
+código, `observacion` y `observaciones` se leen igual; en un `SELECT` escrito de
+memoria, la equivocada devuelve texto plausible y nadie se entera.
+
+> **LA GUARDA:** ninguna consulta nueva nombra esas cuatro columnas sin un
+> comentario al lado que diga qué guardan de verdad. Y en el código de REGLA no
+> se llaman así: la entidad del push las mapea explícitamente, y quien lea
+> `piezas`, `tipos_de_dano` y `niveles` no puede equivocarse. El nombre malo se
+> queda del lado del cable, que es donde no se puede cambiar.
+
+Verificado contra el modelo (`getPiezas_CLI` lee `observacion`, `getTipoDano_CLI`
+lee `requerimiento`, `getNivelDano_CLI` lee `gravedad`) y contra el dato: fila
+20100, seis piezas / seis tipos / seis niveles, alineados por posición.
 
 Las tres señales de que estás por pisarla:
 
@@ -510,6 +530,53 @@ La calle es determinista (`ENTREGADO DYP`, 92,6%) y el patio también (PATIO 2),
 así que la traducción no es el problema. Lo que falta es el correo.
 
 Más adelante, no ahora.
+
+### 5c. La OT del check list: la sigue creando el legado
+
+**Divergencia consciente, decidida el 2026-08-28**, para el mes en paralelo.
+
+El flujo: el movilizador hace el check list en REGLA, el push escribe
+`check_list`, y **administración abre la pantalla del correo en el sistema
+viejo** — ahí se crea la OT, sale el correo y se mueve el estado, que vuelve por
+el pull. Es un paso más para administración, que ya está en el sistema viejo
+igual.
+
+Por eso REGLA **no** empuja `estado_check_list` ni `calle`/`despachado`/`patio`
+para el check list, y **no** manda ese correo.
+
+**El motivo no es el tiempo, es la calidad.** El cálculo de la PDI eran diez
+líneas y hicieron falta dos rondas y dos reglas descubiertas para llegar al
+100%. El del check list son **4.193 líneas**: 24 ramas de tipo de daño × 3
+niveles × 2 clientes, con los precios en `piezas` (429 filas × pulir/desab/
+pintura × cidef/carflex). Emitir OT con precios mal calculados es el peor error
+que este proyecto puede cometer, porque es **el primero que le llega al
+cliente**.
+
+**Y no son dos OT, es una.** `$otes_lavado` está comentada, y la segunda OT de
+LAVADO también. La única viva es `PRESUPUESTO` — y ni siquiera siempre: para
+CARFLEX el código hace `$id_ot = 28701` (un id fijo, no crea nada) y sin daños
+hace `$id_ot = 666`. El dato lo confirma: `CHECK LIST DYP`, la variante CARFLEX,
+murió en 2025-05.
+
+**EL ORÁCULO YA ESTÁ, para cuando se retome.** `check_list.observacion` /
+`requerimiento` / `gravedad` tienen las tres listas alineadas, `check_list.id_ot`
+enlaza con la OT, `piezas` está en la réplica y el `precio` de la OT es la suma
+de los ítems. Se valida al 100% igual que la PDI.
+
+**Y lo primero es medir qué ramas están vivas** sobre las 232 OT de
+`PRESUPUESTO` desde 2026-06, antes de escribir una línea. De las 24 ramas
+posiblemente se usen seis — es la misma lección del catálogo de calles, donde 13
+letras del menú tenían cero movimientos.
+
+### 5d. Los destinatarios de correo van en una tabla
+
+El legado los tiene **cableados en el PHP**, por cliente: seis direcciones para
+CARFLEX, una para CIDEF, más ASTARA, POMPEYO e internos de Logautos. Nadie los
+puede cambiar sin desplegar.
+
+En REGLA van en una **tabla**. Es un problema heredado que no vale la pena
+copiar, y la lista de a quién le llega un correo con daños de un vehículo es
+justo lo que cambia sin avisar cuando alguien entra o sale de un puesto.
 
 ### 6. Migraciones versionadas — aprobado, sin construir
 
