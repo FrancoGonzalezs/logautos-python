@@ -610,6 +610,18 @@ def confirmar(id_unidad):
         "guia_ingreso": datos["guia_ingreso"] or None,
         "fecha": datos["fecha_ingreso"] or None,
         "responsable": datos["encargado"] or None,
+        # NO se empuja el movimiento, desde el 2026-09-02.
+        #
+        # `Nota.php:check_list()` llama a `registromov()` CERO veces --
+        # contadas, igual que las del IT y las del check list mecanico -- y a
+        # `actualizar_vin()` una sola. Empujar el movimiento le mete al
+        # historial del legado una fila que su propia pantalla nunca genera, y
+        # de ese historial salen sus reportes: en el mes en paralelo alguien la
+        # va a ver y va a desconfiar del historial entero.
+        #
+        # Es solo hacia adelante: al decidirlo habia CERO check lists cargados
+        # en REGLA, asi que no quedo ninguna fila espuria que limpiar.
+        "empuja_movimiento": False,
     })
 
     guardar(unidad, datos, movimiento_id)

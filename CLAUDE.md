@@ -258,6 +258,33 @@ el legado con su reloj; `updated_at` lo pone el receptor con el suyo. El desfase
 del dump **no es fijo**: es conversión de zona horaria y cambia con el horario
 de verano (4 h o 3 h según el mes).
 
+**LAS DOS GUARDAS DE PRUEBA.** Se activan igual — el nombre `probar_*` — y se
+apagan con la misma variable — `REGLA_SOLO_LOCAL=0`. Dos guardas que se activan
+igual son una regla; dos que se activan distinto son dos reglas que recordar.
+
+| Guarda | Qué frena | Nació de |
+|---|---|---|
+| `exigir_destino_local` | que una prueba le hable al legado de **producción** | un GET real que salió, 2026-08-27 |
+| `exigir_replica_de_prueba` | que una prueba abra la **réplica real** | una prueba de humo que escribió sobre la unidad 92095, 2026-09-02 |
+
+La segunda vive en `conectar_db`, que es el único camino por el que se abre la
+base — lo usan `get_db()` de Flask, los scripts y los hilos del push. Puesta
+prueba por prueba, la próxima quedaba sin guarda; mismo argumento por el que el
+push se enganchó en `registrar()`.
+
+**Lo peor que dejó aquel incidente no fue la fila de más**, y por eso vale
+anotarlo: fue `push_pendiente = 1` sobre una unidad real. El UPSERT del pull
+**saltea** las filas con ese flag, así que esa unidad deja de recibir
+actualizaciones del legado — en silencio, sin error, para siempre. Segunda: la
+entrada de cola quedó viva, y si el demonio hubiera corrido, la prueba habría
+escrito en el legado de producción sin que la guarda de destino la frenara (el
+demonio no corre bajo un `probar_*`).
+
+**Lo que NO cubre**, dicho para que nadie se confíe: un `sqlite3.connect` escrito
+a mano la saltea. La prueba de humo que la originó era un `python - <<EOF` suelto
+que ni siquiera se llamaba `probar_*`. La guarda protege el camino de la
+aplicación, que es por donde entró el daño de verdad.
+
 ### 4. Un doble más permisivo que el original es un sello de goma
 
 **El legado simulado tiene que RECHAZAR todo lo que rechaza el real.** Si acepta
@@ -321,9 +348,10 @@ Ida y vuelta automática entre Railway y `claude.logautos.cl` desde el
 |---|---|---|---|
 | `it` | actualizar | `PUT /api_regla/unidades/{id}` | producción, 2026-08-26 |
 | `movimientos` | crear | `POST /api_regla/movimientos` | **producción, verificado contra el endpoint real**, 2026-08-27 |
-| `check_list_mecanica` | crear | `POST /api_regla/check_list_mecanica` | Python listo; **el PHP NO está desplegado** (bloques G–K) |
-| `check_list_mecanica_falla` | actualizar | `PUT /api_regla/check_list_mecanica_falla/{id}` | ídem |
-| `check_mecanica_unidad` | actualizar | `PUT /api_regla/unidades/{id}` | ídem — necesita `fecha_check_list_mecanica` en la lista blanca (bloque H) |
+| `check_list_mecanica` | crear | `POST /api_regla/check_list_mecanica` | **PHP desplegado 2026-09-02**, sonda 401 OK; sin push real todavía |
+| `check_list_mecanica_falla` | actualizar | `PUT /api_regla/check_list_mecanica_falla/{id}` | ídem. **La ruta se corrigió al desplegar**: la spec decía `POST` sin id y habría dado 405 — el cliente manda `PUT /<ruta>/<legado_id>` para todo verbo `actualizar` |
+| `check_mecanica_unidad` | actualizar | `PUT /api_regla/unidades/{id}` | ídem, con `fecha_check_list_mecanica` en la lista blanca (bloque H) |
+| `check_list` (ingreso) | crear | `POST /api_regla/check_list` | **el PHP está desplegado y Python NO la tiene** — ver pendiente 9 |
 
 **`movimientos` se verificó contra el endpoint desplegado, no contra el
 simulado**: tres sondas (401 sin clave / 400 `unidad_id es obligatorio` / 404
@@ -687,10 +715,10 @@ Correr `estado` justo después de la 1 es **obligatorio** en el runbook.
 
 `PRAGMA foreign_keys=ON` queda **explícitamente afuera**.
 
-### 8. `check_list_ingreso` empuja un movimiento que el legado no genera
+### 8. `check_list_ingreso` empujaba un movimiento espurio — RESUELTO el 2026-09-02
 
-Descubierto el 2026-09-02 contando las llamadas a `registromov()` de las cuatro
-funciones de check list de una sola pasada:
+Descubierto contando las llamadas a `registromov()` de las cuatro funciones de
+check list de una sola pasada:
 
 | Función del legado | `registromov()` | `actualizar_vin()` |
 |---|---|---|
@@ -698,15 +726,41 @@ funciones de check list de una sola pasada:
 | `check_list_mecanica_proces()` | **0** | 1 |
 | `subida_foto_check_list_mecanico_proces()` | 0 | 0 |
 
-El mecánico se construyó con `empuja_movimiento=False` desde el principio. El de
-ingreso **está desplegado empujando**, así que cada check list hecho en REGLA le
-mete a `registros` una fila que la pantalla del legado nunca genera.
+El mecánico nació con `empuja_movimiento=False`. El de ingreso lo empujaba, así
+que cada check list hecho en REGLA le metía a `registros` una fila que la
+pantalla del legado nunca genera — y de ese historial salen sus reportes.
 
-No es urgente ni pierde datos: agrega historial de más, no de menos. Pero durante
-el mes en paralelo alguien va a comparar los dos historiales y esa diferencia va
-a aparecer. **Antes de tocarlo hay que contar cuántas filas ya se metieron** —
-son pocas, pero hay que saber cuántas y cuáles antes de cambiar el
-comportamiento, no después.
+**Se contó antes de tocar y el número era CERO:** no había ningún check list
+cargado en REGLA en Railway, así que no quedó ninguna fila espuria que limpiar.
+El cambio es sólo hacia adelante. `check_list.py` pasa `empuja_movimiento=False`
+desde el 2026-09-02.
+
+**Consecuencia que hay que tener presente: el check list de ingreso ahora no
+empuja NADA.** Su entidad `check_list` (bloque G, 24 columnas) está desplegada
+del lado PHP, pero Python no la tiene en `ENTIDADES` — nunca se construyó. Ver
+el pendiente 9.
+
+### 9. El check list de INGRESO no tiene push
+
+Es el único de los dos que quedó a medio camino: el PHP lo espera y el Python no
+lo manda.
+
+| | ingreso | mecánico |
+|---|---|---|
+| Entidad PHP desplegada | `check_list`, 24 columnas | `check_list_mecanica`, 82 |
+| Entidad en `ENTIDADES` de Python | **no existe** | sí, más `_falla` y `_unidad` |
+| Las 10 columnas del `$historico` en la unidad | **no se empujan** | (n/a) |
+| `fecha_check_list_mecanica` en la unidad | (n/a) | sí, `check_mecanica_unidad` |
+
+Falta: la entidad `check_list` con operación `crear`, el mapeo de los tres
+nombres que mienten (`observacion`→piezas, `requerimiento`→tipos,
+`gravedad`→niveles — Regla 0), la publicación de sus fotos por la ruta con token
+igual que el mecánico, y una entidad para las diez columnas del `$historico` que
+`check_list()` escribe en la unidad con su único `actualizar_vin()`.
+
+Es el trabajo que cierra el módulo. No es grande — el mecánico ya dejó hechas
+las piezas difíciles (la propagación del id creado, la ruta pública, el patrón
+de las tres entidades).
 
 ### 7. Decisiones que esperan datos, no código
 

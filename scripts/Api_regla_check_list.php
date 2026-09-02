@@ -675,8 +675,14 @@ public function crear_fila($entidad = null)
 /* ---------------------------------------------------------------------------
    Y la ruta, en routes.php, junto a las dos del bloque H:
 
-       $route['api_regla/check_list_mecanica_falla']['POST'] =
-           'api_regla/actualizar/check_list_mecanica_falla';
+       $route['api_regla/check_list_mecanica_falla/(:num)']['PUT'] =
+           'api_regla/actualizar/check_list_mecanica_falla/$1';
+
+   CORREGIDA el 2026-09-02: la primera version decia POST y sin id, y habria
+   dado 405 en el primer push real. `ClientePushLegadoHTTP.actualizar()` arma
+   `PUT /api_regla/<ruta>/<legado_id>` para TODA entidad de verbo
+   'actualizar' -- el id va en la URL, no en el cuerpo, que es lo que la
+   distingue de `crear`.
 
    Va DESPUES de la de `check_list_mecanica` para que el prefijo mas corto no
    se coma al mas largo.
