@@ -290,6 +290,49 @@ ENTIDADES = {
         "tabla_espejo": "stock_consumibles",
         "ruta": "stock_consumibles/{id}/descontar",
     },
+    # El check list mecanico, PASO 1: la fila nace. `crear` y no `actualizar`
+    # porque `check_list_mecanica` es append-only -- nada la reescribe salvo
+    # el paso 2, que va por la entidad de abajo.
+    #
+    # `tabla_espejo` es `newstocks_cidef` y no `check_list_mecanica`: el
+    # espejo dice sobre QUE fila se hace el locking optimista y cual queda con
+    # `push_pendiente`, y lo que hay que proteger de que el pull lo pise es la
+    # UNIDAD. La fila del check list es nueva y no tiene con que chocar.
+    "check_list_mecanica": {
+        "tabla_origen": "check_list_mecanica_regla",
+        "tabla_espejo": "newstocks_cidef",
+        "ruta": "check_list_mecanica",
+        # El id que devuelve el legado al crear la fila se guarda aca y se le
+        # pasa a las entradas que dependen de esta. Ver `_propagar_id_creado`.
+        "guarda_id_en": ("check_list_mecanica_regla", "legado_id"),
+    },
+    # PASO 2: cada falla, con su foto y su modalidad. `actualizar` sobre la
+    # fila que creo el paso 1.
+    #
+    # La entidad es OTRA y no un segundo verbo de la de arriba: una clave, un
+    # verbo. Y su `legado_id` no es la unidad sino el id de la FILA del check
+    # list en el legado, que recien se conoce cuando el paso 1 responde -- de
+    # ahi que la entrada dependa de aquella y no se pueda encolar antes.
+    "check_list_mecanica_falla": {
+        "tabla_origen": "check_list_mecanica_regla",
+        "tabla_espejo": "check_list_mecanica",
+        "ruta": "check_list_mecanica_falla",
+    },
+    # La marca en la UNIDAD: `fecha_check_list_mecanica`, la unica columna que
+    # `check_list_mecanica_proces()` le escribe a `newstocks_cidef`.
+    #
+    # Comparte `ruta` con `it` y con `pdi` -- las tres hacen PUT sobre
+    # `unidades` -- y aun asi es una entidad propia. La ruta no alcanza para
+    # nombrarla: el nombre de la entidad es lo que se lee en la cola, en el
+    # log y en la reconciliacion, y una entrada que dijera `it` para un check
+    # list mecanico manda a buscar el problema al lugar equivocado. Es la
+    # misma Regla 0 de siempre: la clave tiene que separar lo que la pregunta
+    # separa, y la pregunta aca es "que pantalla origino esto".
+    "check_mecanica_unidad": {
+        "tabla_origen": "check_list_mecanica_regla",
+        "tabla_espejo": "newstocks_cidef",
+        "ruta": "unidades",
+    },
 }
 
 # Las CATORCE columnas de la PDI, con el nombre que tienen del otro lado.
@@ -890,6 +933,130 @@ def encolar_ot_pdi(db, unidad, pdi_id, datos, usuario, depende_de):
         depende_de=depende_de)
 
 
+# Las 82 columnas del check list mecanico, con el nombre que tienen del otro
+# lado. Salen del array `$userInfo` de `Nota.php:check_list_mecanica_proces()`.
+#
+# Las 65 del catalogo se toman de `catalogo_mecanica` y no se vuelven a
+# escribir a mano: una segunda lista es una lista que se desincroniza, y el
+# sintoma seria un campo que la pantalla pide y el push no manda -- ignorado
+# en silencio del otro lado, que es el peor modo de falla del proyecto.
+def _columnas_check_list_mecanico():
+    from modulos.catalogo_mecanica import CAMPOS
+    return (
+        "vin", "patente", "id_vin", "guia", "cliente", "fecha_ingreso",
+        "marca", "modelo", "color", "encargado", "estanque", "kilometraje",
+        "estado_carflex", "fecha_creacion", "fecha_creacion_completa",
+    ) + tuple(c[0] for c in CAMPOS) + ("obs_general", "estado")
+
+
+def campos_check_list_mecanico(unidad, fila):
+    """El cuerpo del paso 1, armado desde la fila que REGLA ya guardo.
+
+    `id_vin` es el id de la UNIDAD en el legado. El legado lo llama asi --
+    'id_vin' -- y no es el VIN: es la clave de la pasada. Se manda tal cual se
+    llama del otro lado para que la lista blanca se lea contra el `$userInfo`
+    del PHP sin traducir nada.
+
+    `fecha_creacion` y `fecha_creacion_completa` las pone el legado con
+    `date()` y las mandamos nosotros igual: si las pusiera el endpoint, dos
+    push del mismo check list darian dos fechas distintas y la idempotencia
+    dejaria de serlo."""
+    cuerpo = {}
+    for columna in _columnas_check_list_mecanico():
+        if columna == "id_vin":
+            cuerpo["id_vin"] = unidad["id"]
+        elif columna == "fecha_creacion":
+            cuerpo["fecha_creacion"] = (fila["creado_en"] or "")[:10]
+        elif columna == "fecha_creacion_completa":
+            cuerpo["fecha_creacion_completa"] = (
+                (fila["creado_en"] or "").replace("T", " "))
+        else:
+            try:
+                cuerpo[columna] = fila[columna]
+            except (IndexError, KeyError):
+                cuerpo[columna] = None
+    return cuerpo
+
+
+def encolar_check_list_mecanico(db, unidad, fila_id, campos):
+    """Encola el PASO 1: la fila nueva en `check_list_mecanica`."""
+    legado_id = unidad["id"]
+    db.execute("UPDATE newstocks_cidef SET push_pendiente = 1 WHERE id = ?",
+               (legado_id,))
+    return encolar_push(
+        db, "check_list_mecanica",
+        python_id=fila_id,
+        legado_id=legado_id,
+        operacion="crear",
+        campos=campos,
+        legado_updated_at_conocido=(unidad["updated_at"] or ""),
+        requiere_unidad=0)
+
+
+def encolar_fecha_check_mecanico(db, unidad, fila_id, fecha):
+    """La UNICA columna que el legado le escribe a la unidad en el paso 1.
+
+    Va por su propia entidad, `check_mecanica_unidad`, aunque su ruta sea la
+    misma que la del IT y la de la PDI: lo que se lee en la cola, en el log y
+    en la reconciliacion es el NOMBRE de la entidad, y una entrada que dijera
+    `it` para un check list mecanico manda a buscar el problema al lugar
+    equivocado.
+
+    `fecha_check_list_mecanica` tiene que estar en la lista blanca de
+    `Api_regla::columnas_permitidas` para 'unidades' o se IGNORA EN SILENCIO:
+    200, cero efecto, cola resuelta. Esta en el bloque H."""
+    legado_id = unidad["id"]
+    db.execute("UPDATE newstocks_cidef SET push_pendiente = 1 WHERE id = ?",
+               (legado_id,))
+    return encolar_push(
+        db, "check_mecanica_unidad",
+        python_id=fila_id,
+        legado_id=legado_id,
+        operacion="actualizar",
+        campos={"fecha_check_list_mecanica": fecha},
+        legado_updated_at_conocido=(unidad["updated_at"] or ""),
+        requiere_unidad=0)
+
+
+def encolar_falla_mecanica(db, fila, falla, modalidad, url_foto, columnas,
+                           depende_de=None):
+    """Encola el PASO 2: UNA falla sobre el check list ya creado.
+
+    `legado_id` sale de `fila['legado_id']` si el paso 1 ya volvio, y si no va
+    en 0 y lo completa `_propagar_id_creado` cuando vuelva. El 0 es a
+    proposito: es un id que no existe, asi que una ejecucion prematura da 404
+    en vez de escribirle las fallas a otro check list.
+
+    `columnas` son las TRES que corresponden segun el estado -- las normales o
+    las de la reapertura --, y las decide `check_list_mecanica.agregar_falla`:
+    esa decision es del modulo que conoce el estado, no del push.
+
+    `contador` viaja como 1 y no como el total. Del otro lado se SUMA (ver el
+    bloque K): mandar el total de NUESTRA fila pisaria el del legado si
+    alguien cargo una falla desde el sistema viejo en el medio."""
+    col_falla, col_modalidad, col_foto = columnas
+    campos = {
+        col_falla: falla,
+        col_modalidad: modalidad,
+        "contador": 1,
+    }
+    if url_foto:
+        campos[col_foto] = url_foto
+    return encolar_push(
+        db, "check_list_mecanica_falla",
+        python_id=fila["id"],
+        legado_id=(fila["legado_id"] or 0),
+        operacion="actualizar",
+        campos=campos,
+        # Sin locking optimista: la fila del check list no tiene `updated_at`,
+        # y las seis columnas que toca se ACUMULAN del lado del servidor -- que
+        # es una garantia mas fuerte que el locking, porque dos escrituras
+        # simultaneas no se pisan, se ponen una detras de la otra.
+        legado_updated_at_conocido="",
+        requiere_unidad=0,
+        depende_de=depende_de)
+
+
 def encolar_descuento(db, pdi_id, consumible_id, litros, depende_de):
     """Encola el descuento de stock. Tambien depende del movimiento.
 
@@ -1180,6 +1347,61 @@ def _registrar_fallo(db, id_cola, mensaje):
         (intentos, proximo, str(mensaje)[:500], id_cola))
 
 
+def _propagar_id_creado(db, conf, entrada, resp):
+    """Guarda el id que el legado asigno al crear una fila, y se lo pasa a las
+    entradas que esperaban por el.
+
+    POR QUE HACE FALTA
+    ------------------
+    Hasta el check list mecanico, ninguna entidad necesitaba saber el id de
+    una fila que ella misma acababa de crear: el movimiento inserta en
+    `registros` y no vuelve a tocar esa fila, y la OT de la PDI se crea contra
+    el id de la UNIDAD, que ya se conocia.
+
+    Aca no. El paso 2 hace UPDATE sobre la fila que creo el paso 1, y esa fila
+    recien tiene id cuando el legado responde. Encolar el paso 2 con un id
+    inventado seria escribirle las fallas a otro check list.
+
+    Asi que la entrada del paso 2 se encola con `legado_id = 0` -- un valor
+    que no existe, a proposito: si algo la ejecutara igual, el endpoint no
+    encontraria la fila y daria 404 en vez de pisar una ajena -- y esta
+    funcion se lo completa cuando el padre responde. Mientras tanto
+    `depende_de` la mantiene en espera, que es la misma guarda que ya usaban
+    la OT y el descuento.
+
+    Si el legado no devuelve id, NO se inventa nada: las entradas hijas quedan
+    en 0 y van a fallar con 404, que es ruidoso y arreglable. Completarlas con
+    un id equivocado seria silencioso y no."""
+    nuevo = resp.get("id") or resp.get("insert_id") or resp.get("legado_id")
+    if not nuevo:
+        return
+    try:
+        nuevo = int(nuevo)
+    except (TypeError, ValueError):
+        return
+
+    destino = conf.get("guarda_id_en")
+    if destino and entrada["python_id"]:
+        tabla, columna = destino
+        try:
+            db.execute('UPDATE "{}" SET "{}" = ? WHERE id = ?'.format(
+                tabla, columna), (nuevo, entrada["python_id"]))
+        except Exception:                        # noqa: BLE001
+            # Una tabla o columna que no existe no puede tumbar un push que ya
+            # salio bien del otro lado.
+            _log.exception("no se pudo guardar el id %s en %s.%s",
+                           nuevo, tabla, columna)
+
+    cur = db.execute(
+        "UPDATE sync_push_pendientes SET legado_id = ? "
+        " WHERE depende_de = ? AND resuelto_en = '' "
+        "   AND (legado_id IS NULL OR legado_id = 0)",
+        (nuevo, entrada["id"]))
+    if cur.rowcount:
+        _log.info("push: el id %s del legado se propago a %s entrada(s) "
+                  "que dependian de la %s", nuevo, cur.rowcount, entrada["id"])
+
+
 def ejecutar_entrada(id_cola, cliente=None, db_path=None):
     """Intenta una entrada de la cola. Devuelve 'ok', 'conflicto' o 'error'.
 
@@ -1321,6 +1543,7 @@ def ejecutar_entrada(id_cola, cliente=None, db_path=None):
             db.execute('UPDATE "{}" SET updated_at = ?, push_pendiente = 0 '
                        ' WHERE id = ?'.format(espejo),
                        (resp.get("updated_at") or "", legado_id))
+        _propagar_id_creado(db, conf, entrada, resp)
         _resolver_entrada(db, id_cola)
         db.commit()
         _log.info("push %s ok: legado_id=%s campos=%s%s",

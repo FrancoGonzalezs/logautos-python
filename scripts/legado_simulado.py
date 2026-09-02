@@ -11,7 +11,7 @@ diccionario en memoria.
 
 Y ademas sabe fallar a pedido, que es la parte que el PHP no puede hacer:
 
-    --lista-blanca desplegada|con_pdi   que columnas acepta el PUT
+    --lista-blanca desplegada|con_pdi|con_check_list   que columnas acepta el PUT
     --modo ok         responde bien (por defecto)
     --modo conflicto  responde 409 siempre, con datos_actuales
     --modo caer       responde 500 siempre: prueba el backoff
@@ -63,7 +63,7 @@ REGISTROS = []
 # esta en la lista SE IGNORA EN SILENCIO: 200, cero efecto, cola resuelta sin
 # error. Es el modo de falla mas caro del sistema porque no deja rastro.
 #
-# Por eso el simulado tiene DOS listas y se elige con `--lista-blanca`:
+# Por eso el simulado tiene TRES listas y se elige con `--lista-blanca`:
 #
 #   desplegada  las cinco del IT. Es lo que hay en produccion HOY.
 #   con_pdi     las cinco mas las catorce de la PDI, o sea despues del
@@ -86,6 +86,20 @@ LISTAS_BLANCAS = {
         "tipo_combu", "bateria", "scanner", "a_c", "ob_mecanica",
         "aceite_coco", "sistema_audio", "adblue", "aceite_diferencial",
     ),
+    # Y la del check list: `fecha_check_list_mecanica`, que la agrega el
+    # BLOQUE H de scripts/Api_regla_check_list.php.
+    #
+    # Va en su propia lista y NO en las de arriba porque las de arriba dicen
+    # que hay DESPLEGADO, y el bloque H todavia no lo esta. Mientras no lo
+    # este, esa columna se ignora en silencio en produccion -- 200, cero
+    # efecto -- y el doble tiene que poder mostrar exactamente eso.
+    "con_check_list": (
+        "estado_it", "observacion_it", "despachado", "calle", "updated_by",
+        "fecha_pdi", "mes_pdi", "mespdinombre", "estadostock", "ubicacion",
+        "tipo_combu", "bateria", "scanner", "a_c", "ob_mecanica",
+        "aceite_coco", "sistema_audio", "adblue", "aceite_diferencial",
+        "fecha_check_list_mecanica",
+    ),
 }
 
 COLUMNAS_PERMITIDAS = LISTAS_BLANCAS["desplegada"]
@@ -104,6 +118,33 @@ STOCK = {
     2: {"id": 2, "nombre": "DIESEL", "stock": 5, "precio": 1500, "promedio": 1091},
     3: {"id": 3, "nombre": "BENCINA", "stock": 563, "precio": 1500, "promedio": 1188},
 }
+
+# `check_list_mecanica` del legado de mentira. Las filas nacen por POST y las
+# fallas se les van CONCATENANDO por PUT, exactamente como del otro lado.
+CHECK_LIST_MECANICA = {}
+PROXIMO_CHECK_ID = [1]
+
+# Las 82 de la lista blanca del bloque G. Se escriben enteras y no se generan:
+# la gracia de un doble es que su lista blanca sea INDEPENDIENTE de la de
+# Python. Si las dos salieran del mismo lugar, la prueba no podria descubrir
+# que una columna que Python manda no esta permitida del otro lado -- que es
+# el silencio que ya nos costo el caso 0 de probar_circulo.
+CLM_PERMITIDAS = set("""
+vin patente id_vin guia cliente fecha_ingreso marca modelo color encargado
+estanque kilometraje estado_carflex fecha_creacion fecha_creacion_completa
+llaves tad tat tca bateria alternador bocina tdi mdc Limpiaparabrisas er cc
+ae Sunroof Chapas Airbag fa vc Bluetooth Neblineros Gata Extintor Llantas
+Radio tet aa sd st sdd hec pfd pft dfd dft fde cda etv mdr Radiador dde
+cdac cdac2 cbbe fda mdp pef cdas ftcdt sdacdt nam nlr nldf nldh nlde nata
+fadm flr flshde fldd fatma fdaed nd nt nr pocc obs_general estado
+""".split())
+
+# Las del bloque K, con su verbo. `acumulan` concatena con ' | ', `suman`
+# incrementa. Cualquier otra cosa que llegue se IGNORA -- como del otro lado.
+CLM_FALLA_ACUMULAN = ("observacion", "modalidad", "link_unidades",
+                      "fallas_adicionales", "modalidad_adicional",
+                      "fotos_adicionales")
+CLM_FALLA_SUMAN = ("contador",)
 
 MODO = "ok"
 CLAVE = "x"
@@ -169,6 +210,12 @@ class Handler(BaseHTTPRequestHandler):
         sys.stderr.write("  simulado: " + (formato % args) + "\n")
 
     def do_GET(self):
+        if self.path == "/_check_list_mecanica":
+            # Puerta de PRUEBA (prefijo `_`): deja mirar la tabla del check
+            # list mecanico como quedo. La prueba del circulo no se cree lo que
+            # dice la cola -- va a mirar la fila.
+            return self._json(200, {"filas": list(
+                CHECK_LIST_MECANICA.values())})
         if self.path == "/_estado":
             return self._json(200, {"unidades": UNIDADES,
                                     "registros": REGISTROS,
@@ -388,6 +435,92 @@ class Handler(BaseHTTPRequestHandler):
                   for k, v in STOCK[i].items()} for i in sorted(STOCK)]
         return self._json(200, {"filas": filas, "hasta": _reloj.ultimo or ""})
 
+    def _crear_check_list_mecanico(self):
+        """POST /api_regla/check_list_mecanica -- el paso 1.
+
+        Devuelve el `id` de la fila creada, que es lo que el paso 2 necesita
+        para saber sobre cual escribir."""
+        largo = int(self.headers.get("Content-Length") or 0)
+        try:
+            datos = json.loads(self.rfile.read(largo).decode("utf-8"))
+        except ValueError:
+            return self._json(400, {"error": "body invalido"})
+
+        idem = self.headers.get("Idempotency-Key", "")
+        if idem and idem in IDEMPOTENCIA:
+            CONTADORES["idempotente"] += 1
+            return self._json(200, dict(IDEMPOTENCIA[idem], idempotente=True))
+
+        fila = {}
+        ignoradas = []
+        for k, v in datos.items():
+            if k == "legado_updated_at_conocido":
+                continue
+            if k in CLM_PERMITIDAS:
+                fila[k] = v
+            else:
+                ignoradas.append(k)
+                IGNORADAS.add(k)
+                CONTADORES["ignoradas"] += 1
+
+        nuevo_id = PROXIMO_CHECK_ID[0]
+        PROXIMO_CHECK_ID[0] += 1
+        fila["id"] = nuevo_id
+        # Las seis del paso 2 nacen vacias, como en MySQL.
+        for c in CLM_FALLA_ACUMULAN:
+            fila.setdefault(c, None)
+        fila["contador"] = 0
+        CHECK_LIST_MECANICA[nuevo_id] = fila
+
+        cuerpo = {"ok": True, "id": nuevo_id,
+                  "updated_at": _reloj(), "ignoradas": ignoradas}
+        if idem:
+            IDEMPOTENCIA[idem] = cuerpo
+        return self._json(200, cuerpo)
+
+    def _agregar_falla(self, check_id):
+        """PUT /api_regla/check_list_mecanica_falla/<id> -- el paso 2.
+
+        ACUMULA del lado del servidor: es la propiedad que se esta probando.
+        Si esto reemplazara en vez de concatenar, la prueba del circulo lo
+        veria como una fila con UNA sola falla."""
+        largo = int(self.headers.get("Content-Length") or 0)
+        try:
+            datos = json.loads(self.rfile.read(largo).decode("utf-8"))
+        except ValueError:
+            return self._json(400, {"error": "body invalido"})
+
+        fila = CHECK_LIST_MECANICA.get(int(check_id))
+        if fila is None:
+            # El 404 es lo que hace ruidoso un `legado_id` sin completar. Ver
+            # `_propagar_id_creado` en push_legado.
+            return self._json(404, {"error": "no existe el check list "
+                                             + str(check_id)})
+
+        idem = self.headers.get("Idempotency-Key", "")
+        if idem and idem in IDEMPOTENCIA:
+            CONTADORES["idempotente"] += 1
+            return self._json(200, dict(IDEMPOTENCIA[idem], idempotente=True))
+
+        for k, v in datos.items():
+            if k == "legado_updated_at_conocido":
+                continue
+            if k in CLM_FALLA_ACUMULAN:
+                if v in ("", None):
+                    continue
+                previo = fila.get(k)
+                fila[k] = v if not previo else "{} | {}".format(previo, v)
+            elif k in CLM_FALLA_SUMAN:
+                fila[k] = (fila.get(k) or 0) + int(v)
+            else:
+                IGNORADAS.add(k)
+                CONTADORES["ignoradas"] += 1
+
+        cuerpo = {"ok": True, "updated_at": _reloj()}
+        if idem:
+            IDEMPOTENCIA[idem] = cuerpo
+        return self._json(200, cuerpo)
+
     def do_POST(self):
         # -- POST /_sembrar -- puerta de PRUEBA, no del contrato --------------
         #
@@ -425,6 +558,9 @@ class Handler(BaseHTTPRequestHandler):
 
         if self.headers.get("X-API-Key", "") != CLAVE:
             return self._json(401, {"error": "API key invalida o ausente"})
+
+        if ruta == "/api_regla/check_list_mecanica":
+            return self._crear_check_list_mecanico()
 
         if ruta != "/api_regla/movimientos":
             return self._json(404, {"error": "ruta no simulada: " + self.path})
@@ -505,6 +641,14 @@ class Handler(BaseHTTPRequestHandler):
         return self._json(201, respuesta)
 
     def do_PUT(self):
+        ruta_put = self.path.split("?")[0].rstrip("/")
+        mf = re.match(r"^/api_regla/check_list_mecanica_falla/(\d+)$",
+                      ruta_put)
+        if mf:
+            if self.headers.get("X-API-Key", "") != CLAVE:
+                return self._json(401, {"error": "API key invalida"})
+            return self._agregar_falla(mf.group(1))
+
         # -- misma verificacion que exigir_api_key() del PHP ------------------
         if self.headers.get("X-API-Key", "") != CLAVE:
             return self._json(401, {"error": "API key invalida o ausente"})
