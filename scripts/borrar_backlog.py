@@ -97,6 +97,9 @@ ENTIDADES_DE_MOVIMIENTO = ("movimientos",)
 ENTIDAD_DE_TABLA = {
     "pdi_regla": ("pdi", "ot_pdi", "stock_consumibles"),
     "it_regla": ("it",),
+    "check_list_mecanica_regla": ("check_list_mecanica",
+                                  "check_list_mecanica_falla",
+                                  "check_mecanica_unidad"),
 }
 
 

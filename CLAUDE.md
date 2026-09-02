@@ -300,6 +300,21 @@ magia de la que vale.
 > algo que no es la aplicación.** La guarda cubre la aplicación; esto cubre el
 > resto, y es hábito, no código.
 
+**Y un doble escrito desde la misma cabeza que la spec confirma la spec.** El
+2026-09-02 el push real encontró tres defectos que el simulado no podía ver
+—entre ellos que `actualizar()` está clavado en `newstocks_cidef`— porque el
+doble implementaba lo que yo *había especificado*, no lo que `Api_regla.php`
+*hace*. La spec y el doble salieron de la misma lectura, así que coincidían por
+construcción.
+
+> **LA REGLA:** un script que habla con producción usa **el mismo cliente que
+> produce el tráfico real**, no `requests` pelado ni un doble. Si no, prueba
+> contra un servidor que no existe. `claude.logautos.cl` corta la conexión con
+> el User-Agent de `requests` —cierra el socket, no responde 403— y eso sale
+> como `ConnectionError: RemoteDisconnected`, que se lee igual que «no hay
+> red». Ya hizo diagnosticar mal una vez. El `USER_AGENT` vive en
+> `modulos/sync_legado.py` y **se importa, no se copia**.
+
 **Y el doble puede ser generoso en lo que NO manda.** El 2026-09-02 el legado
 simulado devolvía `200` con un `updated_at` inventado en la creación del check
 list mecánico, donde el bloque I devuelve `201` sin ninguno. Eso tapó dos bugs
@@ -377,7 +392,27 @@ Ida y vuelta automática entre Railway y `claude.logautos.cl` desde el
 | `check_mecanica_unidad` | actualizar | `PUT /api_regla/unidades/{id}` | ídem, con `fecha_check_list_mecanica` en la lista blanca (bloque H) |
 | `check_list` (ingreso) | crear | `POST /api_regla/check_list` | **el PHP está desplegado y Python NO la tiene** — ver pendiente 9 |
 
-**El push real del mecánico está armado y NO corrido.** `scripts/verificar_check_mecanico_produccion.py`, dry-run por defecto, `--escribir` para el push de verdad. Faltan dos cosas, ninguna de código:
+**El push real del mecánico SE CORRIÓ el 2026-09-02 y ENCONTRÓ TRES DEFECTOS.**
+Los bloques G–K responden pero **no funcionan**. Ver el bloque M de
+`scripts/Api_regla_check_list.php`, sin desplegar:
+
+| | Qué | Gravedad |
+|---|---|---|
+| **M1** | `actualizar()` está clavado en `newstocks_cidef` — no usa `tabla_de($entidad)`. `check_list_mecanica_falla/2961` fue a buscar la **unidad** 2961 (un CIDEF real) en vez de la fila del check list. | **Casi escribe en un auto ajeno.** No lo hizo porque de las 7 columnas de la lista blanca `newstocks_cidef` tiene 1 (`modalidad`) y el UPDATE falló entero. Suerte, no diseño. |
+| **M2** | `$this->db->qb_set` del bloque J es **protected** en CI3 → fatal 500 cuando `$cambios` está vacío. | Regresión viva: la sonda 4 de `verificar_push_produccion.py` —la única que prueba el locking sin escribir— devuelve 500 en vez de 400 desde que se desplegó J. |
+| **M3** | `legado_updated_at_conocido` cuenta como columna ignorada en `crear_fila`. | Cosmético, pero arruina `ignoradas`, que existe justamente para poder afirmar que nada se perdió en silencio. |
+
+**Lo que quedó en producción de esa corrida:** dos filas huérfanas en
+`check_list_mecanica` (id **2960** y **2961**, las dos de la unidad 66505 de
+PRUEBA, `ABIERTO`, sin fallas, `contador` 0) y `fecha_check_list_mecanica =
+2026-09-02` en la 66505. Nada en una unidad real.
+
+**Y una lección que ya está al lado de la Regla 4:** ninguno de los tres los
+podía atrapar el legado simulado, porque el doble implementaba **lo que la spec
+decía**, no lo que `Api_regla.php` hace. Un doble escrito desde la misma cabeza
+que la spec confirma la spec.
+
+**El estado anterior de esta nota, para referencia:** `scripts/verificar_check_mecanico_produccion.py`, dry-run por defecto, `--escribir` para el push de verdad. Faltan dos cosas, ninguna de código:
 
 1. **El bloque L** (`GET /api_regla/check_list_mecanica/<id>`) sin desplegar. Es la mirilla: los bloques G–K escriben y no había forma de leer. Sin él la verificación termina en «devolvió 201» más un favor en phpMyAdmin, y una verificación que depende de un favor se deja de hacer.
 2. **Red.** `claude.logautos.cl` está bloqueado desde el entorno donde corro; `github.com` y `example.com` responden. No es el sitio.

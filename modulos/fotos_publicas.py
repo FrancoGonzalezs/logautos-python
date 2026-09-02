@@ -120,17 +120,32 @@ def publicar(ruta_relativa, origen, referencia=None):
     return url_for("fotos_publicas.ver", token=token)
 
 
-def url_publica(ruta_en_el_sitio):
-    """La URL que se le manda al legado, con host.
+class FaltaBasePublica(RuntimeError):
+    """No hay con que armar una URL absoluta para el legado."""
 
-    El legado la guarda tal cual en su columna y la pinta en un `<img>`, asi
-    que tiene que ser absoluta y tiene que ser alcanzable desde afuera. Si
-    `PUBLIC_BASE_URL` no esta puesta esto devuelve la ruta pelada, que en el
-    legado se veria rota -- y por eso el push exige la variable antes de
-    encolar en vez de mandar algo que no anda."""
+
+def url_publica(ruta_en_el_sitio):
+    """La URL que se le manda al legado, con host. REVIENTA si no hay base.
+
+    El legado guarda esto tal cual y lo pinta en un `<img>`, asi que tiene que
+    ser absoluta. Una ruta pelada como `/f/<token>` no falla al mandarla: el
+    navegador del legado la resuelve contra SU propio host --
+    `https://logautos.cl/f/<token>` -- y da 404 en la pantalla de otro sistema,
+    que es donde nadie lo va a atribuir a REGLA.
+
+    Antes esto devolvia la ruta pelada y el docstring decia que "el push exige
+    la variable". No la exigia nadie: el comentario prometia una guarda que no
+    existia. Ahora existe -- y esta aca y no en el push porque este es el unico
+    lugar por el que se arma una URL para afuera."""
     base = (os.environ.get("PUBLIC_BASE_URL") or "").rstrip("/")
     if not base:
-        return ruta_en_el_sitio
+        raise FaltaBasePublica(
+            "PUBLIC_BASE_URL no esta puesta y hay que mandarle al legado la "
+            "URL de una foto.\n"
+            "  Sin ella saldria `{}`, que el legado resuelve contra su propio "
+            "host y da 404.\n"
+            "  En Railway va la URL publica del servicio.".format(
+                ruta_en_el_sitio))
     return base + ruta_en_el_sitio
 
 

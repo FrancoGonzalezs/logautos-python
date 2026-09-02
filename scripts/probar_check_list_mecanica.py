@@ -174,6 +174,18 @@ def probar_ruta_publica(app):
         with open(p, "wb") as f:
             f.write(b"\xff\xd8\xff\xe0jpeg")
 
+    # La guarda de la base publica: sin ella, la URL saldria relativa y el
+    # legado la resolveria contra SU host.
+    previo = os.environ.pop("PUBLIC_BASE_URL", None)
+    try:
+        fotos_publicas.url_publica("/f/abc")
+        afirmar(False, "sin PUBLIC_BASE_URL, armar una URL para el legado REVIENTA")
+    except fotos_publicas.FaltaBasePublica:
+        afirmar(True, "sin PUBLIC_BASE_URL, armar una URL para el legado REVIENTA")
+    os.environ["PUBLIC_BASE_URL"] = previo or "https://regla.example"
+    afirmar(fotos_publicas.url_publica("/f/abc").startswith("http"),
+            "y con la base puesta sale absoluta")
+
     with app.test_request_context():
         ruta = fotos_publicas.publicar("uploads/falla_mecanica/publicada.jpg",
                                        origen="prueba", referencia=1)

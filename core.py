@@ -443,7 +443,24 @@ def exigir_replica_de_prueba(path):
     protege el camino que usa la aplicacion, que es por donde entro el daño
     de verdad -- las tres consecuencias de arriba salieron del `get_db()` de
     Flask, no del `connect` suelto."""
-    if not _es_prueba():
+    # DOS FORMAS DE ACTIVARLA, y la segunda existe por una asimetria real.
+    #
+    # `_es_prueba()` --el nombre `probar_*`-- activa LAS DOS guardas juntas, y
+    # eso alcanza para las suites, que no le hablan a produccion.
+    #
+    # Pero un script de VERIFICACION necesita las dos al reves: hablarle a
+    # produccion de verdad Y no tocar la replica real. Con una sola palanca eso
+    # no se puede pedir, y el 2026-09-02 esa asimetria costo exactamente lo que
+    # esta guarda existe para impedir: `verificar_check_mecanico_produccion.py`
+    # copio la replica, apunto DB_PATH a la copia... y escribio igual en la
+    # real, porque `core.DB_PATH` se fija al IMPORTAR y el script importaba
+    # `sync_legado` doce lineas antes de tocar el entorno.
+    #
+    # `REGLA_REPLICA_PROTEGIDA=1` prende esta guarda sola, sin prender la de
+    # destino.
+    forzada = os.environ.get("REGLA_REPLICA_PROTEGIDA", "").strip()
+    protegida = (forzada not in ("", "0", "no", "false")) or _es_prueba()
+    if not protegida:
         return path
     if _normal(path) not in _replicas_reales():
         return path
@@ -460,7 +477,11 @@ def exigir_replica_de_prueba(path):
         "tempdir.\n"
         "  Si de verdad hace falta tocar la replica -- un script de "
         "mantenimiento que se llame probar_* --, REGLA_SOLO_LOCAL=0 apaga "
-        "las DOS guardas.".format(path))
+        "las DOS guardas; para apagar solo esta, REGLA_REPLICA_PROTEGIDA=0.\n"
+        "  OJO CON EL ORDEN DE LOS IMPORTS: `core.DB_PATH` se fija al "
+        "importar. Poner DB_PATH en el entorno DESPUES de que algo haya "
+        "importado `core` no cambia nada -- hay que asignar `core.DB_PATH` "
+        "a mano.".format(path))
 
 
 def exigir_destino_local(url, quien=""):

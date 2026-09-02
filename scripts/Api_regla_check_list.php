@@ -800,3 +800,222 @@ public function leer_fila($entidad = null, $id = null)
          https://claude.logautos.cl/api_regla/check_list_mecanica/999999999
        -> 401
    --------------------------------------------------------------------------- */
+
+
+/* ===========================================================================
+   BLOQUE M -- TRES ARREGLOS, y el primero es urgente
+   ===========================================================================
+
+   Salieron del push REAL contra produccion el 2026-09-02. Ninguno los podia
+   atrapar el legado simulado, y el motivo vale mas que los bugs: el doble
+   implementaba lo que la spec DECIA, no lo que `Api_regla.php` HACE. Un doble
+   escrito desde la misma cabeza que la spec confirma la spec.
+
+   ---------------------------------------------------------------------------
+   M1. `actualizar()` ESTA CLAVADO EN `newstocks_cidef`  -- URGENTE
+   ---------------------------------------------------------------------------
+
+   El bloque A generalizo `mapa_entidades` / `columnas_permitidas` / `tabla_de`.
+   NO generalizo `actualizar()`: el metodo busca y escribe en `newstocks_cidef`
+   a mano, en dos lugares.
+
+   O sea que `PUT /api_regla/check_list_mecanica_falla/2961` -- donde 2961 es el
+   id de una fila de `check_list_mecanica` -- va a buscar la UNIDAD 2961 de
+   `newstocks_cidef`, que es otra fila, de otra tabla, de otro auto.
+
+   EN LA PRUEBA REAL ESO PASO. La unidad 2961 existe: es un CIDEF DESPACHADO,
+   VIN LGG8E2D16NZ352329. El UPDATE fallo con 500 y no escribio nada -- pero
+   por casualidad, no por diseño: de las siete columnas de la lista blanca de
+   `check_list_mecanica_falla`, `newstocks_cidef` tiene UNA, `modalidad`. Si
+   hubiera tenido las siete, el push le habria escrito las fallas de un check
+   list a un auto ajeno, con 200 y sin que nada se quejara.
+
+   El sintoma que se ve hoy es un 500 con el mensaje 'no se pudo actualizar la
+   unidad'. La palabra "unidad" en ese mensaje es la pista: no deberia estar
+   hablando de unidades.
+
+   ---------------------------------------------------------------------------
+   M2. `$this->db->qb_set` ES PROTECTED  -- REGRESION VIVA
+   ---------------------------------------------------------------------------
+
+   Del bloque J. `qb_set` es una propiedad PROTECTED de `CI_DB_mysqli_driver`,
+   asi que leerla desde el controlador es
+
+       Error: Cannot access protected property CI_DB_mysqli_driver::$qb_set
+
+   -- un 500 fatal. Se dispara solo cuando `$cambios` esta vacio, porque PHP
+   corta el `&&` antes de llegar ahi; por eso los push normales siguen andando
+   y esto no se noto al desplegar.
+
+   Pero la rama "ningun campo actualizable" ahora devuelve 500 en vez de 400, y
+   esa rama la usa la sonda 4 de `verificar_push_produccion.py`, que es la
+   unica que prueba el locking contra la base real sin escribir. O sea que la
+   herramienta de verificacion del IT y de la PDI esta rota desde que se
+   desplego el bloque J.
+
+   ---------------------------------------------------------------------------
+   M3. `legado_updated_at_conocido` CUENTA COMO COLUMNA IGNORADA
+   ---------------------------------------------------------------------------
+
+   `crear()` de Python lo manda siempre dentro del cuerpo -- el POST no tiene
+   un id en la URL donde colgarlo --, y `crear_fila` lo mete en `ignoradas`
+   porque no esta en la lista blanca.
+
+   No rompe nada, pero arruina el unico indicador que tenemos: `ignoradas` se
+   agrego para poder AFIRMAR que ninguna columna se perdio en silencio, y con
+   un falso positivo fijo adentro deja de servir para eso. Es un campo del
+   protocolo, no una columna.
+   =========================================================================== */
+
+
+/* ---------------------------------------------------------------------------
+   M1 -- LOS DOS LUGARES A CAMBIAR EN `actualizar()`.
+
+   PRIMERO. Buscar la linea
+
+       $consulta = $this->db->get_where('newstocks_cidef', array('id' => $id));
+
+   y las cinco que la siguen, hasta
+
+           $this->json(404, array('error' => 'unidad no encontrada: ' . $id));
+       }
+
+   Se reemplaza ese bloque entero por:
+   --------------------------------------------------------------------------- */
+
+        // LA TABLA SALE DE LA ENTIDAD, no esta clavada.
+        //
+        // Antes decia 'newstocks_cidef' a mano, y con eso
+        // `check_list_mecanica_falla/2961` iba a buscar la UNIDAD 2961 en vez
+        // de la fila 2961 del check list. Ver el encabezado del bloque M.
+        $tabla = $this->tabla_de($entidad);
+        if (!$tabla) {
+            $this->json(404, array('error' => 'entidad sin tabla: ' . $entidad));
+        }
+
+        $consulta = $this->db->get_where($tabla, array('id' => $id));
+        if ($consulta === FALSE) {               // mismo motivo que arriba
+            $this->json(500, array('error' => 'no se pudo leer ' . $tabla));
+        }
+        $fila = $consulta->row_array();
+        if (!$fila) {
+            // El mensaje nombra la ENTIDAD. El anterior decia "unidad" para
+            // todas, y eso mando a buscar el problema al lugar equivocado.
+            $this->json(404, array(
+                'error' => 'no existe ' . $entidad . ' ' . $id));
+        }
+
+/* ---------------------------------------------------------------------------
+   SEGUNDO. Mas abajo, la linea
+
+       $cambios['updated_at'] = $ahora;
+
+   se reemplaza por lo de abajo: `check_list_mecanica` NO TIENE `updated_at`, y
+   escribirsela es un "Unknown column" que tumba el UPDATE entero.
+   --------------------------------------------------------------------------- */
+
+        // Solo si la tabla la tiene. `$fila` ya vino de la base, asi que sus
+        // claves SON las columnas reales -- no hace falta preguntarle al
+        // esquema.
+        if (array_key_exists('updated_at', $fila)) {
+            $cambios['updated_at'] = $ahora;
+        }
+
+/* ---------------------------------------------------------------------------
+   TERCERO. La linea
+
+       $this->db->update('newstocks_cidef', $cambios);
+
+   se reemplaza por
+
+       $this->db->update($tabla, $cambios);
+
+   `$tabla` ya quedo definida arriba.
+   --------------------------------------------------------------------------- */
+
+
+/* ---------------------------------------------------------------------------
+   M2 -- EL `qb_set`.
+
+   La linea que dejo el bloque J
+
+       if (!$cambios && !$this->db->qb_set) {
+
+   se reemplaza por
+
+       if (!$cambios && !$hubo_sql) {
+
+   y ARRIBA del `foreach` que arma `$cambios` -- junto a las lineas
+   `$acumulan = ...` y `$suman = ...` -- se agrega
+
+       $hubo_sql = FALSE;
+
+   y adentro del bucle, las DOS lineas que hoy dicen
+
+       $cambios['__acumulado'] = TRUE;
+
+   pasan a decir
+
+       $hubo_sql = TRUE;
+
+   con lo cual el `unset($cambios['__acumulado']);` de mas abajo SE BORRA: ya
+   no hay nada que sacar.
+
+   Es lo mismo que se intentaba con `qb_set` -- "hubo un set() de SQL crudo" --
+   pero con una variable nuestra en vez de espiar el interior del query
+   builder. Ademas de que compila, no depende de como CodeIgniter guarde su
+   estado interno.
+   --------------------------------------------------------------------------- */
+
+
+/* ---------------------------------------------------------------------------
+   M3 -- EL CAMPO DE PROTOCOLO NO ES UNA COLUMNA IGNORADA.
+
+   En `crear_fila`, el bucle de la lista blanca dice hoy
+
+       foreach ($datos as $columna => $valor) {
+           if (in_array($columna, $columnas, TRUE)) {
+               $fila[$columna] = $valor;
+           } else {
+               $ignoradas[] = $columna;
+           }
+       }
+
+   Se le agrega una linea al principio del cuerpo del `foreach`:
+   --------------------------------------------------------------------------- */
+
+        foreach ($datos as $columna => $valor) {
+            // Campo del PROTOCOLO, no una columna. `crear()` lo manda siempre
+            // porque el POST no tiene un id en la URL donde colgarlo. Contarlo
+            // como ignorado le mete un falso positivo fijo al unico indicador
+            // que dice si algo se perdio en silencio.
+            if ($columna === 'legado_updated_at_conocido') {
+                continue;
+            }
+            if (in_array($columna, $columnas, TRUE)) {
+                $fila[$columna] = $valor;
+            } else {
+                $ignoradas[] = $columna;
+            }
+        }
+
+/* ---------------------------------------------------------------------------
+   DESPUES DE SUBIR
+
+       php -l ~/public_html/application/controllers/Api_regla.php
+       grep -c "newstocks_cidef" .../Api_regla.php    -> ninguna dentro de actualizar()
+       grep -c "qb_set" .../Api_regla.php             -> 0
+
+   Y las dos sondas que no escriben:
+
+       # M1: ahora tiene que decir "no existe check_list_mecanica_falla", no "unidad"
+       curl -s -X PUT -H "X-API-Key: $CLAVE" -H "Content-Type: application/json" \
+            -H "Idempotency-Key: $(uuidgen)" \
+            -d '{"observacion":"SONDA","legado_updated_at_conocido":""}' \
+            https://claude.logautos.cl/api_regla/check_list_mecanica_falla/999999999
+
+       # M2: 400 "ningun campo actualizable", NO 500
+       curl -s -X PUT -H "X-API-Key: $CLAVE" -H "Content-Type: application/json" \
+            -d '{"legado_updated_at_conocido":"2000-01-01 00:00:00"}' \
+            https://claude.logautos.cl/api_regla/unidades/2961
+   --------------------------------------------------------------------------- */

@@ -10,6 +10,17 @@ SIN `--escribir` NO ESCRIBE NADA en el legado: corre las sondas de solo lectura
 y muestra exactamente que se mandaria. Con `--escribir` crea una fila de verdad
 en `check_list_mecanica`.
 
+POR QUE ESTE SCRIPT NO USA `requests` PELADO
+===========================================
+`claude.logautos.cl` corta la conexion cuando el User-Agent es el de
+`requests`: no responde 403, cierra el socket. Del lado de Python sale un
+`ConnectionError` que se lee igual que "no hay red" -- y ese error ya hizo
+diagnosticar mal una vez, el 2026-09-02.
+
+Todas las llamadas van por `SESION`, que lleva el `USER_AGENT` importado de
+`modulos/sync_legado`, el mismo que mandan el cliente del pull y el del push.
+Se importa y no se copia: dos definiciones de la misma cadena se separan.
+
 POR QUE NO ALCANZAN LAS SUITES
 ==============================
 `probar_circulo_mecanica.py` corre contra el legado simulado, y el simulado lo
@@ -85,6 +96,29 @@ except ImportError:                              # pragma: no cover
     print("falta la dependencia `requests`")
     sys.exit(2)
 
+from modulos.sync_legado import USER_AGENT       # noqa: E402
+
+# ---------------------------------------------------------------------------
+# LA SESION. Todas las llamadas de este script pasan por aca.
+# ---------------------------------------------------------------------------
+#
+# `claude.logautos.cl` CORTA LA CONEXION si el User-Agent es el de `requests`.
+# No responde 403 ni 429: cierra el socket, y del lado de Python sale un
+# `ConnectionError: RemoteDisconnected('Remote end closed connection without
+# response')` -- que se lee igual que "no hay red" y por eso engaña.
+#
+# El cliente de verdad (`ClientePushLegadoHTTP._cabeceras`) manda el
+# User-Agent y por eso los push funcionan. Un script de verificacion que use
+# `requests` pelado esta probando contra un servidor que le cuelga el telefono:
+# no verifica nada, y peor, informa un problema que no existe.
+#
+# EL User-Agent SE IMPORTA, NO SE COPIA. Vive en `modulos/sync_legado.py` --
+# una sola definicion, con su variable de entorno -- y lo usan el cliente del
+# pull y el del push. Escribir la cadena de nuevo aca serian dos lugares que se
+# separan el dia que alguien cambie uno.
+SESION = requests.Session()
+SESION.headers["User-Agent"] = USER_AGENT
+
 FALLOS = []
 
 
@@ -138,24 +172,24 @@ def sondas(base, clave):
     print("\nSONDAS (no escriben)")
     cab = {"X-API-Key": clave, "Content-Type": "application/json"}
 
-    r = requests.post(base + "/api_regla/check_list_mecanica",
-                      json={"vin": "X"}, timeout=20)
+    r = SESION.post(base + "/api_regla/check_list_mecanica",
+                    json={"vin": "X"}, timeout=20)
     afirmar(r.status_code == 401,
             "POST check_list_mecanica sin clave -> 401",
             "HTTP {} {}".format(r.status_code, (r.text or "")[:90]))
 
-    r = requests.post(base + "/api_regla/check_list_mecanica",
-                      json={"vin": "X"}, headers=cab, timeout=20)
+    r = SESION.post(base + "/api_regla/check_list_mecanica",
+                    json={"vin": "X"}, headers=cab, timeout=20)
     afirmar(r.status_code == 400 and "idem" in (r.text or "").lower(),
             "POST con clave y sin Idempotency-Key -> 400 que la exige",
             "HTTP {} {}".format(r.status_code, (r.text or "")[:110]))
 
     # Un PUT de falla sobre una fila que no existe. No escribe: el endpoint
     # busca la fila y corta.
-    r = requests.put(base + "/api_regla/check_list_mecanica_falla/999999999",
-                     json={"observacion": "SONDA", "legado_updated_at_conocido": ""},
-                     headers=dict(cab, **{"Idempotency-Key": str(uuid.uuid4())}),
-                     timeout=20)
+    r = SESION.put(base + "/api_regla/check_list_mecanica_falla/999999999",
+                   json={"observacion": "SONDA", "legado_updated_at_conocido": ""},
+                   headers=dict(cab, **{"Idempotency-Key": str(uuid.uuid4())}),
+                   timeout=20)
     afirmar(r.status_code == 404,
             "PUT falla sobre una fila inexistente -> 404",
             "HTTP {} {}".format(r.status_code, (r.text or "")[:110]))
@@ -177,7 +211,15 @@ def main():
                     help="hace el push de verdad; sin esto solo sondas")
     ap.add_argument("--base", default=os.environ.get(
         "LEGADO_BASE_URL", "https://claude.logautos.cl"))
-    ap.add_argument("--publico", default=os.environ.get("PUBLIC_BASE_URL", ""),
+    # `.invalid` es un TLD reservado que NO puede resolver nunca (RFC 2606).
+    # Es a proposito: las fotos de esta corrida estan en el disco de esta
+    # maquina, no en el volumen de Railway, asi que CUALQUIER URL que mandemos
+    # va a estar muerta. Con un host inventado que parece real, la de esta
+    # prueba seria indistinguible de una rota de verdad; con `.invalid`, quien
+    # la vea en `link_unidades` sabe de una que es una fila de verificacion.
+    ap.add_argument("--publico",
+                    default=os.environ.get("PUBLIC_BASE_URL")
+                            or "https://verificacion.invalid",
                     help="base publica de REGLA para las URL de foto")
     args = ap.parse_args()
 
@@ -215,15 +257,39 @@ def main():
     shutil.copy(real, copia)
     os.environ["DB_PATH"] = copia
     os.environ["DATA_DIR"] = tmp
+
+    # PONER LA VARIABLE NO ALCANZA. `core.DB_PATH` se evalua al importar
+    # `core`, y este script ya lo importo arriba, al traer `USER_AGENT` de
+    # `sync_legado`. La primera version confiaba en el entorno: copio la
+    # replica, apunto DB_PATH a la copia, y escribio igual en la REAL -- y
+    # ademas empujo esa fila a produccion.
+    #
+    # Se asigna a mano, igual que hace `probar_circulo.py`, y se PRENDE la
+    # guarda de replica para este proceso: de ahi en adelante, cualquier
+    # intento de abrir la base de verdad revienta en vez de escribir.
+    import core
+    core.DB_PATH = copia
+    core.DATA_DIR = tmp
+    os.environ["REGLA_REPLICA_PROTEGIDA"] = "1"
+    assert core._normal(core.DB_PATH) == core._normal(copia)
     os.environ["LEGADO_BASE_URL"] = base
     os.environ["PUSH_LEGADO_ACTIVO"] = "0"       # se dispara a mano
-    if args.publico:
-        os.environ["PUBLIC_BASE_URL"] = args.publico
+    os.environ["PUBLIC_BASE_URL"] = args.publico
+    print("base publica de fotos: {}".format(args.publico))
     print("\ncopia de trabajo: {}".format(copia))
 
     from app import crear_app
     from core import conectar_db
     from modulos.push_legado import procesar_pendientes
+
+    # `DATA_DIR` no solo se congela: se PROPAGA. `fotos_publicas` lo copia en
+    # su `RAIZ` al importarse y `check_list_mecanica` arma su `CARPETA_FOTOS`
+    # con el, asi que reasignar `core.DATA_DIR` despues no alcanza para los
+    # modulos que ya lo leyeron.
+    from modulos import fotos_publicas
+    from modulos import check_list_mecanica as _clm
+    fotos_publicas.RAIZ = tmp
+    _clm.CARPETA_FOTOS = os.path.join(tmp, _clm.SUBCARPETA)
 
     # -- ARMAR EL LOCKING --------------------------------------------------
     #
@@ -232,7 +298,7 @@ def main():
     # y no se prueba nada. Se lee el de produccion SIN escribir, con la sonda
     # del timestamp imposible: el 409 devuelve `datos_actuales` y `updated_at`.
     print("\nARMANDO EL LOCKING (lee el updated_at de produccion sin escribir)")
-    r = requests.put(
+    r = SESION.put(
         "{}/api_regla/unidades/{}".format(base, args.id),
         json={"legado_updated_at_conocido": "2000-01-01 00:00:00"},
         headers={"X-API-Key": clave, "Content-Type": "application/json"},
@@ -398,8 +464,8 @@ def _leer_fila(base, clave, legado_id):
     for ruta in ("/api_regla/check_list_mecanica/{}".format(legado_id),
                  "/api_regla/leer_fila/check_list_mecanica/{}".format(legado_id)):
         try:
-            r = requests.get(base + ruta, headers={"X-API-Key": clave},
-                             timeout=20)
+            r = SESION.get(base + ruta, headers={"X-API-Key": clave},
+                           timeout=20)
         except Exception:                        # noqa: BLE001
             continue
         if r.status_code == 200:
