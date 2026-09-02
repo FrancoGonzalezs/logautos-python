@@ -53,7 +53,12 @@ bp = Blueprint("acceso", __name__)
 
 # Rutas que se pueden ver sin haber entrado. `static` va incluido porque si no
 # el propio login se veria sin estilos.
-LIBRES = {"acceso.login", "acceso.salir", "static"}
+# `fotos_publicas.ver` va aca porque TIENE que responder sin sesion: la
+# pantalla del sistema viejo pinta esa URL en un <img> y no lleva nuestra
+# cookie. Lo que la protege es el token de la URL, no el login. Ver el
+# encabezado de modulos/fotos_publicas.py para lo que eso protege y lo que
+# no.
+LIBRES = {"acceso.login", "acceso.salir", "static", "fotos_publicas.ver"}
 
 
 def buscar_usuario(email):
