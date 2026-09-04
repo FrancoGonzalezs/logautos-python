@@ -394,7 +394,8 @@ Ida y vuelta automática entre Railway y `claude.logautos.cl` desde el
 | `check_list_mecanica` | crear | `POST /api_regla/check_list_mecanica` | **PHP desplegado 2026-09-02**, sonda 401 OK; sin push real todavía |
 | `check_list_mecanica_falla` | actualizar | `PUT /api_regla/check_list_mecanica_falla/{id}` | ídem. **La ruta se corrigió al desplegar**: la spec decía `POST` sin id y habría dado 405 — el cliente manda `PUT /<ruta>/<legado_id>` para todo verbo `actualizar` |
 | `check_mecanica_unidad` | actualizar | `PUT /api_regla/unidades/{id}` | ídem, con `fecha_check_list_mecanica` en la lista blanca (bloque H) |
-| `check_list` (ingreso) | crear | `POST /api_regla/check_list` | **el PHP está desplegado y Python NO la tiene** — ver pendiente 9 |
+| `check_list` (ingreso) | crear | `POST /api_regla/check_list` | **verificado contra el endpoint real**, 2026-09-04 — filas 20104 y 20105 |
+| `check_list_unidad` | actualizar | `PUT /api_regla/unidades/{id}` | ídem: las diez del `$historico` |
 
 **El push real del mecánico está VERIFICADO contra el endpoint real** — 2026-09-04,
 unidad 66505 de PRUEBA, fila `check_list_mecanica.id = 2964`.
@@ -897,34 +898,76 @@ empuja NADA.** Su entidad `check_list` (bloque G, 24 columnas) está desplegada
 del lado PHP, pero Python no la tiene en `ENTIDADES` — nunca se construyó. Ver
 el pendiente 9.
 
-### 9. El check list de INGRESO no empuja NADA — lo que sigue
+### 9. El check list de INGRESO — VERIFICADO el 2026-09-04
 
-**Hoy, cero.** No es que empuje poco o mal: no empuja. La entidad `check_list`
-está desplegada del lado PHP —24 columnas, bloque G— y **Python nunca la tuvo en
-`ENTIDADES`**. Lo único que salía era el movimiento espurio del pendiente 8, y
-al sacarlo quedó en cero.
+**Son DOS escrituras y no son simétricas.** Ésa es la decisión de diseño del
+módulo, y no se resolvió sola porque en la prueba anduvieran las dos:
 
-O sea que un check list de ingreso cargado en REGLA hoy **no existe para el
-sistema viejo**. El PHP lo espera y el Python no lo manda.
-
-| | ingreso | mecánico |
+| Orden | Qué queda | Cómo termina |
 |---|---|---|
-| Entidad PHP desplegada | `check_list`, 24 columnas | `check_list_mecanica`, 82 |
-| Entidad en `ENTIDADES` de Python | **no existe** | sí, más `_falla` y `_unidad` |
-| Las 10 columnas del `$historico` en la unidad | **no se empujan** | (n/a) |
-| `fecha_check_list_mecanica` en la unidad | (n/a) | sí, `check_mecanica_unidad` |
+| **1 entra, 2 falla** | el legado tiene el check list; la unidad todavía no lo dice | la cola reintenta con backoff y **converge sola**. Mientras tanto hay una fila en `check_list` que se puede encontrar |
+| **2 entra, 1 falla** | la unidad **dice** que tiene check list y no existe ninguno | **nadie lo nota**: `fecha_check_list` es una fecha plausible y nada se ve roto |
 
-Falta: la entidad `check_list` con operación `crear`, el mapeo de los tres
-nombres que mienten (`observacion`→piezas, `requerimiento`→tipos,
-`gravedad`→niveles — Regla 0), la publicación de sus fotos por la ruta con token
-igual que el mecánico, y una entidad para las diez columnas del `$historico` que
-`check_list()` escribe en la unidad con su único `actualizar_vin()`.
+Por eso `depende_de` va en la 2 y no al revés: la primera se recupera, la
+segunda hay que hacerla **imposible**. Probado en `probar_circulo_ingreso.py`
+forzando cada mitad — ejecutar la 2 primero devuelve `espera` y la unidad queda
+intacta; con el legado caído la 2 falla, queda sin resolver con el intento
+contado, la fila del check list sigue ahí, y al volver el legado entra sola.
 
-Es el trabajo que cierra el módulo. No es grande — el mecánico ya dejó hechas
-las piezas difíciles (la propagación del id creado, la ruta pública, el patrón
-de las tres entidades).
+**`observaciones` acumula y NO se duplica.** El endpoint concatena (bloque J),
+así que REGLA manda **sólo los daños de esta pasada**. Verificado con dos
+guardados seguidos sobre la 66505 en producción:
 
-### 7. Decisiones que esperan datos, no código
+```
+antes   : ...ANTORCHA CAJON DEL IZQ DESPEGADA (1) LEVE | SONDA-ACUMULA-1
+agregado:  CAPOT RAYA (1) LEVE | PARACH DEL ABOLLADO (1) MEDIO |
+```
+
+Lo anterior no se tocó y la primera pasada aparece **una sola vez**. Si REGLA
+mandara el acumulado completo —como hacía el legado, que leía con
+`getobservacion_dyp()` y concatenaba del lado del cliente— cada guardado
+duplicaría todo lo anterior. El riesgo acá es al revés que en la PDI: allá era
+**pisar**, acá es **repetir**.
+
+**El separador salió del DATO, no del código**, y la distinción importó:
+`Nota.php:check_list()` arma `'1 -'.$pz1.' | <br>'`, un formato numerado que en
+la réplica sólo aparece en filas viejas. Medido sobre **6.378 filas de los
+últimos 12 meses** con las tres columnas cargadas: `-` alinea **6.376**, y 5.952
+tienen más de un elemento.
+
+**Las 2 que no alinean no son el separador: es TRUNCAMIENTO.** `observacion` y
+`requerimiento` topan en **990 caracteres** y MySQL corta —la base no está en
+modo estricto—, así que las tres listas se desalinean y la pieza *n* deja de
+corresponderse con su tipo de daño. La fila 20058 tiene 63 piezas, 65 tipos y 90
+niveles: `requerimiento` termina cortado en `-A`. REGLA lo avisa en el log antes
+de mandar; no lo arregla, porque recortar del lado nuestro sería una divergencia
+en vez de un aviso. (Y no es un guion dentro de un nombre: de los 429 nombres de
+`piezas`, los 35 de `tipo_dano` y los 4 de `nivel_dano`, **ninguno** tiene uno.)
+
+**Lo que REGLA no manda, con su número:**
+
+| Columna | Por qué |
+|---|---|
+| `tapiz` | la pantalla no lo pide. **2,6%** de las filas del período, y sólo dos valores (`CAFE` 175, `NEGRO` 12) |
+| `n_asientos` | ídem. **0,8%** |
+| `link_unidad` / `link_guia` | las fotos quedan para el paso del correo con PDF adjunto. Mandar una URL que no abre es peor que no mandar nada |
+
+Están en la lista blanca del otro lado, así que si alguna vez se agregan al
+formulario entran sin tocar nada más.
+
+**Replicado tal cual aunque esté mal**, con el comentario al lado:
+`fecha_lavado_produccion` se sella con la fecha del día aunque nadie haya
+lavado — está llena en el **60,3%** de las unidades con check list, así que
+quien la mire ya la está leyendo mal. Y `fecha_entrega`, que es la misma
+especie: **7.086 de 7.086** filas la tienen igual a la fecha de creación. Una
+fecha de entrega que no sabe nada de ninguna entrega. **No se arreglan acá.**
+
+**Y el cruce de nombres, que es la Regla 0 con otra cara:** la columna
+`observaciones` de la UNIDAD recibe los **daños**, y `observacion_general`
+recibe el texto libre que en `check_list_regla` se llama `observaciones`. La
+misma palabra significa una cosa de un lado y otra del otro.
+
+### 7. Decisiones que esperan datos, no código### 7. Decisiones que esperan datos, no código
 
 - **CARFLEX 0,022 vs 0,026.** El legado tiene **dos implementaciones vivas** con
   tarifas distintas para el mismo cliente (`dash_acopio.php` y

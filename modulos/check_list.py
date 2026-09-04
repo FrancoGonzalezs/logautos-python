@@ -325,6 +325,16 @@ def _asegurar_tabla(db):
         "CREATE INDEX IF NOT EXISTS ix_check_list_regla_vin "
         "ON check_list_regla (vin)")
 
+    # `legado_id`: el id que el legado le asigno a esta fila al crearla.
+    #
+    # Va por ALTER y no dentro del CREATE porque la tabla YA EXISTE en Railway
+    # -- `CREATE TABLE IF NOT EXISTS` no cambia el esquema de una tabla creada,
+    # asi que agregar la columna al CREATE la dejaria sin ella para siempre
+    # justo donde no llega ninguna migracion.
+    columnas = [c[1] for c in db.execute("PRAGMA table_info(check_list_regla)")]
+    if "legado_id" not in columnas:
+        db.execute("ALTER TABLE check_list_regla ADD COLUMN legado_id INTEGER")
+
     # La guarda: rechaza filas sin unidad. Va acá porque esta
     # funcion ya corre en cada request y es idempotente.
     exigir_unidad_id(db, "check_list_regla")
@@ -369,8 +379,57 @@ def guardar(unidad, datos, movimiento_id):
         datos["observacion"], datos["requerimiento"], datos["gravedad"],
         datos["link"], datos["link_guia"], datos["link_unidad"],
         id_actual(), datetime.now().isoformat(timespec="seconds")))
+    fila_id = cur.lastrowid
+
+    # -- EL PUSH: DOS ESCRITURAS, en el mismo commit que la fila -------------
+    #
+    # 1. la fila nueva en `check_list`   (entidad `check_list`, crear)
+    # 2. las diez del `$historico` sobre la unidad (`check_list_unidad`)
+    #
+    # La 2 DEPENDE de la 1. El orden lo fija el bloque I y no es simetrico:
+    # si entra la 1 y falla la 2, hay un check list que el legado tiene y una
+    # unidad que todavia no lo dice -- se reintenta y se arregla solo. Si
+    # entrara la 2 y fallara la 1, la unidad diria que tiene check list sin que
+    # exista ninguno, y eso NO se nota: `fecha_check_list` es una fecha
+    # plausible y nadie va a ir a buscar la fila que falta.
+    try:
+        from modulos.push_legado import (campos_check_list,
+                                         encolar_check_list,
+                                         encolar_historico_check_list,
+                                         historico_check_list,
+                                         LARGO_MAXIMO)
+        fila = db.execute("SELECT * FROM check_list_regla WHERE id = ?",
+                          (fila_id,)).fetchone()
+        cuerpo = campos_check_list(unidad, fila)
+
+        # La guarda de largo. `observacion` y `requerimiento` topan en 990 y
+        # MySQL corta en silencio: las tres listas se desalinean y la pieza n
+        # deja de corresponderse con su tipo de daño. Ya paso dos veces en el
+        # historico. Se avisa en el log y se empuja igual -- perder el check
+        # list entero seria peor que empujar uno recortado --, pero queda
+        # dicho, que es lo que hoy no existe del otro lado.
+        for columna in ("observacion", "requerimiento"):
+            largo = len(cuerpo.get(columna) or "")
+            if largo > LARGO_MAXIMO:
+                import logging
+                logging.getLogger(__name__).warning(
+                    "check list %s: `%s` mide %d y el legado corta en %d. "
+                    "Las tres listas de daños van a quedar DESALINEADAS del "
+                    "otro lado.", fila_id, columna, largo, LARGO_MAXIMO)
+
+        id_cola = encolar_check_list(db, unidad, fila_id, cuerpo)
+        encolar_historico_check_list(
+            db, unidad, fila_id, historico_check_list(fila),
+            depende_de=id_cola)
+    except Exception:                            # noqa: BLE001
+        # Que falle el encolado no puede perder el check list: son treinta
+        # campos y una foto por daño, cargados con la unidad delante.
+        import logging
+        logging.getLogger(__name__).exception(
+            "no se pudo encolar el check list de ingreso %s", fila_id)
+
     db.commit()
-    return cur.lastrowid
+    return fila_id
 
 
 # ---------------------------------------------------------------------------

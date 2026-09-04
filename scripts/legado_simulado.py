@@ -99,7 +99,20 @@ LISTAS_BLANCAS = {
         "tipo_combu", "bateria", "scanner", "a_c", "ob_mecanica",
         "aceite_coco", "sistema_audio", "adblue", "aceite_diferencial",
         "fecha_check_list_mecanica",
+        # Las DIEZ del `$historico` del check list de INGRESO, bloque H.
+        "ingreso", "g_ingreso", "kilometraje", "observaciones",
+        "observacion_general", "ob_faltante", "fecha_check_list",
+        "estado_carflex", "fecha_lavado_produccion", "tapiz",
     ),
+}
+
+# Las columnas que el endpoint ACUMULA en vez de reemplazar (bloque J).
+#
+# El doble tiene que hacerlo tambien: si reemplazara, una prueba de dos
+# guardados seguidos daria "acumula" igual que si acumulara -- el segundo texto
+# esta ahi en los dos casos. Lo que distingue es que el PRIMERO siga estando.
+COLUMNAS_QUE_ACUMULAN = {
+    "unidades": ("observaciones",),
 }
 
 COLUMNAS_PERMITIDAS = LISTAS_BLANCAS["desplegada"]
@@ -145,6 +158,21 @@ CLM_FALLA_ACUMULAN = ("observacion", "modalidad", "link_unidades",
                       "fallas_adicionales", "modalidad_adicional",
                       "fotos_adicionales")
 CLM_FALLA_SUMAN = ("contador",)
+
+# `check_list` del legado de mentira, la del check list de INGRESO.
+CHECK_LIST = {}
+PROXIMO_CL_ID = [1]
+
+# Las 27 de la lista blanca del bloque G. Escritas a mano y NO derivadas de
+# `push_legado`: si las dos salieran del mismo lugar coincidirian por
+# construccion y la prueba no podria descubrir una columna que Python manda y
+# el otro lado no acepta.
+CL_PERMITIDAS = set("""
+vin patente guia_ingreso cliente fecha_ingreso marca modelo color encargado
+estanque kilometraje fecha_entrega equipamiento1 equipamiento2 equipamiento3
+faltante observaciones link_unidad link_guia fecha_completa id_vin motonave
+tapiz n_asientos observacion requerimiento gravedad
+""".split())
 
 MODO = "ok"
 CLAVE = "x"
@@ -210,6 +238,8 @@ class Handler(BaseHTTPRequestHandler):
         sys.stderr.write("  simulado: " + (formato % args) + "\n")
 
     def do_GET(self):
+        if self.path == "/_check_list":
+            return self._json(200, {"filas": list(CHECK_LIST.values())})
         if self.path == "/_check_list_mecanica":
             # Puerta de PRUEBA (prefijo `_`): deja mirar la tabla del check
             # list mecanico como quedo. La prueba del circulo no se cree lo que
@@ -435,6 +465,51 @@ class Handler(BaseHTTPRequestHandler):
                   for k, v in STOCK[i].items()} for i in sorted(STOCK)]
         return self._json(200, {"filas": filas, "hasta": _reloj.ultimo or ""})
 
+    def _crear_check_list(self):
+        """POST /api_regla/check_list -- la fila del check list de INGRESO."""
+        largo = int(self.headers.get("Content-Length") or 0)
+        try:
+            datos = json.loads(self.rfile.read(largo).decode("utf-8"))
+        except ValueError:
+            return self._json(400, {"error": "body invalido"})
+
+        if MODO == "caer":
+            return self._json(500, {"error": "caida simulada"})
+
+        idem = self.headers.get("Idempotency-Key", "")
+        if not idem:
+            return self._json(400, {"error": "Idempotency-Key es obligatoria"})
+        if idem in IDEMPOTENCIA:
+            CONTADORES["idempotente"] += 1
+            return self._json(200, dict(IDEMPOTENCIA[idem], idempotente=True))
+
+        fila, ignoradas = {}, []
+        for k, v in datos.items():
+            if k == "legado_updated_at_conocido":
+                # El original LO CUENTA como ignorada. Python dejo de mandarlo
+                # (`manda_conocido: False`), asi que si llega es un error de
+                # Python y la prueba lo tiene que ver.
+                ignoradas.append(k)
+                IGNORADAS.add(k)
+                CONTADORES["ignoradas"] += 1
+                continue
+            if k in CL_PERMITIDAS:
+                fila[k] = v
+            else:
+                ignoradas.append(k)
+                IGNORADAS.add(k)
+                CONTADORES["ignoradas"] += 1
+
+        nuevo = PROXIMO_CL_ID[0]
+        PROXIMO_CL_ID[0] += 1
+        fila["id"] = nuevo
+        fila.setdefault("estado", "ABIERTO")
+        CHECK_LIST[nuevo] = fila
+        cuerpo = {"ok": True, "id": nuevo, "escritas": len(fila) - 2,
+                  "ignoradas": ignoradas}
+        IDEMPOTENCIA[idem] = cuerpo
+        return self._json(201, cuerpo)
+
     def _crear_check_list_mecanico(self):
         """POST /api_regla/check_list_mecanica -- el paso 1.
 
@@ -550,6 +625,20 @@ class Handler(BaseHTTPRequestHandler):
         # por el PUT habria sido peor -- ampliar la lista blanca del doble para
         # que la prueba pase es justo lo que hace que el doble deje de parecerse
         # al original.
+        # Puerta de PRUEBA, ANTES del chequeo de clave igual que `/_sembrar`:
+        # cambia el modo en caliente. Hace falta para forzar el fallo de UNA de
+        # las dos escrituras sin reiniciar el servidor -- que es lo unico que
+        # distingue "las dos anduvieron" de "el orden esta bien".
+        if self.path.split("?")[0].rstrip("/") == "/_modo":
+            global MODO
+            largo = int(self.headers.get("Content-Length") or 0)
+            try:
+                cuerpo = json.loads(self.rfile.read(largo).decode("utf-8"))
+            except ValueError:
+                return self._json(400, {"error": "body invalido"})
+            MODO = cuerpo.get("modo") or "ok"
+            return self._json(200, {"ok": True, "modo": MODO})
+
         if self.path.split("?")[0].rstrip("/") == "/_sembrar":
             largo = int(self.headers.get("Content-Length") or 0)
             try:
@@ -576,6 +665,10 @@ class Handler(BaseHTTPRequestHandler):
 
         if ruta == "/api_regla/check_list_mecanica":
             return self._crear_check_list_mecanico()
+
+        if ruta == "/api_regla/check_list":
+            return self._crear_check_list()
+
 
         if ruta != "/api_regla/movimientos":
             return self._json(404, {"error": "ruta no simulada: " + self.path})
@@ -734,8 +827,22 @@ class Handler(BaseHTTPRequestHandler):
             CONTADORES["ignoradas"] += len(ignoradas)
             IGNORADAS.update(ignoradas)
             self.log_message("lista blanca: se ignoraron %s", ", ".join(ignoradas))
-        fila.update({k: v for k, v in datos.items()
-                     if k in COLUMNAS_PERMITIDAS})
+        # Y el VERBO de cada columna. Las de `COLUMNAS_QUE_ACUMULAN` se
+        # concatenan con UN espacio -- el `.= ' '.` del legado -- en vez de
+        # reemplazarse. Sin esto, dos guardados seguidos dejarian solo el
+        # segundo y la prueba de acumulacion daria verde igual: el texto nuevo
+        # esta ahi en los dos casos. Lo que distingue es que el PRIMERO siga.
+        acumulan = COLUMNAS_QUE_ACUMULAN.get("unidades", ())
+        for k, v in datos.items():
+            if k not in COLUMNAS_PERMITIDAS:
+                continue
+            if k in acumulan:
+                if v in ("", None):
+                    continue
+                previo = fila.get(k)
+                fila[k] = v if not previo else "{} {}".format(previo, v)
+            else:
+                fila[k] = v
         fila["updated_at"] = _reloj()
         respuesta = {"ok": True, "updated_at": fila["updated_at"]}
         if idem:

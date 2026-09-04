@@ -290,6 +290,27 @@ ENTIDADES = {
         "tabla_espejo": "stock_consumibles",
         "ruta": "stock_consumibles/{id}/descontar",
     },
+    # El check list de INGRESO: la fila nueva en `check_list`.
+    #
+    # Misma forma que `check_list_mecanica`: `crear`, sin locking -- la fila es
+    # nueva y no hay version previa contra la cual chocar --, con
+    # Idempotency-Key obligatoria y el id de vuelta.
+    "check_list": {
+        "tabla_origen": "check_list_regla",
+        "tabla_espejo": "newstocks_cidef",
+        "ruta": "check_list",
+        "manda_conocido": False,
+        "guarda_id_en": ("check_list_regla", "legado_id"),
+    },
+    # Y las DIEZ columnas del `$historico` que `check_list()` escribe en la
+    # unidad. Entidad propia por el mismo motivo que `check_mecanica_unidad`:
+    # comparte ruta con `it` y `pdi`, pero lo que se lee en la cola y en la
+    # reconciliacion es el NOMBRE.
+    "check_list_unidad": {
+        "tabla_origen": "check_list_regla",
+        "tabla_espejo": "newstocks_cidef",
+        "ruta": "unidades",
+    },
     # El check list mecanico, PASO 1: la fila nace. `crear` y no `actualizar`
     # porque `check_list_mecanica` es append-only -- nada la reescribe salvo
     # el paso 2, que va por la entidad de abajo.
@@ -997,6 +1018,226 @@ def campos_check_list_mecanico(unidad, fila):
             except (IndexError, KeyError):
                 cuerpo[columna] = None
     return cuerpo
+
+
+# ---------------------------------------------------------------------------
+# El check list de INGRESO
+# ---------------------------------------------------------------------------
+
+# El separador de las tres listas paralelas de daños.
+#
+# SALE DEL DATO, NO DEL CODIGO, y la distincion importa: `Nota.php:check_list()`
+# arma `$pz_total = '1 -'.$pz1.' | <br>'`, que es un formato NUMERADO con
+# `| <br>` que en la replica solo aparece en filas viejas. Lo que el sistema
+# escribe HOY es otra cosa.
+#
+# Medido sobre `check_list`, 6.378 filas de los ultimos 12 meses con las tres
+# columnas cargadas:
+#
+#     '-'    alinea 6.376 / 6.378   (5.952 con mas de un elemento)
+#
+# Las 2 que no alinean NO son un problema del separador: son TRUNCAMIENTO. La
+# fila 20058 tiene 63 piezas, 65 tipos y 90 niveles porque `requerimiento`
+# llego al tope y quedo cortado a la mitad de una palabra -- termina en '-A'.
+# Ver LARGO_MAXIMO.
+#
+# Y no es un guion "dentro de un nombre": de los 429 nombres de `piezas`, los
+# 35 de `tipo_dano` y los 4 de `nivel_dano`, NINGUNO tiene un guion.
+SEPARADOR_DANOS = "-"
+
+# El tope de `observacion` y `requerimiento` en el legado, medido por el largo
+# maximo observado: 990 caracteres, con filas que lo tocan exacto.
+#
+# Pasado ese tope MySQL corta -- la base no esta en modo estricto -- y las tres
+# listas se DESALINEAN: la pieza n deja de corresponderse con su tipo de daño.
+# No hay error; queda una fila que miente. Por eso REGLA lo comprueba antes de
+# mandar en vez de dejar que se recorte del otro lado.
+LARGO_MAXIMO = 990
+
+
+def _danos_de(fila):
+    """Las tres listas paralelas, desarmadas y vueltas a armar de a una.
+
+    Devuelve [(pieza, tipo, nivel), ...]. Si las tres no tienen la misma
+    cantidad de elementos devuelve None: eso significa que la fila que
+    guardamos ya esta desalineada, y mandarla seria propagar el problema."""
+    piezas = (fila["observacion"] or "").split(SEPARADOR_DANOS)
+    tipos = (fila["requerimiento"] or "").split(SEPARADOR_DANOS)
+    niveles = (fila["gravedad"] or "").split(SEPARADOR_DANOS)
+    piezas = [p.strip() for p in piezas if p.strip()]
+    tipos = [t.strip() for t in tipos if t.strip()]
+    niveles = [n.strip() for n in niveles if n.strip()]
+    if not piezas:
+        return []
+    if not (len(piezas) == len(tipos) == len(niveles)):
+        return None
+    return list(zip(piezas, tipos, niveles))
+
+
+def danos_de_esta_pasada(fila):
+    """El texto de daños que se le SUMA a `newstocks_cidef.observaciones`.
+
+    Formato del legado, copiado de `$danos_historico`:
+
+        $danos_historico = $pz1.' '.$req1.' '.$dano1.' |';
+
+    o sea `PIEZA TIPO NIVEL |` por cada daño, uno detras de otro.
+
+    SOLO LOS DE ESTA PASADA. El legado leia lo anterior con
+    `getobservacion_dyp()` y mandaba el texto entero concatenado; el endpoint
+    de REGLA acumula del lado del servidor (bloque J), asi que mandar el
+    acumulado lo duplicaria -- y no una vez: cada guardado siguiente duplicaria
+    todo lo anterior otra vez.
+
+    Es la misma trampa que `observaciones` del push de PDI, al reves: alla el
+    riesgo era pisar, aca es repetir. Las dos salen de la misma causa -- una
+    columna cuyo verbo no es 'reemplazar' -- y por eso el verbo vive del lado
+    del servidor, donde no se puede olvidar."""
+    danos = _danos_de(fila)
+    if not danos:
+        return ""
+    return " ".join("{} {} {} |".format(p, t, n) for p, t, n in danos)
+
+
+# Las 27 columnas de la lista blanca de `check_list` (bloque G).
+COLUMNAS_CHECK_LIST = (
+    "vin", "patente", "guia_ingreso", "cliente", "fecha_ingreso", "marca",
+    "modelo", "color", "encargado", "estanque", "kilometraje", "fecha_entrega",
+    "equipamiento1", "equipamiento2", "equipamiento3", "faltante",
+    "observaciones", "link_unidad", "link_guia", "fecha_completa", "id_vin",
+    "motonave", "tapiz", "n_asientos",
+    # Las tres cuyo nombre miente. Ver la nota de abajo.
+    "observacion", "requerimiento", "gravedad",
+)
+
+# LO QUE REGLA NO MANDA DE ESAS 27, Y POR QUE. Medido sobre los ultimos 12
+# meses de `check_list` (7.086 filas):
+#
+#   tapiz        2,6% de las filas, y solo dos valores ('CAFE' 175, 'NEGRO' 12)
+#   n_asientos   0,8%
+#
+# La pantalla de REGLA no los pide. No es una decision de diseño sino un hecho
+# que hay que anotar: si alguna vez se agregan al formulario, entran aca sin
+# tocar nada mas porque ya estan en la lista blanca del otro lado.
+#
+#   link_unidad / link_guia   las fotos quedan para el paso del correo con PDF
+#                             adjunto. Hasta entonces REGLA no las publica y
+#                             mandar una URL que no abre es peor que no mandar
+#                             nada.
+NO_SE_MANDAN = ("tapiz", "n_asientos", "link_unidad", "link_guia")
+
+
+def campos_check_list(unidad, fila):
+    """El cuerpo del POST. Las tres columnas cuyo nombre miente van tal cual.
+
+    `observacion` guarda las PIEZAS, `requerimiento` los TIPOS DE DAÑO y
+    `gravedad` los NIVELES -- ninguna guarda lo que su nombre dice, y al lado
+    existe `observaciones` en plural, que SI es la observacion libre. Una letra
+    de diferencia entre "las piezas dañadas" y "lo que escribio el encargado".
+    (Regla 0, quinto ejemplo.)
+
+    Se mandan con el nombre del legado porque es el nombre de la columna del
+    otro lado. En NUESTRA tabla se llaman igual a proposito -- el mapeo es 1:1
+    y no hay un diccionario de traduccion que se desincronice -- y quien lea
+    este archivo tiene el comentario al lado."""
+    hoy = datetime.datetime.now().strftime("%Y-%m-%d")
+    cuerpo = {}
+    for columna in COLUMNAS_CHECK_LIST:
+        if columna in NO_SE_MANDAN:
+            continue
+        if columna == "id_vin":
+            cuerpo["id_vin"] = unidad["id"]
+        elif columna == "fecha_completa":
+            cuerpo["fecha_completa"] = (fila["creado_en"] or "").replace("T", " ")
+        elif columna == "fecha_entrega":
+            # `date('Y-m-d')` al guardar, igual que el legado: 7.086 de 7.086
+            # filas de los ultimos 12 meses la tienen igual a la fecha de
+            # creacion. Es una fecha de entrega que no sabe nada de ninguna
+            # entrega -- misma especie que `fecha_lavado_produccion`. Se
+            # replica tal cual durante el paralelo.
+            cuerpo["fecha_entrega"] = hoy
+        else:
+            try:
+                cuerpo[columna] = fila[columna]
+            except (IndexError, KeyError):
+                cuerpo[columna] = None
+    return cuerpo
+
+
+def historico_check_list(fila):
+    """Las DIEZ columnas del `$historico` que van sobre `newstocks_cidef`.
+
+    Copiadas del array de `Nota.php:check_list()`, una por una:
+
+        'ingreso'                 => $fecha_ingreso
+        'g_ingreso'               => $guia
+        'kilometraje'             => $kilometraje
+        'observaciones'           => $obs_anterior      <- ACUMULA
+        'observacion_general'     => $observaciones     <- OJO, cruzado
+        'ob_faltante'             => $faltante
+        'fecha_check_list'        => date('Y-m-d')
+        'estado_carflex'          => $estado_carflex
+        'fecha_lavado_produccion' => date('Y-m-d')      <- ver abajo
+        'tapiz'                   => $tapiz
+
+    EL CRUCE DE NOMBRES, que es el mismo de siempre con otra cara: la columna
+    `observaciones` de la UNIDAD recibe los DAÑOS, y `observacion_general`
+    recibe el texto libre que en NUESTRA tabla se llama `observaciones`. O sea
+    que `observaciones` significa una cosa en `check_list_regla` y otra en
+    `newstocks_cidef`. Van cruzados a proposito.
+
+    `fecha_lavado_produccion` SE SELLA CON LA FECHA DEL DIA aunque nadie haya
+    lavado nada. Es asi en el legado -- `date('Y-m-d')`, sin preguntar -- y se
+    replica tal cual durante el mes en paralelo: la columna esta llena en el
+    60,3% de las unidades con check list, asi que quien la mire ya la esta
+    leyendo mal, y cambiarla de un lado solo haria que las dos bases dejaran de
+    coincidir. NO SE ARREGLA ACA."""
+    hoy = datetime.datetime.now().strftime("%Y-%m-%d")
+    return {
+        "ingreso": fila["fecha_ingreso"],
+        "g_ingreso": fila["guia_ingreso"],
+        "kilometraje": fila["kilometraje"],
+        # SOLO los daños de esta pasada: el endpoint concatena.
+        "observaciones": danos_de_esta_pasada(fila),
+        "observacion_general": fila["observaciones"],
+        "ob_faltante": fila["faltante"],
+        "fecha_check_list": hoy,
+        "estado_carflex": None,
+        "fecha_lavado_produccion": hoy,
+        "tapiz": None,
+    }
+
+
+def encolar_check_list(db, unidad, fila_id, campos):
+    """La fila nueva en `check_list`. Devuelve el id de cola."""
+    legado_id = unidad["id"]
+    db.execute("UPDATE newstocks_cidef SET push_pendiente = 1 WHERE id = ?",
+               (legado_id,))
+    return encolar_push(
+        db, "check_list",
+        python_id=fila_id, legado_id=legado_id,
+        operacion="crear", campos=campos,
+        legado_updated_at_conocido=(unidad["updated_at"] or ""),
+        requiere_unidad=0)
+
+
+def encolar_historico_check_list(db, unidad, fila_id, campos, depende_de):
+    """Las diez columnas del `$historico` sobre la unidad.
+
+    DEPENDE DE LA FILA, y el orden lo fija el bloque I: si el check list entra
+    y la unidad no, queda un check list sin efecto y se reintenta; si la unidad
+    entra y el check list no, la unidad DICE que tiene check list y no hay
+    ninguno -- y nadie lo nota, porque `fecha_check_list` es una fecha
+    plausible."""
+    legado_id = unidad["id"]
+    db.execute("UPDATE newstocks_cidef SET push_pendiente = 1 WHERE id = ?",
+               (legado_id,))
+    return encolar_push(
+        db, "check_list_unidad",
+        python_id=fila_id, legado_id=legado_id,
+        operacion="actualizar", campos=campos,
+        legado_updated_at_conocido=(unidad["updated_at"] or ""),
+        requiere_unidad=0, depende_de=depende_de)
 
 
 def encolar_check_list_mecanico(db, unidad, fila_id, campos):
