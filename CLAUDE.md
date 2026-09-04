@@ -460,7 +460,33 @@ Es el mismo modo de falla que la lista blanca que ignora en silencio, una capa
 más arriba: allá se pierde una columna del cuerpo, acá se pierde un método
 entero del despliegue. En los dos casos la respuesta es 200.
 
-### Un bloque es una unidad de despliegue, no una unidad de verdad### Un bloque es una unidad de despliegue, no una unidad de verdad
+### El instrumento que mide tiene que estar bajo prueba
+
+Va **tercera** vez con la misma forma: la herramienta que mira si algo está roto,
+rota.
+
+| Cuándo | Qué se rompió | Cómo se veía |
+|---|---|---|
+| bloque J | la sonda 4 de `verificar_push_produccion` | 500 en vez de 400 — la única que prueba el locking sin escribir |
+| 2026-09-04 | `columnas_que_acumulan` quedó en la versión vieja | `php -l` limpio, sin duplicados, 401 en las sondas |
+| 2026-09-04 | **`reconciliar.py` moría con `KeyError`** | la corrida diaria no corría |
+
+El tercero es el peor. La reconciliación es **el instrumento de aceptación del
+mes en paralelo**: es lo único que ve el 18,4% de cambios de estado que el legado
+hace sin dejar fila en `registros`. Si puede morirse en silencio, *«la
+reconciliación no mostró nada»* no es evidencia de nada — es la misma frase tanto
+si todo está bien como si el informe no se imprimió.
+
+**Arreglarlo no alcanzaba.** `probar_reconciliacion.py` corre ahora
+`reconciliar.py` **como proceso, de punta a punta**, sobre una copia sembrada, y
+falla si revienta, si el informe pierde una de sus cuatro secciones, si deja de
+imprimir alguna categoría vigente, o si reaparece un nombre de antes del cambio
+de arquitectura. Se corre como proceso y no importando `main()` a propósito: lo
+que se rompió no fue una función, fue el script — su import, su parseo de
+argumentos y su formateo. Verificado rompiéndolo a propósito: exit 1 nombrando la
+regresión exacta.
+
+### Un bloque es una unidad de despliegue, no una unidad de verdad
 
 Dos veces en el mismo día un bloque se aplicó o se retiró a medias:
 
@@ -967,7 +993,81 @@ fecha de entrega que no sabe nada de ninguna entrega. **No se arreglan acá.**
 recibe el texto libre que en `check_list_regla` se llama `observaciones`. La
 misma palabra significa una cosa de un lado y otra del otro.
 
-### 7. Decisiones que esperan datos, no código### 7. Decisiones que esperan datos, no código
+### 10. Inspección de despacho — investigado, BLOQUEADO en el despliegue
+
+**Estado del despliegue, medido por HTTP el 2026-09-04** (Franco no tiene
+Terminal en cPanel, así que las comprobaciones van por sondas):
+
+| Sonda | Resultado | Qué dice |
+|---|---|---|
+| POST sin clave | 401 | **la ruta resuelve** y llega a `exigir_api_key` |
+| POST con clave | `entidad no soportada para crear: inspeccion_despacho` | `crear_fila` corre y **no la encuentra en el mapa** |
+| GET con clave | `entidad no soportada para leer: inspeccion_despacho` | ídem `leer_fila` |
+| `GET check_list/999999999` | `no existe check_list 999999999` | contraste: ésa **sí** está en el mapa |
+| `permitidos` | **30 columnas, sin `patio`** | la entrada `unidades` tampoco se tocó |
+
+**Las dos rutas están; `mapa_entidades()` quedó en la versión vieja.** Los dos
+cambios que faltan son exactamente los dos que viven adentro de ese método. Es la
+tercera vez que un método ya existente se actualiza a medias sin ningún error.
+
+**Lo que el módulo hace** (`Nota.php:inspeccion_despacho()`, 486 líneas):
+
+- escribe la fila en `inspeccion_despacho` (29 columnas, `id` no viaja);
+- hace **un** `actualizar_vin` con `patio='PATIO 2'`, `calle='IT'`,
+  `despachado='EN ESPERA CC ZD'` — los tres literales, no salen del formulario;
+- `registromov` **cero veces** → va con `empuja_movimiento=False`, mismo criterio
+  que el IT y que los dos check lists;
+- **no crea OT**;
+- manda un correo **sin PDF** (los `addAttachment` están comentados), ramificado
+  por `$cliente` y, dentro de CIDEF, por 13 `strstr` sobre `$destino`.
+
+**El PDF con fotos no sale acá.** Sale en el DESPACHO, que es otra pantalla de
+otro controlador: `Pedido.php:2130`, dentro de `inicio_proces()`, llama a
+`generarPdfInspeccion()` (`Pedido.php:1463`), que lee `archivo1..archivo9` y por
+cada una llama a `descargarImagenComoDataUri()` (`Pedido.php:1396`).
+
+**Ese cargador NO hay que tocarlo.** Ya detecta URLs absolutas: arranca con
+`$esUrlAbsoluta = stripos(...'http://')...` y el `base_url()` está **dentro del
+ternario**, en la rama de la ruta relativa. Verificado leyendo el archivo, no la
+spec — que es lo que falló con el bloque M1.
+
+**`EN ESPERA CC ZD`: REGLA NO lo modela.** No está en `CALLE_POR_ESTADO`, ni en
+`PATIO_POR_ESTADO`, ni en `SIN_CALLE`; ningún paso lleva a él; `calle_para()` y
+`patio_para()` devuelven `None`. En el dato: **0 unidades** en ese estado hoy, **0
+filas** en `registros.estado` (coherente: `registromov` cero veces) y **2** en
+`registros.newestado` — o sea dos movimientos que *salieron* de él, los dos a
+`DESPACHADO`. Existe y las unidades lo atraviesan rápido. **Hay que decidirlo
+antes de empujarlo**: si REGLA lo origina sin modelarlo, produce un estado que su
+propio motor no sabe enrutar.
+
+**El correo lo manda REGLA**, en el mismo guardado, como el legado — decidido el
+2026-09-04. Las otras dos opciones se descartaron: si no sale, el que se queda
+sin información es el **destino**, que está fuera de la empresa, y sería la
+primera divergencia que ve un tercero; si lo dispara administración, le agregamos
+un paso manual a algo que hoy es automático.
+
+Confirmado leyendo el código: `Nota_model::actualizar_vin()` es un `update()`
+pelado del query builder, sin hook ni trigger. **El push no dispara el correo del
+legado.** Sólo habría duplicado si una persona hiciera la inspección dos veces.
+
+**Fotos:** el contador llega a 9 y **nunca pasó de 9** en 16.365 filas; el 24% usa
+las nueve. Una décima entraría en `link_unidad` —que acumula sin tope— y en
+ningún `archivoN`: no se pierde, se vuelve invisible para el PDF. Del lado de
+REGLA se modelan en tabla propia **sin tope**, y el aplanado a `archivo1..9` al
+empujar tiene que **decir cuál quedó afuera**.
+
+### 5d. Los destinatarios, con las dos condiciones
+
+Las **tres ramas en cero** (`Vega`, `REAL`, `Grass`) **no se migran**, pero la
+tabla cae al conjunto por defecto **y registra** cuando un destino no calza con
+nada conocido. *Cero en 12 meses no es muerta, es no observada* — es el
+precedente de `LAVADO KSM`.
+
+El número que lo hace urgente: **4.236 de 5.560** inspecciones CIDEF del período
+**no calzan con ninguna de las 13 ramas** y caen al else. Y hay **438 destinos
+distintos** contra 13 ramas.
+
+### 7. Decisiones que esperan datos, no código
 
 - **CARFLEX 0,022 vs 0,026.** El legado tiene **dos implementaciones vivas** con
   tarifas distintas para el mismo cliente (`dash_acopio.php` y
