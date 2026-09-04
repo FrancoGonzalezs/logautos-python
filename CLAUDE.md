@@ -1149,6 +1149,77 @@ daño. Punto de partida, a confirmar contra la hoja: inspección 800 px calidad
 baja, check lists 1200 px calidad alta, IT 1200 px cuando lleva evidencia de DYP
 o FR.
 
+#### Los perfiles, elegidos y MEDIDOS
+
+**Daños** (check list de ingreso, mecánica, IT con evidencia): **800 px, calidad
+0,8**. **Inspección de despacho**: **600 px, calidad 0,7**.
+
+El criterio de Franco: 800 está dentro de la banda que el legado ya entrega
+—existen fotos de 565×750 en producción y nadie reclamó—, así que no es una
+apuesta; y en daños se movió **una sola palanca**, porque la pérdida de
+resolución y la de compresión se suman y en un rayón fino se nota el doble.
+
+**Medido sobre las mismas fotos reales de la hoja** (n=8):
+
+| Perfil | Peso medido |
+|---|---|
+| daños 800/0,8 | **51 KB** (12–111) |
+| inspección 600/0,7 | **25 KB** (6–53) |
+
+| Módulo | Fotos/mes | MB/mes |
+|---|---|---|
+| Check list de ingreso | 8.116 | 405 |
+| IT | 3.584 | 179 |
+| Inspección de despacho | 6.096 | 149 |
+| Check list mecánico | 503 | 25 |
+| | **18.300** | **758 MB/mes** |
+
+**6,2 meses de autonomía** contra los 4,6 GB de Railway — contra **1,0 a 1,3**
+con los 1600 px de antes.
+
+> **El caveat del número:** las fuentes medidas son fotos del legado, ya
+> comprimidas y ya reducidas a ≤1000 px. Una foto de teléfono bajada a 800
+> conserva más detalle real y va a pesar más. Acotado: **+40% → 4,4 meses**,
+> **+80% → 3,5 meses**. El número medido es el piso, no el techo.
+
+#### Dónde van los daños del check list: los seis lectores
+
+`danos/` **no es "la convención vieja"**. La rama del legado es
+`if (empty($motonave))`: sin motonave va a `assets/images/danos/` plana, con
+motonave va a `assets/images/{motonave}/{vin}/`. **Las dos conviven hoy** — en
+2026, **1.181 de 4.539** check lists (26%) van a la plana.
+
+| # | Lector | Cómo encuentra las fotos | ¿`danos/` plana lo rompe? |
+|---|---|---|---|
+| 1 | `showcli*.php` (5 vistas de la ficha) | **ruta guardada** en `check_list.link` | no |
+| 2 | El correo del check list | **URL construida al subir**, guardada en la columna | no |
+| 3 | `exportar_ot_fotos_new` — el individual **vivo** | `listarFotosViejas($vin)`: **recorre `danos/` plana**, match por VIN en el nombre | **no — es exactamente ahí** |
+| 4 | `exportar_ot_fotos` — el individual viejo | `listarFotos($motonave,$vin)`: **recorre `{motonave}/{vin}/`** | sí |
+| 5 | `exportar_ot_masivo` — la masiva del navegador | ídem: **recorre** | sí |
+| 6 | La masiva del servidor (`Nota.php:21780`) | `glob("assets/images/{motonave}/{vin}/")` | sí |
+
+**Cuatro recorren, y recorren en DOS lugares distintos. Ninguna carpeta única
+satisface a todos.**
+
+Y el dato que cambia el peso de la decisión: **los lectores 4, 5 y 6 ya son
+ciegos al 26% del legado** — las unidades sin motonave. No es un fallo que REGLA
+introduce; es uno que REGLA compartiría.
+
+**Las dos opciones, con su costo:**
+
+| | Qué es | Costo | Qué deja roto |
+|---|---|---|---|
+| **A** | `assets/images/danos/` plana | **cero PHP** | Los lectores 4, 5 y 6 no ven las de REGLA — igual que hoy no ven el 26% sin motonave |
+| **B** | A, **más** tocar `listarFotos()` y el `glob` de la masiva del servidor para que miren también `danos/` por VIN | dos ediciones **aditivas** en funciones de **lectura** — si el agregado falla, devuelven lo mismo que hoy | nada. Y **arregla de paso el 26% del legado** que hoy no sale en la exportación masiva |
+
+**Descartada, y vale decir por qué:** `assets/images/danos/{vin}/` —la
+subcarpeta por VIN bajo prefijo fijo— **rompe el lector 3**, que barre `danos/`
+sin recursión, y **no arregla** 4/5/6, que buscan bajo `{motonave}/`. Es peor que
+A en todo.
+
+**No se elige acá.** Lo que sí queda dicho: B no es sólo para REGLA — es la única
+que deja la exportación masiva completa, y ese agujero ya existe.
+
 #### El endpoint de subida — `scripts/Api_regla_subir_foto.php`, sin desplegar
 
 Cinco propiedades, y **dos cosas que no se pudieron cumplir tal cual**:
