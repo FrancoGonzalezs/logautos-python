@@ -379,6 +379,115 @@ def pdi_sin_ot(db, desde=DESDE_OT_AUTOMATICA):
 
 
 # ---------------------------------------------------------------------------
+# Los daños que el legado cortó
+# ---------------------------------------------------------------------------
+
+# El tope REAL de `check_list.observacion`, `requerimiento` y `gravedad`.
+#
+# MEDIDO CONTRA PRODUCCION, no deducido del dato: se mando una fila con 1.500
+# caracteres en las tres y volvieron 990 exactos, cortadas a mitad de token
+# (`...97__00000098__`). La replica no sirve para esto -- el importador
+# normaliza todo a TEXT y las longitudes se pierden.
+#
+# Antes esto era "el largo maximo observado", que es la clase de numero que la
+# Regla 0 marca: alto y no redondo. Podia ser el tope o podia ser el check list
+# mas grande que alguien cargo. Era el tope.
+LARGO_MAXIMO_DANOS = 990
+
+# Las tres columnas que topan ahi. `gravedad` tambien, aunque su maximo
+# observado sea 596: los niveles son palabras cortas, asi que entran mas antes
+# de llegar al corte -- y por eso una fila puede terminar con 63 piezas, 65
+# tipos y 90 niveles.
+COLUMNAS_DANOS = ("observacion", "requerimiento", "gravedad")
+
+
+def danos_truncados(db, desde="2025-09"):
+    """Check lists cuyas tres listas de daños NO se corresponden.
+
+    POR QUE ESTO ES UN SENSOR Y NO UN `logging.warning`
+
+    `check_list.observacion` / `requerimiento` / `gravedad` son tres listas
+    paralelas unidas por '-': la pieza n va con el tipo n y el nivel n. Las
+    tres topan en 990 caracteres y MySQL corta sin avisar -- la base no esta en
+    modo estricto. Un check list con ~60 daños desborda, y a partir del corte
+    la pieza n deja de corresponderse con su tipo. La fila sigue ahi, con
+    texto plausible, y nada dice que la mitad de abajo miente.
+
+    ES UN BUG DEL LEGADO QUE HEREDAMOS, NO UNO QUE INTRODUCIMOS: el formulario
+    del sistema viejo trunca igual hoy. Se replica durante el paralelo -- mismo
+    criterio que la asimetria G7/G9 -- y NO se arregla del lado de REGLA, que
+    seria dejar de coincidir.
+
+    Lo que si cambia es que se VEA. La primera version de esto era un
+    `logging.warning` al empujar, y un log que nadie abre no es una señal: es
+    la misma forma del `push_pendiente` trabado -- algo roto, en silencio, para
+    siempre. Un sensor en la reconciliacion diaria se mira porque la
+    reconciliacion se mira.
+
+    Cuenta las de TODAS las filas, no solo las de REGLA: el legado las produce
+    igual, y saber cuantas hay es lo que dice si esto es un caso raro o una
+    perdida sistematica de informacion de daños."""
+    filas = db.execute("""
+        SELECT id, vin, fecha_completa,
+               LENGTH(observacion)   AS n_obs,
+               LENGTH(requerimiento) AS n_req,
+               LENGTH(gravedad)      AS n_gra,
+               observacion, requerimiento, gravedad
+          FROM check_list
+         WHERE fecha_completa >= ?
+           AND observacion IS NOT NULL AND TRIM(observacion) <> ''
+           AND requerimiento IS NOT NULL AND TRIM(requerimiento) <> ''
+           AND gravedad IS NOT NULL AND TRIM(gravedad) <> ''
+         ORDER BY id DESC
+    """, (desde,)).fetchall()
+
+    desalineadas, en_el_tope = [], 0
+    for f in filas:
+        if max(f["n_obs"], f["n_req"], f["n_gra"]) >= LARGO_MAXIMO_DANOS:
+            en_el_tope += 1
+        # SE CUENTAN LAS POSICIONES, NO LOS ELEMENTOS NO VACIOS.
+        #
+        # Un elemento vacio es una POSICION legitima: la fila 19478 tiene
+        # `gravedad = '-LEVE-LEVE-...'`, o sea un daño al que nadie le puso
+        # nivel. Las tres listas tienen 7 posiciones y estan perfectamente
+        # alineadas; descartando los vacios daban 7/7/6.
+        #
+        # La primera version de este sensor contaba sin los vacios y reporto
+        # 1.566 filas desalineadas donde hay 2. Es la Regla 0 adentro del
+        # sensor: "cuantos elementos tiene la lista" significa una cosa si los
+        # vacios cuentan y otra si no, y la pregunta -- "¿la pieza n va con su
+        # tipo n?" -- la contesta la POSICION.
+        piezas = len((f["observacion"] or "").split("-"))
+        tipos = len((f["requerimiento"] or "").split("-"))
+        niveles = len((f["gravedad"] or "").split("-"))
+        if not (piezas == tipos == niveles):
+            desalineadas.append({
+                "id": f["id"], "vin": f["vin"],
+                "fecha": f["fecha_completa"],
+                "piezas": piezas, "tipos": tipos, "niveles": niveles,
+                # Si alguna toca el tope, el corte explica la diferencia. Si
+                # NINGUNA lo toca, la causa es OTRA y hay que ir a mirarla:
+                # un guion adentro de un nombre nuevo, por ejemplo.
+                "toca_el_tope": max(f["n_obs"], f["n_req"],
+                                    f["n_gra"]) >= LARGO_MAXIMO_DANOS,
+            })
+
+    sin_explicar = [d for d in desalineadas if not d["toca_el_tope"]]
+    return {
+        "desde": desde,
+        "tope": LARGO_MAXIMO_DANOS,
+        "miradas": len(filas),
+        "en_el_tope": en_el_tope,
+        "desalineadas": len(desalineadas),
+        # LAS QUE IMPORTAN MAS. Una desalineada que toca el tope es el bug
+        # conocido del legado. Una que NO lo toca es un modo de falla que no
+        # entendemos, y esas se miran de a una.
+        "sin_explicar": len(sin_explicar),
+        "detalle": desalineadas[:20],
+    }
+
+
+# ---------------------------------------------------------------------------
 # La corrida
 # ---------------------------------------------------------------------------
 
@@ -392,6 +501,7 @@ def correr(db_path=None, guardar=True):
             "estados": comparar_estados(db),
             "sin_registro": estados_sin_registro(db),
             "pdi_sin_ot": pdi_sin_ot(db),
+            "danos_truncados": danos_truncados(db),
         }
         if guardar:
             db.execute(

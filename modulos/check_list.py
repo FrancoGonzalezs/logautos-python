@@ -396,26 +396,23 @@ def guardar(unidad, datos, movimiento_id):
         from modulos.push_legado import (campos_check_list,
                                          encolar_check_list,
                                          encolar_historico_check_list,
-                                         historico_check_list,
-                                         LARGO_MAXIMO)
+                                         historico_check_list)
         fila = db.execute("SELECT * FROM check_list_regla WHERE id = ?",
                           (fila_id,)).fetchone()
         cuerpo = campos_check_list(unidad, fila)
 
-        # La guarda de largo. `observacion` y `requerimiento` topan en 990 y
-        # MySQL corta en silencio: las tres listas se desalinean y la pieza n
-        # deja de corresponderse con su tipo de daño. Ya paso dos veces en el
-        # historico. Se avisa en el log y se empuja igual -- perder el check
-        # list entero seria peor que empujar uno recortado --, pero queda
-        # dicho, que es lo que hoy no existe del otro lado.
-        for columna in ("observacion", "requerimiento"):
-            largo = len(cuerpo.get(columna) or "")
-            if largo > LARGO_MAXIMO:
-                import logging
-                logging.getLogger(__name__).warning(
-                    "check list %s: `%s` mide %d y el legado corta en %d. "
-                    "Las tres listas de daños van a quedar DESALINEADAS del "
-                    "otro lado.", fila_id, columna, largo, LARGO_MAXIMO)
+        # EL TRUNCAMIENTO A 990 NO SE AVISA ACA. Las tres listas de daños
+        # topan en 990 caracteres y MySQL corta en silencio, con lo cual la
+        # pieza n deja de corresponderse con su tipo. Es un bug del legado que
+        # heredamos --su formulario trunca igual hoy-- asi que se replica
+        # durante el paralelo y NO se recorta de este lado.
+        #
+        # La primera version de esto era un `logging.warning` justo aca. Un log
+        # que nadie abre no es una señal: es la misma forma del
+        # `push_pendiente` trabado. El aviso vive en la reconciliacion diaria,
+        # `reconciliacion.danos_truncados()`, que ademas cuenta las filas que
+        # produce el legado por su cuenta -- que es lo que dice si esto es un
+        # caso raro o una perdida sistematica.
 
         id_cola = encolar_check_list(db, unidad, fila_id, cuerpo)
         encolar_historico_check_list(

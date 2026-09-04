@@ -18,7 +18,8 @@ RAIZ = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, RAIZ)
 os.environ.setdefault("SECRET_KEY", "prueba")
 
-from modulos.reconciliacion import avisar, correr        # noqa: E402
+from modulos.reconciliacion import (CATEGORIAS, ROTULOS, avisar,  # noqa: E402
+                                    correr)
 
 
 def main(argv=None):
@@ -32,18 +33,28 @@ def main(argv=None):
 
     print("reconciliacion del {}".format(r["corrida_en"]))
     print()
-    print("ESTADOS  (unidades que REGLA toco: {})".format(r["estados"]["unidades_miradas"]))
-    print("   de acuerdo                    : {:>6}".format(c["de_acuerdo"]))
-    print("   (1) REGLA adelante            : {:>6}   <- tiene que CAER con cada enlace".format(c["regla_adelante"]))
-    print("   (2) el sistema anterior adelante: {:>4}   <- trabajo de administracion".format(c["legado_adelante"]))
-    print("   (3) CONTRADICCION             : {:>6}   <- lo unico que se mira a mano".format(c["contradiccion"]))
-    if c["sin_arco"]:
-        print("   sin arco guardado             : {:>6}".format(c["sin_arco"]))
+    # LAS CATEGORIAS SE LEEN DE `ROTULOS`, no se escriben aca.
+    #
+    # Este bloque nombraba `de_acuerdo`, `regla_adelante`, `legado_adelante` y
+    # `contradiccion`, que son las de ANTES del cambio de arquitectura del
+    # 2026-08-27 -- cuando la reconciliacion comparaba dos verdades. Desde que
+    # le pregunta a la COLA son otras seis, asi que el script reventaba con
+    # KeyError: la reconciliacion diaria no corria.
+    #
+    # Es el mismo patron que ya nos mordio dos veces: la herramienta que mira
+    # si algo esta roto, rota. Y por eso ahora las categorias salen del mismo
+    # diccionario que las define -- si mañana se agrega una septima, aparece
+    # sola en vez de faltar en silencio.
+    print("ESTADOS  (unidades que REGLA toco: {})".format(
+        r["estados"]["unidades_miradas"]))
+    for clave in CATEGORIAS:
+        print("   {:<32}: {:>6}".format(ROTULOS.get(clave, clave),
+                                        c.get(clave, 0)))
+    for clave in sorted(k for k in c if k not in CATEGORIAS):
+        print("   {:<32}: {:>6}".format(ROTULOS.get(clave, clave), c[clave]))
 
-    for d in r["estados"]["contradicciones"][:10]:
-        print("      unidad {} ({}): anterior={!r} REGLA={!r} desde={!r} paso={}"
-              .format(d["unidad"], d["vin"], d["legado"], d["regla"],
-                      d["desde"], d["paso"]))
+    for d in r["estados"].get("trabadas", [])[:10]:
+        print("      {}".format(d))
 
     s = r["sin_registro"]
     print()
@@ -65,6 +76,25 @@ def main(argv=None):
     if not args.sin_correo:
         print()
         print("correo:", avisar(r))
+
+    d = r.get("danos_truncados") or {}
+    if d:
+        print()
+        print("DAÑOS CORTADOS  (las tres listas de check_list, tope {} chars)"
+              .format(d["tope"]))
+        print("   check lists mirados desde {}   : {:>6}".format(
+            d["desde"], d["miradas"]))
+        print("   con alguna columna EN EL TOPE  : {:>6}".format(d["en_el_tope"]))
+        print("   con las tres listas DESALINEADAS: {:>5}   <- la pieza n deja "
+              "de ir con su tipo".format(d["desalineadas"]))
+        print("   de esas, SIN explicar por el tope: {:>4}   <- estas se miran "
+              "de a una".format(d["sin_explicar"]))
+        for x in d.get("detalle", [])[:5]:
+            print("      check_list {} ({}): {} piezas / {} tipos / {} niveles{}"
+                  .format(x["id"], x["fecha"], x["piezas"], x["tipos"],
+                          x["niveles"],
+                          "" if x["toca_el_tope"] else "   <- NO toca el tope"))
+
     return 0
 
 
