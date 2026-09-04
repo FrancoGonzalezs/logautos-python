@@ -88,9 +88,18 @@ def crear_app():
 
     @app.route("/version")
     def version():
-        """Que esta sirviendo este proceso. Sin login: es la ruta que se mira
-        JUSTO CUANDO algo no anda, y pedir sesion para eso es pedirla en el peor
-        momento. No expone nada -- el commit ya es publico en GitHub."""
+        """Que esta sirviendo este proceso, y cuanto le queda de disco.
+
+        OJO: ESTE COMENTARIO DECIA "sin login" Y ERA FALSO. `version` no esta
+        en `acceso.LIBRES`, asi que el guardia la manda al login como a
+        cualquier otra. La intencion escrita era buena --es la ruta que se mira
+        JUSTO CUANDO algo no anda, y pedir sesion ahi es pedirla en el peor
+        momento-- pero nunca se implemento.
+
+        No se cambia por las buenas: abrir una ruta al publico es una decision
+        de superficie, no un detalle. Queda anotado para decidirlo.
+
+        Mientras tanto se lee con sesion, desde el navegador."""
         from core import commit_desplegado
         return {
             "commit": commit_desplegado(),
@@ -100,7 +109,45 @@ def crear_app():
                 "PUSH_LEGADO_ACTIVO") or "0 (apagado)",
             "legado": os.environ.get("LEGADO_BASE_URL")
                       or "https://claude.logautos.cl",
+            # EL VOLUMEN. Va aca y no en un script porque el numero que importa
+            # es el del CONTENEDOR, y desde afuera no hay forma de mirarlo:
+            # `/version` es lo unico que responde sin sesion.
+            #
+            # Existe desde el 2026-09-04, cuando hubo que decidir si las fotos
+            # de los cuatro modulos entran en el disco y el unico dato
+            # disponible era una medicion de septiembre hecha pensando solo en
+            # el IT. Un numero estimado no sirve para esa decision.
+            "volumen": _volumen(),
         }
+
+    def _volumen():
+        """Cuanto ocupa `uploads` y cuanto queda libre, en MB."""
+        import shutil
+        from core import DATA_DIR
+        salida = {"data_dir": DATA_DIR}
+        try:
+            uso = shutil.disk_usage(DATA_DIR)
+            salida["libre_mb"] = round(uso.free / 1024 / 1024, 1)
+            salida["total_mb"] = round(uso.total / 1024 / 1024, 1)
+        except Exception as e:                   # noqa: BLE001
+            salida["error_disco"] = "{}: {}".format(type(e).__name__, e)
+        subidas = os.path.join(DATA_DIR, "uploads")
+        try:
+            total = archivos = 0
+            for raiz, _dirs, nombres in os.walk(subidas):
+                for nombre in nombres:
+                    try:
+                        total += os.path.getsize(os.path.join(raiz, nombre))
+                        archivos += 1
+                    except OSError:
+                        pass
+            salida["uploads_mb"] = round(total / 1024 / 1024, 2)
+            salida["uploads_archivos"] = archivos
+            if archivos:
+                salida["uploads_promedio_kb"] = round(total / archivos / 1024, 1)
+        except Exception as e:                   # noqa: BLE001
+            salida["error_uploads"] = "{}: {}".format(type(e).__name__, e)
+        return salida
 
     @app.context_processor
     def contexto():

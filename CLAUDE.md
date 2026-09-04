@@ -1104,7 +1104,65 @@ De ahí `QUIEN_SIGUE`: la pantalla dice **«Esperando despacho — administraci�
 Si el estado **no** es de los reconocidos, la pantalla sigue diciendo que no hay
 paso definido — ahí la ausencia sí es rara y no hay que taparla.
 
-### 5d. Los destinatarios, con las dos condiciones### 5d. Los destinatarios, con las dos condiciones
+### 11. EL DISCO NO DA — frenado antes de escribir una URL en el legado
+
+**Se frena acá.** No se escribe ninguna URL de REGLA en `archivo1..archivo9`
+hasta resolver dónde viven las fotos, porque esas columnas son permanentes del
+otro lado: una URL que se rompe en seis meses rompe el PDF de un despacho que
+todavía no ocurrió.
+
+**El caudal de los cuatro módulos**, derivado del volumen real del legado
+(mayo–julio 2026, tres meses completos):
+
+| Módulo | Volumen | Fotos/mes |
+|---|---|---|
+| Check list de ingreso | 2.351 check lists, 20.457 daños + 3.892 generales | **8.116** |
+| Inspección de despacho | 2.483 inspecciones, 7,4 fotos c/u | **6.096** |
+| IT | 597 ingresos/mes × 6 | **3.584** |
+| Check list mecánico | 374 check lists, 1.510 fallas | **503** |
+| | | **18.300/mes** |
+
+**El tamaño de una foto, medido bajando fotos reales del legado** (n=24):
+**96 KB promedio**, mediana 101 KB, **máximo 201 KB**. Ésas están reducidas a
+1000 px por el `image_lib` del PHP. **Las de REGLA van a ser más grandes**: el
+reductor del navegador (`_reducir_fotos_js.html`) usa `LADO_MAX = 1600` y
+calidad 0,8 — 2,56× los píxeles, así que del orden de **200–250 KB**. Ese
+último número es derivado, no medido: no hay todavía fotos reales cargadas por
+REGLA para medir.
+
+**La cuenta:**
+
+| A | Por mes |
+|---|---|
+| 96 KB (tamaño del legado) | 1,7 GB |
+| 200 KB (REGLA, estimado bajo) | **3,5 GB** |
+| 250 KB (REGLA, estimado alto) | **4,4 GB** |
+
+Contra los **4,6 GB libres** que se midieron el 2026-09-02: **menos de un mes de
+autonomía**. Y aunque el volumen fuera de 20 GB serían ~5 meses, contra un p95
+de **137 días** de espera hasta el despacho. **No alcanza en ningún escenario
+razonable.**
+
+> **Y nada se borra nunca**, por decisión tomada el mismo día: las fotos son
+> permanentes por requisito y la suite lo afirma. O sea que esto no se estabiliza
+> — crece 3,5 GB por mes para siempre.
+
+**Por qué esto va ANTES del push y no después:** es la misma lección de decidir
+la clave antes de escribirla en todos lados. Si las fotos terminan en
+almacenamiento de objetos, la URL tiene que apuntar ahí **desde la primera**.
+
+**El instrumento quedó hecho:** `/version` reporta ahora `volumen` con el libre
+real del contenedor, lo que ocupa `uploads`, cuántos archivos y el promedio.
+Existe porque el único dato disponible para esta decisión era una medición de
+septiembre hecha pensando sólo en el IT, y un número estimado no sirve para
+decidir esto.
+
+> **`/version` PIDE LOGIN, y su comentario decía que no.** No está en
+> `acceso.LIBRES`. La intención escrita era buena —es la ruta que se mira justo
+> cuando algo no anda— pero nunca se implementó. **No se cambió por las buenas**:
+> abrir una ruta al público es una decisión de superficie. Queda para decidir.
+
+### 5d. Los destinatarios, con las dos condiciones
 
 Las **tres ramas en cero** (`Vega`, `REAL`, `Grass`) **no se migran**, pero la
 tabla cae al conjunto por defecto **y registra** cuando un destino no calza con
