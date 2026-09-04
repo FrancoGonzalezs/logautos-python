@@ -1175,7 +1175,7 @@ resolución y la de compresión se suman y en un rayón fino se nota el doble.
 | | **18.300** | **758 MB/mes** |
 
 **6,2 meses de autonomía** contra los 4,6 GB de Railway — contra **1,0 a 1,3**
-con los 1600 px de antes.
+con los 1600 px de antes. **Es un PISO, no un pronóstico**: cuando REGLA produzca sus primeras fotos reales hay que medir el promedio de verdad y volver sobre el número.
 
 > **El caveat del número:** las fuentes medidas son fotos del legado, ya
 > comprimidas y ya reducidas a ≤1000 px. Una foto de teléfono bajada a 800
@@ -1217,8 +1217,74 @@ subcarpeta por VIN bajo prefijo fijo— **rompe el lector 3**, que barre `danos/
 sin recursión, y **no arregla** 4/5/6, que buscan bajo `{motonave}/`. Es peor que
 A en todo.
 
-**No se elige acá.** Lo que sí queda dicho: B no es sólo para REGLA — es la única
-que deja la exportación masiva completa, y ese agujero ya existe.
+**Elegida B**, y el argumento que la cierra es de Franco y es mejor: ese 26% es
+de **hoy**, con los check lists repartidos entre los dos sistemas. **Durante el
+paralelo todos los usuarios de patio trabajan sólo en REGLA**, así que desde el
+primer día la masiva dejaría de ver el **100%** de los check lists nuevos. La
+ceguera no se queda en 26%: se vuelve total. Eso no es compartir un agujero
+existente, es **apagar una función que se usa**.
+
+#### Y B cambió dos veces al escribirla — las dos correcciones salieron de mirar
+
+**Primera:** iba a reemplazar `listarFotos()` para que devolviera objetos con
+`nombre` y `url`. **Mal**: sus dos consumidores arman la URL ellos mismos
+(`${baseURL}/${motonaveRuta}/${vin}/${encodeURIComponent(nombre)}`), así que
+cambiar la forma del JSON los rompe a los dos — y perder la propiedad *«si el
+agregado falla, devuelve lo mismo que hoy»* es perder la única razón por la que
+este cambio era barato.
+
+**Segunda:** iba a editar `procesarExportacionMasiva()`. **También mal: ese
+método no lo llama nadie.** Tiene ruta en `routes.php` y ninguna vista lo
+referencia. Es código muerto, y editarlo habría sido trabajo invisible.
+
+#### Quién exporta qué, medido sobre el menú y las vistas
+
+| Botón del menú | Vista | Fuente |
+|---|---|---|
+| EXPORTAR OT Y FOTOS | `exportar_ot_fotos` | `{motonave}/{vin}/` |
+| **EXPORTAR OT Y FOTOS (SIN MOTONAVE)** | `exportar_ot_fotos_new` | **`danos/` plana** |
+| EXPORTAR OT/FOTOS MASIVO | `exportar_ot_masivo` | `{motonave}/{vin}/` |
+| *(sin botón)* | — | `procesarExportacionMasiva`, **muerto** |
+
+**Lo individual ya estaba resuelto**: el segundo botón se llama literalmente
+«SIN MOTONAVE» y usa `listarFotosViejas`, que barre `danos/`. El legado ya tenía
+el problema y ya lo había resuelto con un botón aparte.
+
+**La masiva es la única sin salida** — y es la que importa.
+
+#### El bloque final: `scripts/Nota_php_lectura_fotos.php`, sin desplegar
+
+**Dos métodos NUEVOS y quince líneas de JS. Ningún método existente se
+reemplaza.**
+
+| # | Qué | Dónde |
+|---|---|---|
+| 1 | `_fotosDeVinEnDanos($vin)` — nuevo, `private` | Nota.php, antes de `_generarPdfOtServer` (línea 21837) |
+| 2 | `listarFotosTodas($m,$vin)` — nuevo, `public`, devuelve **URL completas** | ídem |
+| 3 | La ruta | `routes.php`, junto a las de las líneas 93–94 |
+| 4 | El fetch de la masiva | `views/nota/exportar_ot_masivo.php`, líneas 98–112 |
+
+**`listarFotos()` (19396–19404) no se toca**, así que el botón «EXPORTAR OT Y
+FOTOS» se comporta exactamente igual que hoy. Si algo falla, falla la masiva y
+nada más.
+
+**`glob` y no `scandir`**: `danos/` tiene del orden de **109.000 archivos**
+—contando las URL en `check_list.link`— y la masiva llama a esto **una vez por
+OT**. Recorrerlo en PHP serían medio millón de vueltas por un lote de cincuenta.
+
+**La comprobación de contenido es más fuerte esta vez**: un `Nota.php` sin la
+edición responde **404** a `listarFotosTodas`, no una lista vacía. Es la
+diferencia con los fallos mudos anteriores — acá lo que se agrega es un método
+nuevo, y su ausencia se ve.
+
+> **Nota.php NO lo tocó el despliegue del IT del 2026-09-02** — ése fue
+> Pedido.php (mtime 09-02, 5 referencias al IT nuevo; Nota.php mtime 08-20, cero).
+> El riesgo de editar sobre una copia vieja no aplica acá. Igual la verificación
+> previa está en el bloque, desde el navegador porque `nota/...` responde 307 al
+> login.
+
+**Los dos bloques —el endpoint de subida y estas lecturas— se despliegan JUNTOS**
+cuando Franco confirme que el disco del cPanel bajó.
 
 #### El endpoint de subida — `scripts/Api_regla_subir_foto.php`, sin desplegar
 
