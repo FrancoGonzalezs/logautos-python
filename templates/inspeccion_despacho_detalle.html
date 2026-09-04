@@ -59,7 +59,8 @@
     {# Una foto por envío, igual que el sistema anterior: cada una ocupa el
        siguiente slot libre de archivo1..archivo9. El tope no es una decisión
        de esta pantalla — la ficha tiene nueve columnas y no más. #}
-    {% if completo %}
+    {% if False %}{# el tope ya no cierra la carga: ver abajo #}
+      
       <p class="vacio">
         Ya están cargadas las {{ max_archivos }} fotos que admite la ficha.
       </p>
@@ -71,6 +72,45 @@
           <input type="file" name="imagen" accept="image/*" capture="environment">
         </label>
         <button type="submit" class="boton">Agregar foto</button>
+      </form>
+    {% endif %}
+  </section>
+
+  <section class="grupo">
+    <h2>Enviar al sistema anterior</h2>
+
+    {% if enviado_en %}
+      <div class="aviso aviso-bien">
+        <strong>Enviada</strong> el {{ enviado_en }}. La unidad quedó en
+        <strong>EN ESPERA CC ZD</strong>: el despacho lo hace administración.
+      </div>
+    {% else %}
+      {% if sobrantes %}
+        {# NO SE DESCARTA EN SILENCIO. El PDF del despacho arma su sección de
+           fotos con archivo1..archivo9; una décima llega igual al sistema
+           anterior --`link_unidad` acumula sin tope-- pero no aparece en el
+           PDF. El legado hace lo mismo y no lo dice. #}
+        <div class="aviso aviso-ojo">
+          Hay <strong>{{ cargadas }}</strong> fotos y el PDF del despacho
+          muestra <strong>{{ archivos_en_el_legado }}</strong>.
+          {{ sobrantes }} van a quedar fuera del PDF —las últimas—, aunque sí
+          se envían y quedan guardadas.
+        </div>
+      {% endif %}
+      <p class="pista">
+        Se envía una sola vez, con las fotos ya cargadas. El sistema anterior
+        no acepta agregarlas después, así que conviene revisar que estén todas.
+      </p>
+      <form method="post"
+            action="{{ url_for('inspeccion_despacho.enviar', id_inspeccion=i['id']) }}">
+        <button type="submit" class="boton btn-principal"
+                {% if not fotos %}disabled{% endif %}>
+          Enviar inspección
+        </button>
+        {% if not fotos %}
+          <p class="pista">Falta al menos una foto: el PDF del despacho las
+            necesita.</p>
+        {% endif %}
       </form>
     {% endif %}
   </section>

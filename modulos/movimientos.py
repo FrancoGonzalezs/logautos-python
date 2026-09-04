@@ -343,7 +343,42 @@ RECONOCIDOS_SIN_RUTA = {
                           "unidad de lugar.",
     "CC PDI": "Control de calidad de la PDI.",
     "IT FALTA SEGUNDA PDI": "La unidad necesita una segunda PDI.",
+    # Lo escribe la INSPECCION DE DESPACHO, y es el primero de esta lista que
+    # ORIGINA REGLA en vez de sólo mostrarlo. Ver la nota de abajo.
+    "EN ESPERA CC ZD": "Inspección de despacho hecha. Espera el despacho, que "
+                       "lo hace administración en el sistema anterior.",
 }
+
+# LO QUE SIGUE DESPUES DE UN RECONOCIDO SIN RUTA, para que la pantalla no quede
+# muda.
+#
+# HASTA AHORA ESTOS ESTADOS LOS ORIGINABA EL LEGADO y REGLA sólo los mostraba:
+# una unidad aparecía en `CC PDI` porque alguien la puso ahí del otro lado, y
+# que el motor no tuviera pasos que sugerir era coherente -- REGLA no había
+# hecho nada.
+#
+# `EN ESPERA CC ZD` es distinto y por eso esta tabla existe: lo escribe REGLA.
+# Un movilizador termina la inspección de despacho en la pantalla nuestra y la
+# unidad queda parada en un estado donde el motor no tiene nada que ofrecerle.
+# Una lista de pasos vacía justo después de confirmar se lee como que la
+# pantalla se rompió, no como que el trabajo terminó.
+#
+# Así que el estado trae su propia frase sobre quién sigue. No es decoración:
+# es la diferencia entre "terminaste" y "algo falló".
+QUIEN_SIGUE = {
+    "EN ESPERA CC ZD": "Esperando despacho — administración",
+    "SOLICITUD DESPACHO": "Esperando que se despache",
+    "CC PDI": "Esperando control de calidad de la PDI",
+    "IT FALTA SEGUNDA PDI": "Esperando la segunda PDI",
+}
+
+
+def quien_sigue(estado):
+    """La frase que la pantalla muestra cuando no hay pasos que sugerir.
+
+    Devuelve None si el estado no es de los reconocidos sin ruta -- ahí la
+    ausencia de pasos SÍ es algo raro y no hay que taparla con un cartel."""
+    return QUIEN_SIGUE.get(normalizar_estado(estado))
 
 
 def conocido(estado):
@@ -1610,6 +1645,10 @@ def unidad(id_unidad):
 
     return render_template(
         "movimientos_unidad.html",
+        # La frase de "quien sigue" cuando el motor no tiene pasos. Va None
+        # para los estados donde la ausencia de pasos SI es rara: ahi la
+        # pantalla tiene que seguir diciendo que no hay paso definido.
+        quien_sigue=quien_sigue(estado_fisico(fila)),
         u=fila, recomendado=recomendado, otros=otros,
         estado=estado,
         estado_fisico=fisico, perfil=perfil, perfil_supuesto=supuesto,

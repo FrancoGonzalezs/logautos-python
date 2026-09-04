@@ -179,6 +179,23 @@
         </details>
       {% endif %}
     </section>
+  {% elif quien_sigue %}
+    {# LA UNIDAD ESTA ESPERANDO A OTRO, Y ESO NO ES UNA FALLA.
+
+       Hasta la inspeccion de despacho, todos los estados sin ruta los
+       originaba el sistema anterior: REGLA no habia hecho nada y una lista de
+       pasos vacia era coherente. `EN ESPERA CC ZD` lo escribe REGLA, y el
+       movilizador llega aca JUSTO DESPUES de confirmar su trabajo. El cartel
+       generico de abajo --"no hay paso siguiente definido"-- se lee como que
+       la pantalla se rompio. #}
+    <div class="aviso aviso-bien">
+      <strong>{{ quien_sigue }}.</strong>
+      La inspección quedó registrada y ya viajó al sistema anterior. El
+      siguiente paso no lo hace el patio.
+      <br>
+      Se puede registrar otro paso igual desde <strong>Registrar otro
+      paso</strong>, indicando el motivo.
+    </div>
   {% else %}
     <div class="aviso">
       No hay paso siguiente definido para <strong>{{ estado_fisico }}</strong>

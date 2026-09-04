@@ -290,6 +290,23 @@ ENTIDADES = {
         "tabla_espejo": "stock_consumibles",
         "ruta": "stock_consumibles/{id}/descontar",
     },
+    # La INSPECCION DE DESPACHO: la fila nueva en `inspeccion_despacho`.
+    "inspeccion_despacho": {
+        "tabla_origen": "inspeccion_despacho_regla",
+        "tabla_espejo": "newstocks_cidef",
+        "ruta": "inspeccion_despacho",
+        "manda_conocido": False,
+        "guarda_id_en": ("inspeccion_despacho_regla", "legado_id"),
+    },
+    # Y las TRES columnas que escribe en la unidad. `patio` se agrego a la
+    # lista blanca del legado el 2026-09-04 justamente para esto: sin ella el
+    # push movia `calle` y `despachado` y dejaba el patio viejo, con 200 y cola
+    # resuelta.
+    "inspeccion_despacho_unidad": {
+        "tabla_origen": "inspeccion_despacho_regla",
+        "tabla_espejo": "newstocks_cidef",
+        "ruta": "unidades",
+    },
     # El check list de INGRESO: la fila nueva en `check_list`.
     #
     # Misma forma que `check_list_mecanica`: `crear`, sin locking -- la fila es
@@ -1206,6 +1223,83 @@ def historico_check_list(fila):
         "fecha_lavado_produccion": hoy,
         "tapiz": None,
     }
+
+
+# ---------------------------------------------------------------------------
+# La inspeccion de despacho
+# ---------------------------------------------------------------------------
+
+# Las 28 columnas de la lista blanca de `inspeccion_despacho` (bloque P1).
+COLUMNAS_INSPECCION = (
+    "vin", "patente", "guia_despacho", "cliente", "destino", "fecha_despacho",
+    "marca", "modelo", "color", "encargado", "estanque", "kilometraje",
+    "fecha_entrega", "fecha_completa", "llaves", "faltante", "observaciones",
+    "link_unidad", "contador",
+    "archivo1", "archivo2", "archivo3", "archivo4", "archivo5",
+    "archivo6", "archivo7", "archivo8", "archivo9",
+)
+
+# Lo que `Nota.php:inspeccion_despacho()` le escribe a la unidad, con su
+# `actualizar_vin` unico. Los tres son LITERALES en el PHP: no salen de ningun
+# formulario, asi que aca tambien son constantes y no parametros.
+#
+#     $p = 'PATIO 2';  $c = 'IT';  $e = 'EN ESPERA CC ZD';
+ESTADO_TRAS_INSPECCION = "EN ESPERA CC ZD"
+PATIO_TRAS_INSPECCION = "PATIO 2"
+CALLE_TRAS_INSPECCION = "IT"
+
+
+def campos_inspeccion(unidad, fila, campos_fotos):
+    """El cuerpo del POST. `campos_fotos` viene de `aplanar_para_push`.
+
+    Las fotos NO salen de la fila: salen de la tabla de fotos, aplanadas
+    recien aca. Ver `inspeccion_despacho.aplanar_para_push` -- el tope de
+    nueve es del cable, no del modelo."""
+    cuerpo = {}
+    for columna in COLUMNAS_INSPECCION:
+        if columna in campos_fotos:
+            cuerpo[columna] = campos_fotos[columna]
+            continue
+        try:
+            cuerpo[columna] = fila[columna]
+        except (IndexError, KeyError):
+            cuerpo[columna] = None
+    cuerpo["vin"] = unidad["vin"]
+    return cuerpo
+
+
+def encolar_inspeccion(db, unidad, fila_id, campos):
+    """La fila nueva en `inspeccion_despacho`."""
+    legado_id = unidad["id"]
+    db.execute("UPDATE newstocks_cidef SET push_pendiente = 1 WHERE id = ?",
+               (legado_id,))
+    return encolar_push(
+        db, "inspeccion_despacho",
+        python_id=fila_id, legado_id=legado_id,
+        operacion="crear", campos=campos,
+        legado_updated_at_conocido=(unidad["updated_at"] or ""),
+        requiere_unidad=0)
+
+
+def encolar_estado_inspeccion(db, unidad, fila_id, depende_de):
+    """Las TRES columnas de la unidad, despues de que la fila entre.
+
+    Mismo orden asimetrico que el check list: si entra la fila y falla esto, la
+    inspeccion existe y la unidad todavia no lo dice -- se reintenta. Al reves,
+    la unidad diria `EN ESPERA CC ZD` sin que exista ninguna inspeccion, y esa
+    es la mitad que no se nota."""
+    legado_id = unidad["id"]
+    db.execute("UPDATE newstocks_cidef SET push_pendiente = 1 WHERE id = ?",
+               (legado_id,))
+    return encolar_push(
+        db, "inspeccion_despacho_unidad",
+        python_id=fila_id, legado_id=legado_id,
+        operacion="actualizar",
+        campos={"patio": PATIO_TRAS_INSPECCION,
+                "calle": CALLE_TRAS_INSPECCION,
+                "despachado": ESTADO_TRAS_INSPECCION},
+        legado_updated_at_conocido=(unidad["updated_at"] or ""),
+        requiere_unidad=0, depende_de=depende_de)
 
 
 def encolar_check_list(db, unidad, fila_id, campos):
