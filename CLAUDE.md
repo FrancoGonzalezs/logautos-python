@@ -396,48 +396,70 @@ Ida y vuelta automática entre Railway y `claude.logautos.cl` desde el
 | `check_mecanica_unidad` | actualizar | `PUT /api_regla/unidades/{id}` | ídem, con `fecha_check_list_mecanica` en la lista blanca (bloque H) |
 | `check_list` (ingreso) | crear | `POST /api_regla/check_list` | **el PHP está desplegado y Python NO la tiene** — ver pendiente 9 |
 
-**El push real del mecánico corrió el 2026-09-02.** Dos de los tres criterios
-verificados contra el endpoint real; falta uno, y falta **un método de PHP**.
+**El push real del mecánico está VERIFICADO contra el endpoint real** — 2026-09-04,
+unidad 66505 de PRUEBA, fila `check_list_mecanica.id = 2964`.
 
-| Criterio | Estado |
+| Criterio | Resultado |
 |---|---|
-| A. las 82 columnas, `ignoradas` vacío | ✅ verificado |
-| B. dos fallas acumuladas, tres listas alineadas | ❌ se pisan: queda sólo la última |
-| C. `contador` = 2, sumado del lado del servidor | ✅ verificado |
+| A. las 82 columnas, `ignoradas` vacío | ✅ `(ninguna)` |
+| B. dos fallas en dos vueltas separadas, tres listas alineadas | ✅ `EXTINTOR VENCIDO \| TAPIZ MANCHADO` / `LEVE \| GRAVE` / dos URLs |
+| C. `contador` = 2, sumado del lado del servidor | ✅ `2` |
 
-**Falta el bloque O.** `columnas_que_acumulan` desplegado es el del bloque J —
-tiene la clave `unidades` y nada más. El bloque K lo reemplazaba con las dos
-claves y no llegó. Medido, sin deducir de la spec:
+Los bloques G–L quedan probados. Costó cuatro defectos, y ninguno lo podía ver el
+legado simulado:
 
-| Entidad · columna | Verbo real |
-|---|---|
-| `unidades` · `observaciones` | acumula (creció 16 chars) |
-| `check_list_mecanica_falla` · `contador` | suma (0 → 2) |
-| `check_list_mecanica_falla` · `observacion` | **se pisa** |
+| | Qué | Cómo se encontró |
+|---|---|---|
+| `qb_set` | `protected` en CI3 → fatal 500 cuando `$cambios` queda vacío, que es siempre en el paso 2 | el 500 del primer push real |
+| `updated_at` | se estampaba en tablas que no lo tienen | `SHOW COLUMNS` (cero filas) + `Unknown column 'updated_at' in 'SET'` |
+| `legado_updated_at_conocido` | contaba como columna ignorada y arruinaba el único indicador de silencio | `ignoradas` no venía vacío |
+| `columnas_que_acumulan` | quedó la versión vieja: las tres listas se pisaban | tres pedidos midiendo el verbo real de cada columna |
 
-Los dos primeros prueban que el bucle del bloque K está entero: `contador` sólo
-puede sumar por la rama `$suman`, `observaciones` sólo puede crecer por la rama
-`$acumulan`, y las dos viven en el mismo `foreach`. Queda una sola explicación.
-
-**Y el modo de falla es el peor de los dos posibles.** El bloque K avisaba que
-pegar los dos `columnas_que_acumulan` da `Cannot redeclare` — un fatal que se ve
-al toque. Lo que pasó fue lo contrario: quedó el viejo, **sin ningún error**. El
-endpoint responde 200, la cola marca resuelta, y la columna se pisa en silencio.
-Es la lista blanca otra vez, con otro disfraz. (`columnas_que_suman` funcionó
-porque es un método nuevo: no tenía versión previa con la que competir.)
-
-**Ya arreglado y desplegado antes de esto:** el `qb_set` del bloque J, y el
-`updated_at` que se estampaba en tablas que no lo tienen — confirmado con
-`SHOW COLUMNS` (cero filas) y el log (`Unknown column 'updated_at' in 'SET'`),
-que además descartó al `CASE`/`CONCAT` del bloque K como causa.
-
-**En producción quedan cuatro filas huérfanas** en `check_list_mecanica` —
-2960 a 2963 — todas de la unidad 66505 de PRUEBA. Y en `observaciones` de esa
-unidad quedó `SONDA-ACUMULA-1`, de la medición de arriba: esa columna es
-acumulativa por construcción, así que **no se puede sacar por la API**. Todo se
+**Lo que quedó en producción:** cinco filas en `check_list_mecanica` (2960–2964)
+de la unidad 66505 de PRUEBA, y `SONDA-ACUMULA-1` pegado en su `observaciones`
+—columna acumulativa por construcción, no se puede sacar por la API—. Todo se
 descarta en el corte.
 
-### Un bloque es una unidad de despliegue, no una unidad de verdad
+### La verificación de sintaxis no ve el archivo equivocado
+
+**Es la lección de la jornada, y la tuvimos dos veces.**
+
+El bloque K avisaba de un riesgo **RUIDOSO**: pegar dos `columnas_que_acumulan`
+da `Cannot redeclare` y se caen todas las rutas, como ya había pasado con
+`columnas_permitidas`. Lo que ocurrió fue el **MUDO**: al ensamblar el archivo,
+el script tomó la PRIMERA ocurrencia del método por nombre —la del bloque J— y
+la de K quedó afuera. Quedó el viejo.
+
+Y el sistema entero dijo que estaba todo bien:
+
+| Verificación | Dijo |
+|---|---|
+| `php -l` | limpio |
+| `grep "function [a-z_]*" \| uniq -d` | sin duplicados |
+| las cuatro sondas | 401 correcto |
+| el push | 200, cola resuelta |
+
+**Ninguna podía verlo, porque todas comprueban que el archivo esté SANO, no que
+sea el CORRECTO.** Un archivo con el método viejo está perfectamente sano.
+
+> **Cuando un bloque REEMPLAZA algo ya desplegado, la comprobación no puede ser
+> «no hay duplicados»: tiene que mirar el CONTENIDO del que quedó.** Sintaxis y
+> unicidad detectan el fallo ruidoso; sólo el contenido detecta el mudo. Todo
+> bloque que reemplace algo desplegado trae su `grep` de contenido, no sólo el
+> de sintaxis:
+>
+> ```
+> grep -A6 "function columnas_que_acumulan" .../Api_regla.php
+> ```
+>
+> Si no aparece `check_list_mecanica_falla`, quedó el viejo — y no hay ningún
+> otro síntoma.
+
+Es el mismo modo de falla que la lista blanca que ignora en silencio, una capa
+más arriba: allá se pierde una columna del cuerpo, acá se pierde un método
+entero del despliegue. En los dos casos la respuesta es 200.
+
+### Un bloque es una unidad de despliegue, no una unidad de verdad### Un bloque es una unidad de despliegue, no una unidad de verdad
 
 Dos veces en el mismo día un bloque se aplicó o se retiró a medias:
 

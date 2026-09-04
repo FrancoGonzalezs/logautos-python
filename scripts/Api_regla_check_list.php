@@ -16,6 +16,19 @@
  *     grep -o "function [a-z_]*" .../Api_regla.php | sort | uniq -d   -> vacio
  *     grep -c "<?php" .../Api_regla.php                               -> 1
  *
+ * ESOS TRES COMPRUEBAN QUE EL ARCHIVO ESTE SANO. NO comprueban que sea el
+ * correcto, y la diferencia costo medio dia el 2026-09-04: al ensamblar, la
+ * version vieja de `columnas_que_acumulan` se quedo en lugar de la nueva. `php
+ * -l` limpio, cero duplicados, las sondas en 401 y el push en 200 -- y las tres
+ * listas de fallas pisandose en silencio.
+ *
+ * Un archivo con el metodo viejo esta perfectamente sano.
+ *
+ * POR ESO: todo bloque que REEMPLACE algo ya desplegado trae, arriba de todo,
+ * su propia comprobacion DE CONTENIDO -- un grep que busque algo que solo la
+ * version nueva tiene. La de sintaxis detecta el fallo ruidoso; solo la de
+ * contenido detecta el mudo.
+ *
  *
  * LO QUE ESTE ARCHIVO **NO** CUBRE, Y POR QUE
  * ===========================================
