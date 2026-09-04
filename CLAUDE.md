@@ -993,70 +993,118 @@ fecha de entrega que no sabe nada de ninguna entrega. **No se arreglan acá.**
 recibe el texto libre que en `check_list_regla` se llama `observaciones`. La
 misma palabra significa una cosa de un lado y otra del otro.
 
-### 10. Inspección de despacho — investigado, BLOQUEADO en el despliegue
+### 10. Inspección de despacho — construida, PHP desplegado el 2026-09-04
 
-**Estado del despliegue, medido por HTTP el 2026-09-04** (Franco no tiene
-Terminal en cPanel, así que las comprobaciones van por sondas):
+Las tres sondas verdes (401 / `no existe inspeccion_despacho 999999999` / 31
+columnas con `patio`) y la fila mínima entró: **`inspeccion_despacho.id = 16408`**.
 
-| Sonda | Resultado | Qué dice |
+**Lo que el módulo hace** (`Nota.php:inspeccion_despacho()`, 486 líneas): escribe
+la fila; hace **un** `actualizar_vin` con `patio='PATIO 2'`, `calle='IT'`,
+`despachado='EN ESPERA CC ZD'` —los tres literales—; `registromov` **cero veces**
+→ `empuja_movimiento=False`; **no crea OT**; y manda un correo **sin PDF**,
+ramificado por `$cliente` y, dentro de CIDEF, por 13 `strstr` sobre `$destino`.
+
+**El PDF con fotos no sale acá.** Sale en el DESPACHO: `Pedido.php:2130`, dentro
+de `inicio_proces()`, llama a `generarPdfInspeccion()` (`Pedido.php:1463`), que
+lee `archivo1..archivo9` y por cada una llama a `descargarImagenComoDataUri()`
+(`Pedido.php:1396`). **Ese cargador no se tocó**: ya detecta URLs absolutas — el
+`base_url()` está dentro del ternario, en la rama de la ruta relativa.
+
+#### El envío es un acto aparte, y es mejor que el original
+
+El legado inserta la fila al confirmar y después le pega las fotos con UPDATE.
+REGLA manda la fila **una sola vez, completa**, con un botón que el legado no
+tiene. No es una concesión al endpoint desplegado: **ese estado intermedio del
+legado es el peligroso**, porque una fila sin fotos es la que el PDF del despacho
+renderiza con la sección vacía — el bug de agosto — y el legado tiene esa ventana
+abierta hoy.
+
+**La ventana no es teórica, es 1 a 2% por mes.** Inspecciones sin ninguna foto
+(`archivo1` vacío, que coincide exactamente con `contador = 0`):
+
+| Mes | Sin fotos | De |
 |---|---|---|
-| POST sin clave | 401 | **la ruta resuelve** y llega a `exigir_api_key` |
-| POST con clave | `entidad no soportada para crear: inspeccion_despacho` | `crear_fila` corre y **no la encuentra en el mapa** |
-| GET con clave | `entidad no soportada para leer: inspeccion_despacho` | ídem `leer_fila` |
-| `GET check_list/999999999` | `no existe check_list 999999999` | contraste: ésa **sí** está en el mapa |
-| `permitidos` | **30 columnas, sin `patio`** | la entrada `unidades` tampoco se tocó |
+| 2026-06 | 16 | 892 (1,8%) |
+| 2026-07 | 6 | 735 (0,8%) |
+| 2026-08 | 4 | 272 (1,5%) |
 
-**Las dos rutas están; `mapa_entidades()` quedó en la versión vieja.** Los dos
-cambios que faltan son exactamente los dos que viven adentro de ese método. Es la
-tercera vez que un método ya existente se actualiza a medias sin ningún error.
+Entre 4 y 17 por mes, sostenido. Cada una es un PDF que llegó al cliente con la
+sección de fotos vacía. **No se pide la ruta PUT.**
 
-**Lo que el módulo hace** (`Nota.php:inspeccion_despacho()`, 486 líneas):
+#### El acoplamiento nuevo: un documento del cliente depende de REGLA
 
-- escribe la fila en `inspeccion_despacho` (29 columnas, `id` no viaja);
-- hace **un** `actualizar_vin` con `patio='PATIO 2'`, `calle='IT'`,
-  `despachado='EN ESPERA CC ZD'` — los tres literales, no salen del formulario;
-- `registromov` **cero veces** → va con `empuja_movimiento=False`, mismo criterio
-  que el IT y que los dos check lists;
-- **no crea OT**;
-- manda un correo **sin PDF** (los `addAttachment` están comentados), ramificado
-  por `$cliente` y, dentro de CIDEF, por 13 `strstr` sobre `$destino`.
+**Es la primera vez que algo que sale a un tercero depende del sistema nuevo.**
+Las URL con token viven en `archivo1..archivo9` del legado, y el legado las
+descarga **recién en el despacho, otro día**.
 
-**El PDF con fotos no sale acá.** Sale en el DESPACHO, que es otra pantalla de
-otro controlador: `Pedido.php:2130`, dentro de `inicio_proces()`, llama a
-`generarPdfInspeccion()` (`Pedido.php:1463`), que lee `archivo1..archivo9` y por
-cada una llama a `descargarImagenComoDataUri()` (`Pedido.php:1396`).
+Cuánto después, medido sobre 8.953 pares inspección→despacho de los últimos 12
+meses:
 
-**Ese cargador NO hay que tocarlo.** Ya detecta URLs absolutas: arranca con
-`$esUrlAbsoluta = stripos(...'http://')...` y el `base_url()` está **dentro del
-ternario**, en la rama de la ruta relativa. Verificado leyendo el archivo, no la
-spec — que es lo que falló con el bloque M1.
+| | |
+|---|---|
+| el mismo día | **81%** |
+| dentro de 7 días | 85% |
+| p90 | 41 días |
+| p95 | 137 días |
+| máximo | 336 días |
 
-**`EN ESPERA CC ZD`: REGLA NO lo modela.** No está en `CALLE_POR_ESTADO`, ni en
-`PATIO_POR_ESTADO`, ni en `SIN_CALLE`; ningún paso lleva a él; `calle_para()` y
-`patio_para()` devuelven `None`. En el dato: **0 unidades** en ese estado hoy, **0
-filas** en `registros.estado` (coherente: `registromov` cero veces) y **2** en
-`registros.newestado` — o sea dos movimientos que *salieron* de él, los dos a
-`DESPACHADO`. Existe y las unidades lo atraviesan rápido. **Hay que decidirlo
-antes de empujarlo**: si REGLA lo origina sin modelarlo, produce un estado que su
-propio motor no sabe enrutar.
+*(El emparejamiento es por VIN contra `newstocks_cidef.fecha_desp`, así que la
+cola larga puede estar inflada por reingresos — la regla de la frontera. El 81%
+del mismo día no depende de eso.)*
 
-**El correo lo manda REGLA**, en el mismo guardado, como el legado — decidido el
-2026-09-04. Las otras dos opciones se descartaron: si no sale, el que se queda
-sin información es el **destino**, que está fuera de la empresa, y sería la
-primera divergencia que ve un tercero; si lo dispara administración, le agregamos
-un paso manual a algo que hoy es automático.
+**Las consecuencias, que no hay que arreglar pero sí tener anotadas:**
 
-Confirmado leyendo el código: `Nota_model::actualizar_vin()` es un `update()`
-pelado del query builder, sin hook ni trigger. **El push no dispara el correo del
-legado.** Sólo habría duplicado si una persona hiciera la inspección dos veces.
+1. **Los tokens no vencen y nada los borra.** Verificado leyendo
+   `modulos/fotos_publicas.py`: no hay TTL, ni `expira`, ni `timedelta`, ni un
+   solo `DELETE FROM fotos_publicadas` en todo el código de la aplicación.
+   `ver()` resuelve el token contra la tabla y sirve el archivo, sin mirar
+   fechas. **Es permanente por construcción** — y desde ahora eso es un
+   requisito, no una casualidad: `probar_check_list_mecanica.py` lo afirma por
+   código, así que agregar un TTL o una limpieza rompe la suite.
+2. **El correo al cliente depende de que REGLA esté arriba en el momento del
+   despacho**, que puede ser dentro de un año. Cada despliegue a Railway es una
+   ventana chica; si cae justo ahí, el PDF sale con «No se pudo cargar la
+   imagen» y la URL impresa —el legado ya lo hace así, para poder diagnosticar—.
+3. **Y depende del volumen de Railway.** Si alguien limpia `DATA_DIR`, los PDF
+   de los despachos futuros pierden sus fotos. No hay copia del otro lado: el
+   legado guarda la URL, no el archivo.
 
-**Fotos:** el contador llega a 9 y **nunca pasó de 9** en 16.365 filas; el 24% usa
-las nueve. Una décima entraría en `link_unidad` —que acumula sin tope— y en
-ningún `archivoN`: no se pierde, se vuelve invisible para el PDF. Del lado de
-REGLA se modelan en tabla propia **sin tope**, y el aplanado a `archivo1..9` al
-empujar tiene que **decir cuál quedó afuera**.
+#### El tope de nueve es del cable, no del modelo
 
-### 5d. Los destinatarios, con las dos condiciones
+Las fotos viven en `inspeccion_despacho_fotos_regla`, una por fila, **sin
+límite**. El aplanado a `archivo1..archivo9` pasa recién al empujar y
+`aplanar_para_push` devuelve `sobrantes` con las que no entraron; la pantalla lo
+dice antes de enviar. `link_unidad` va con **todas**, así que la foto once llega
+igual al legado: lo que no llega es a la sección de fotos del PDF.
+
+**`contador` lleva el número real, no la cantidad de slots.** Con once fotos va
+11. Es lo que hace el legado —su `_proces()` guarda `'contador'=>$cont` siempre,
+y la cadena de `elseif` sólo decide a qué `archivoN` va la foto— y no rompe nada
+porque **nadie lo lee para recorrer los archivos**: el único lector es
+`getcont_insp_desp` (`Nota_model:2994`), llamado desde el propio paso de subida
+para elegir el slot siguiente. `generarPdfInspeccion` **no lo usa**: recorre los
+nueve campos y descarta vacíos. Poner 9 con once fotos haría que la columna
+conteste «cuántos slots se llenaron» cuando su nombre pregunta «cuántas fotos
+hay» — la Regla 0 en chico.
+
+#### `EN ESPERA CC ZD` entra en `RECONOCIDOS_SIN_RUTA`, con una condición nueva
+
+El dato lo justifica: **0 filas** en `registros.estado` —coherente con
+`registromov` cero veces— y **2** en `registros.newestado`, o sea que el único
+rastro que deja es el movimiento que *sale* de él, los dos a `DESPACHADO`. Es una
+marca de paso, la misma especie que `SOLICITUD DESPACHO`.
+
+**Pero es el primero de esa lista que ORIGINA REGLA.** Hasta ahora esos estados
+los ponía el legado y REGLA sólo los mostraba: una lista de pasos vacía era
+coherente porque REGLA no había hecho nada. Acá el movilizador llega **justo
+después de confirmar su trabajo**, y el cartel genérico —«no hay paso siguiente
+definido»— se lee como que la pantalla se rompió.
+
+De ahí `QUIEN_SIGUE`: la pantalla dice **«Esperando despacho — administración»**.
+Si el estado **no** es de los reconocidos, la pantalla sigue diciendo que no hay
+paso definido — ahí la ausencia sí es rara y no hay que taparla.
+
+### 5d. Los destinatarios, con las dos condiciones### 5d. Los destinatarios, con las dos condiciones
 
 Las **tres ramas en cero** (`Vega`, `REAL`, `Grass`) **no se migran**, pero la
 tabla cae al conjunto por defecto **y registra** cuando un destino no calza con

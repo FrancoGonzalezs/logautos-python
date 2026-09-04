@@ -202,6 +202,35 @@ def probar_ruta_publica(app):
     r = cliente.get("/f/" + "z" * len(token))
     afirmar(r.status_code == 404, "un token inventado da 404")
 
+    # -- LA PERMANENCIA, que ahora es un requisito y no una casualidad -------
+    #
+    # Desde la inspeccion de despacho, estas URL viven en `archivo1..archivo9`
+    # del legado y el legado las descarga RECIEN EN EL DESPACHO -- que en el
+    # 81% de los casos es el mismo dia, pero tiene cola larga. O sea que un
+    # documento que ve el CLIENTE depende de que estas URL sigan andando
+    # semanas despues.
+    #
+    # Asi que "no vencen" dejo de ser un detalle de implementacion y paso a
+    # ser una propiedad que hay que defender. Se afirma por codigo: si alguien
+    # agrega un TTL o una limpieza, esto se cae.
+    import inspect as _inspect
+    fuente = _inspect.getsource(fotos_publicas)
+    afirmar(not any(p in fuente for p in ("expira", "vence", "caduc", "ttl",
+                                          "TTL", "timedelta")),
+            "los tokens NO vencen -- ni TTL ni caducidad en el modulo")
+    afirmar("DELETE FROM fotos_publicadas" not in fuente
+            and "delete from fotos_publicadas" not in fuente.lower(),
+            "y el modulo no borra publicaciones")
+    # Y que siga sirviendo con una fecha de publicacion vieja.
+    with app.test_request_context():
+        from core import get_db
+        get_db().execute("UPDATE fotos_publicadas SET publicada_en = ? "
+                         " WHERE token = ?", ("2020-01-01 00:00:00", token))
+        get_db().commit()
+    r = cliente.get(ruta)
+    afirmar(r.status_code == 200,
+            "una foto publicada hace anos se sigue sirviendo")
+
     # Lo que decide el diseno: el archivo privado EXISTE, en la misma carpeta,
     # y no hay forma de pedirlo por esta ruta porque no hay token que lo
     # nombre. Si la ruta resolviera por ruta de archivo, saldria igual.

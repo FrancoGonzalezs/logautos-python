@@ -272,7 +272,25 @@ def aplanar_para_push(fotos):
             campos["archivo{}".format(i)] = url
         else:
             sobrantes.append((orden, url))
-    campos["contador"] = min(len(fotos), ARCHIVOS_EN_EL_LEGADO)
+    # `contador` LLEVA EL NUMERO REAL, no la cantidad de slots que se
+    # llenaron. Con once fotos va 11, aunque solo nueve entren en `archivoN`.
+    #
+    # No es una eleccion de estilo: es lo que hace el legado. Su
+    # `_proces()` calcula `$cont = getcont_insp_desp($id) + 1` y guarda
+    # `'contador'=>$cont` SIEMPRE -- la cadena de `elseif` decide a que
+    # `archivoN` va la foto, pero no toca el contador. Con la decima habria
+    # guardado 10.
+    #
+    # Y no rompe nada, porque NADIE lo lee para recorrer los archivos.
+    # Verificado: el unico lector es `getcont_insp_desp` (Nota_model:2994),
+    # llamado desde el propio paso de subida (Nota.php:17332) para elegir el
+    # slot siguiente. `generarPdfInspeccion` NO lo usa: recorre los nueve
+    # campos fijos y descarta los vacios.
+    #
+    # Poner 9 con once fotos haria que la columna conteste "cuantos slots se
+    # llenaron" cuando su nombre pregunta "cuantas fotos hay". Es la Regla 0
+    # en chico: una columna que contesta otra pregunta que la que aparenta.
+    campos["contador"] = len(fotos)
     campos["link_unidad"] = " | ".join(urls)
     return campos, sobrantes
 
