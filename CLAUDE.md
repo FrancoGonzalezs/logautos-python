@@ -396,31 +396,64 @@ Ida y vuelta automática entre Railway y `claude.logautos.cl` desde el
 | `check_mecanica_unidad` | actualizar | `PUT /api_regla/unidades/{id}` | ídem, con `fecha_check_list_mecanica` en la lista blanca (bloque H) |
 | `check_list` (ingreso) | crear | `POST /api_regla/check_list` | **el PHP está desplegado y Python NO la tiene** — ver pendiente 9 |
 
-**El push real del mecánico corrió el 2026-09-02.** El paso 1 anda contra
-producción; el paso 2 todavía no. Estado por criterio:
+**El push real del mecánico corrió el 2026-09-02.** Dos de los tres criterios
+verificados contra el endpoint real; falta uno, y falta **un método de PHP**.
 
 | Criterio | Estado |
 |---|---|
-| A. las 82 columnas, `ignoradas` vacío | ✅ **verificado** contra el endpoint real |
-| B. dos fallas acumuladas, tres listas alineadas | ❌ el PUT devuelve 500 |
-| C. `contador` = 2 | ❌ ídem |
+| A. las 82 columnas, `ignoradas` vacío | ✅ verificado |
+| B. dos fallas acumuladas, tres listas alineadas | ❌ se pisan: queda sólo la última |
+| C. `contador` = 2, sumado del lado del servidor | ✅ verificado |
 
-**Falta una línea de PHP: el bloque N.** `actualizar()` hace
-`$cambios['updated_at'] = $ahora` siempre, y `check_list_mecanica` no tiene esa
-columna (`check_list` tampoco; `newstocks_cidef` sí, y era la única entidad que
-existía cuando esa línea se escribió). Medido con tres pedidos sobre la misma
-fila: `{"contador":1}` → 500, `{"observacion":"X"}` → 500, `{"estado":"ABIERTO"}`
-→ 400 correcto. Las dos que fallan son las que pasan por `set()` y dejan
-`$cambios` vacío, de modo que `updated_at` queda como única columna del UPDATE.
+**Falta el bloque O.** `columnas_que_acumulan` desplegado es el del bloque J —
+tiene la clave `unidades` y nada más. El bloque K lo reemplazaba con las dos
+claves y no llegó. Medido, sin deducir de la spec:
 
-**Lo que ya se arregló y desplegó:** el `qb_set` del bloque J (era `protected`
-→ fatal 500 cuando `$cambios` está vacío, que es justo el caso del paso 2), y
-del lado Python el campo de protocolo `legado_updated_at_conocido`, que ya no
-viaja en los `crear` sin locking y por eso `ignoradas` volvió a servir.
+| Entidad · columna | Verbo real |
+|---|---|
+| `unidades` · `observaciones` | acumula (creció 16 chars) |
+| `check_list_mecanica_falla` · `contador` | suma (0 → 2) |
+| `check_list_mecanica_falla` · `observacion` | **se pisa** |
 
-**En producción quedan tres filas huérfanas** en `check_list_mecanica` — 2960,
-2961 y 2962 — todas de la unidad 66505 de PRUEBA, `ABIERTO`, sin fallas. Se
-quedan: la copia se descarta en el corte.
+Los dos primeros prueban que el bucle del bloque K está entero: `contador` sólo
+puede sumar por la rama `$suman`, `observaciones` sólo puede crecer por la rama
+`$acumulan`, y las dos viven en el mismo `foreach`. Queda una sola explicación.
+
+**Y el modo de falla es el peor de los dos posibles.** El bloque K avisaba que
+pegar los dos `columnas_que_acumulan` da `Cannot redeclare` — un fatal que se ve
+al toque. Lo que pasó fue lo contrario: quedó el viejo, **sin ningún error**. El
+endpoint responde 200, la cola marca resuelta, y la columna se pisa en silencio.
+Es la lista blanca otra vez, con otro disfraz. (`columnas_que_suman` funcionó
+porque es un método nuevo: no tenía versión previa con la que competir.)
+
+**Ya arreglado y desplegado antes de esto:** el `qb_set` del bloque J, y el
+`updated_at` que se estampaba en tablas que no lo tienen — confirmado con
+`SHOW COLUMNS` (cero filas) y el log (`Unknown column 'updated_at' in 'SET'`),
+que además descartó al `CASE`/`CONCAT` del bloque K como causa.
+
+**En producción quedan cuatro filas huérfanas** en `check_list_mecanica` —
+2960 a 2963 — todas de la unidad 66505 de PRUEBA. Y en `observaciones` de esa
+unidad quedó `SONDA-ACUMULA-1`, de la medición de arriba: esa columna es
+acumulativa por construcción, así que **no se puede sacar por la API**. Todo se
+descarta en el corte.
+
+### Un bloque es una unidad de despliegue, no una unidad de verdad
+
+Dos veces en el mismo día un bloque se aplicó o se retiró a medias:
+
+- El **bloque M** traía tres arreglos, uno falso y dos buenos. Al descartarlo por
+  el falso se fueron los dos buenos con él, y el `updated_at` volvió tres horas
+  después como bloque N.
+- El **bloque K** reemplazaba un método que el bloque J ya había definido. De los
+  dos quedó el viejo, en silencio.
+
+> **Cuando un ítem de un bloque se cae, se cae ESE ítem, no el bloque.** Y cuando
+> un bloque reemplaza algo que otro bloque puso, el que reemplaza tiene que decir
+> **cómo comprobar cuál quedó** — porque la versión equivocada no da error,
+> responde 200.
+
+De ahí que cada bloque que toque algo ya desplegado lleve ahora su `grep` de
+comprobación arriba, no sólo la instrucción de qué reemplazar.
 
 ### Lo que costó más que los bugs: leí la spec en vez del archivo desplegado
 

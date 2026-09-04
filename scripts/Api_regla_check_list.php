@@ -1023,3 +1023,132 @@ public function leer_fila($entidad = null, $id = null)
    > alguna que no lo era. Un bloque es una unidad de despliegue, no una
    > unidad de verdad.
    =========================================================================== */
+
+
+/* ===========================================================================
+   BLOQUE O -- a `columnas_que_acumulan` le falta la clave del check list
+   ===========================================================================
+
+   ES UN METODO. Es lo ultimo que falta para que el paso 2 cierre.
+
+   LA MEDICION, tres pedidos contra produccion y ninguna suposicion:
+
+       unidades / observaciones                  ->  ACUMULA   (crecio 16 chars)
+       check_list_mecanica_falla / contador      ->  SUMA      (0 -> 2)
+       check_list_mecanica_falla / observacion   ->  SE PISA
+
+   Los dos primeros dicen que el bucle del bloque K esta desplegado y entero:
+   `contador` solo puede sumar por la rama `$suman`, y `observaciones` solo
+   puede crecer por la rama `$acumulan`. Las dos ramas viven en el mismo
+   `foreach`.
+
+   Entonces la unica explicacion que queda es que
+
+       $this->columnas_que_acumulan('check_list_mecanica_falla')
+
+   devuelva un array vacio -- o sea que el metodo desplegado es el del BLOQUE J,
+   que tiene la clave `unidades` y nada mas. El del bloque K, con las dos
+   claves, no llego.
+
+   POR QUE PASO, Y POR QUE NO SE NOTO
+
+   El bloque K arranca avisando que REEMPLAZA `columnas_que_acumulan` y que
+   pegar los dos da `Cannot redeclare`. Lo que ocurrio fue lo contrario y es
+   peor: no se pego ninguno de los dos encima del otro, quedo el de J, y no
+   hubo ningun error.
+
+   El fatal que yo anticipaba se ve al toque -- se caen todas las rutas. Esto
+   no se ve nunca: el endpoint responde 200, la cola marca resuelta, y la
+   columna se pisa en silencio. Es el mismo modo de falla que la lista blanca,
+   con otro disfraz.
+
+   POR QUE `contador` FUNCIONO IGUAL
+
+   Porque `columnas_que_suman` es un metodo NUEVO: no tenia una version previa
+   con la que competir, asi que entro completo. La colision solo afecta a los
+   metodos que un bloque anterior ya habia definido.
+   =========================================================================== */
+
+/* ---------------------------------------------------------------------------
+   EL CAMBIO. Buscar en `Api_regla.php`
+
+       private function columnas_que_acumulan($entidad)
+
+   y reemplazar ESE METODO ENTERO -- desde esa linea hasta el `}` que la cierra
+   -- por lo de abajo. Es lo unico que se toca; el `foreach` de `actualizar()`
+   ya esta bien.
+
+   COMO SABER SI HACE FALTA, ANTES de tocar nada:
+
+       grep -A6 "function columnas_que_acumulan" \
+            ~/public_html/application/controllers/Api_regla.php
+
+   Si ahi aparece `check_list_mecanica_falla`, ya esta puesto y este bloque no
+   hace falta. Si solo aparece `unidades`, es este.
+   --------------------------------------------------------------------------- */
+
+    private function columnas_que_acumulan($entidad)
+    {
+        $mapa = array(
+            // El historial de daños de TODAS las pasadas del VIN. Pisarla no
+            // pierde un valor: pierde historia, y no se nota porque la columna
+            // sigue teniendo texto.
+            'unidades' => array('observaciones'),
+
+            // Las tres listas PARALELAS de fallas del check list mecanico, en
+            // sus dos versiones -- la primera pasada y la de un check list
+            // REABIERTO.
+            //
+            // Son paralelas: la falla numero 3 es el tercer pedazo de las
+            // tres. Si esta clave falta, las tres se PISAN y queda solamente
+            // la ultima falla cargada, con 200 y sin error. Medido en
+            // produccion el 2026-09-02: dos fallas cargadas, una sola en la
+            // fila.
+            'check_list_mecanica_falla' => array(
+                'observacion', 'modalidad', 'link_unidades',
+                'fallas_adicionales', 'modalidad_adicional', 'fotos_adicionales',
+            ),
+        );
+        return isset($mapa[$entidad]) ? $mapa[$entidad] : array();
+    }
+
+/* ---------------------------------------------------------------------------
+   DESPUES DE SUBIR
+
+       php -l ~/public_html/application/controllers/Api_regla.php
+       grep -c "function columnas_que_acumulan" .../Api_regla.php    -> 1
+       grep -c "check_list_mecanica_falla" .../Api_regla.php         -> 3
+           (el mapa de entidades, este mapa, y la ruta)
+
+   Y la prueba de verdad, que no depende de leer nada:
+
+       LEGADO_API_KEY=... python scripts/verificar_check_mecanico_produccion.py --escribir
+
+   `observacion` tiene que quedar en
+
+       EXTINTOR VENCIDO | TAPIZ MANCHADO
+
+   y no en `TAPIZ MANCHADO` solo.
+   --------------------------------------------------------------------------- */
+
+
+/* ===========================================================================
+   LO QUE ESTE BLOQUE DEJA COMO REGLA
+   ===========================================================================
+
+   Van dos veces que un bloque entero se aplica a medias o se retira a medias:
+
+     * el bloque M traia tres arreglos, uno falso y dos buenos, y al descartarlo
+       por el falso se fueron los dos buenos con el;
+     * el bloque K reemplazaba un metodo que el bloque J ya habia definido, y
+       de los dos quedo el viejo -- en silencio.
+
+   > UN BLOQUE ES UNA UNIDAD DE DESPLIEGUE, NO UNA UNIDAD DE VERDAD.
+   > Cuando un item de un bloque se cae, se cae ESE ITEM, no el bloque. Y
+   > cuando un bloque reemplaza algo que otro bloque puso, el que reemplaza
+   > tiene que decir COMO COMPROBAR cual quedo -- porque la version equivocada
+   > no da error, responde 200.
+
+   De ahi que cada bloque que toque algo ya desplegado lleve ahora su `grep` de
+   comprobacion arriba, y no solo la instruccion de que reemplazar.
+   =========================================================================== */
