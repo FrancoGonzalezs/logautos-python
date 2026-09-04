@@ -1104,63 +1104,76 @@ De ahí `QUIEN_SIGUE`: la pantalla dice **«Esperando despacho — administraci�
 Si el estado **no** es de los reconocidos, la pantalla sigue diciendo que no hay
 paso definido — ahí la ausencia sí es rara y no hay que taparla.
 
-### 11. EL DISCO NO DA — frenado antes de escribir una URL en el legado
+### 11. Almacenamiento: se escribe en LOS DOS lados, y el objeto queda postergado
 
-**Se frena acá.** No se escribe ninguna URL de REGLA en `archivo1..archivo9`
-hasta resolver dónde viven las fotos, porque esas columnas son permanentes del
-otro lado: una URL que se rompe en seis meses rompe el PDF de un despacho que
-todavía no ocurrió.
+**Decisión de Franco, 2026-09-04.** Durante el mes de mejoras las fotos van al
+**legado** —para que su PDF las encuentre donde siempre— **y a Railway**, que es
+la copia que tiene que sobrevivir.
 
-**El caudal de los cuatro módulos**, derivado del volumen real del legado
-(mayo–julio 2026, tres meses completos):
+**La subida al legado NO se enciende hasta que Franco confirme que el disco
+bajó.** El cPanel está al **97% de 200 GB** (~8 GB libres) y él está liberando
+correo (más de 160 GB en cuentas). Un cPanel al 97% es donde MySQL empieza a
+fallar escrituras, y eso rompe el sistema con el que trabaja la empresa hoy, no
+REGLA. Por eso el endpoint lleva un **interruptor explícito** en `FALSE`.
 
-| Módulo | Volumen | Fotos/mes |
-|---|---|---|
-| Check list de ingreso | 2.351 check lists, 20.457 daños + 3.892 generales | **8.116** |
-| Inspección de despacho | 2.483 inspecciones, 7,4 fotos c/u | **6.096** |
-| IT | 597 ingresos/mes × 6 | **3.584** |
-| Check list mecánico | 374 check lists, 1.510 fallas | **503** |
-| | | **18.300/mes** |
+**Y no está resuelto:** Railway sigue acumulando sobre 4,6 GB, o sea ~3 meses aun
+con fotos más chicas. **El almacenamiento de objetos queda POSTERGADO, no
+cancelado**, y vuelve cuando dejen el cPanel — el plan de fondo es que a fin del
+mes de pruebas ese servidor quede sólo para correo y para el legado.
 
-**El tamaño de una foto, medido bajando fotos reales del legado** (n=24):
-**96 KB promedio**, mediana 101 KB, **máximo 201 KB**. Ésas están reducidas a
-1000 px por el `image_lib` del PHP. **Las de REGLA van a ser más grandes**: el
-reductor del navegador (`_reducir_fotos_js.html`) usa `LADO_MAX = 1600` y
-calidad 0,8 — 2,56× los píxeles, así que del orden de **200–250 KB**. Ese
-último número es derivado, no medido: no hay todavía fotos reales cargadas por
-REGLA para medir.
+#### El caudal y el peso, medidos
 
-**La cuenta:**
+18.300 fotos/mes con los cuatro módulos vivos: check list de ingreso 8.116,
+inspección 6.096, IT 3.584, mecánico 503.
 
-| A | Por mes |
+Fotos reales del legado (n=24): **96 KB promedio, 201 KB máximo**. Y un hallazgo
+que cambia la discusión: **ninguna foto del legado supera los 1000 px** — el PHP
+las reduce al subirlas. Lo que el cliente ve en el PDF hace años es eso. **Los
+1600 px de REGLA están por encima de la base que ya funciona.**
+
+`hoja_fotos.html` es la hoja de comparación con tres fotos reales de daños en
+1000/800/600 px × calidad 0,8/0,7/0,6, con el peso y un recorte al 100% para
+juzgar si el rayón sobrevive, más la tabla de meses de autonomía por cada peso.
+**El número lo elige Franco mirando, no se discute.**
+
+> **WebP queda descartado, con evidencia.** El PDF lo arma **dompdf 0.8.6**, y
+> `Helpers::dompdf_getimagesize` mapea sólo `IMAGETYPE_JPEG`, `GIF`, `BMP` y
+> `PNG`. Un WebP sale con `$type = null` y la imagen se descarta. Seguimos en
+> JPEG.
+
+#### Perfiles por módulo — la distinción es de Franco y es mejor que un ajuste global
+
+No todas las fotos prueban lo mismo: las de inspección prueban que algo **está**
+(rueda de auxilio, gato, extintor); las del check list prueban **cómo está** un
+daño. Punto de partida, a confirmar contra la hoja: inspección 800 px calidad
+baja, check lists 1200 px calidad alta, IT 1200 px cuando lleva evidencia de DYP
+o FR.
+
+#### El endpoint de subida — `scripts/Api_regla_subir_foto.php`, sin desplegar
+
+Cinco propiedades, y **dos cosas que no se pudieron cumplir tal cual**:
+
+| | |
 |---|---|
-| 96 KB (tamaño del legado) | 1,7 GB |
-| 200 KB (REGLA, estimado bajo) | **3,5 GB** |
-| 250 KB (REGLA, estimado alto) | **4,4 GB** |
+| **El margen de disco no ve la cuota de cPanel** | `disk_free_space()` informa el *filesystem*, que en hosting compartido es el del servidor entero: puede decir cientos de GB libres con la cuenta al 97%. Se implementan **dos frenos** y el que protege de verdad es el interruptor manual. |
+| **La carpeta del check list de ingreso no se replica** | El legado usa `assets/images/{motonave}/{vin}/`, y las dos partes salen del dato — la motonave es texto libre y ya rompió una vez (`COSCO PACIFIC / YANTIAN` crea dos directorios). Replicarlo exigiría aceptar la carpeta desde el cuerpo, que es justo lo prohibido. Los daños de REGLA van a `assets/images/danos/`, que el legado ya usa. **No afecta al PDF**: ése lee `archivo1..9` → `assets/images/unidades/`, que sí es plana y se replica exacta. |
 
-Contra los **4,6 GB libres** que se midieron el 2026-09-02: **menos de un mes de
-autonomía**. Y aunque el volumen fuera de 20 GB serían ~5 meses, contra un p95
-de **137 días** de espera hasta el despacho. **No alcanza en ningún escenario
-razonable.**
+**Dónde escribe hoy cada módulo**, medido sobre el PHP:
 
-> **Y nada se borra nunca**, por decisión tomada el mismo día: las fotos son
-> permanentes por requisito y la suite lo afirma. O sea que esto no se estabiliza
-> — crece 3,5 GB por mes para siempre.
+| Módulo | Carpeta | Nombre |
+|---|---|---|
+| Check list ingreso, daños | `assets/images/{motonave}/{vin}/` | `{vin}_{pieza}_{tipo}_{nivel}_{Y-m-d H:i:s}_.jpg` |
+| Check list ingreso, unidad | `assets/images/foto_unidad/` | `{vin}_foto_unidad_{Y-m-d}_.jpg` |
+| Check list mecánico | `assets/images/falla/` | `{vin}_FALLA_MECANICA_NRO_{n}_{Y-m-d H:i:s}_.jpg` |
+| Inspección de despacho | `assets/images/unidades/` | `{vin}_INSPECCION_{rótulo}_{Y-m-d H:i:s}_.jpg` |
+| IT | `assets/images/it/{vin}/` | `IT_{vin}_{Y-m-d_H-i-s}_{n}.jpg` |
 
-**Por qué esto va ANTES del push y no después:** es la misma lección de decidir
-la clave antes de escribirla en todos lados. Si las fotos terminan en
-almacenamiento de objetos, la URL tiene que apuntar ahí **desde la primera**.
-
-**El instrumento quedó hecho:** `/version` reporta ahora `volumen` con el libre
-real del contenedor, lo que ocupa `uploads`, cuántos archivos y el promedio.
-Existe porque el único dato disponible para esta decisión era una medición de
-septiembre hecha pensando sólo en el IT, y un número estimado no sirve para
-decidir esto.
-
-> **`/version` PIDE LOGIN, y su comentario decía que no.** No está en
-> `acceso.LIBRES`. La intención escrita era buena —es la ruta que se mira justo
-> cuando algo no anda— pero nunca se implementó. **No se cambió por las buenas**:
-> abrir una ruta al público es una decisión de superficie. Queda para decidir.
+**Tres detalles del nombre que hay que copiar** para que los de REGLA no se
+reconozcan de lejos: el saneo es `strtr($n, " ", "_")` —**sólo espacios**, los
+dos puntos de la hora se quedan—; hay un **guion bajo antes de la extensión**
+(`_.jpg`), que sale de un pegado accidental pero lo tienen los 16.365 archivos
+que ya existen; y el IT es el único con otro estilo, porque lo escribió otra
+persona.
 
 ### 5d. Los destinatarios, con las dos condiciones
 
