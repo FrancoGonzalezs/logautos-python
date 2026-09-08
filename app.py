@@ -9,7 +9,7 @@ medida que se migran, cada uno como un Blueprint en modulos/.
 
 import os
 
-from flask import Flask, redirect, url_for
+from flask import Flask, render_template, redirect, url_for
 
 from core import (DB_PATH, cerrar_db, clave_de_sesion, instalar_guardas,
                   instalar_indices, mostrar, numero, pesos, vacio)
@@ -78,6 +78,28 @@ def crear_app():
     app.register_blueprint(bp_facturacion)
     app.register_blueprint(bp_kpis)
     app.register_blueprint(bp_reconciliacion)
+
+    # LA RED DE SEGURIDAD DE LA RETENCION.
+    #
+    # `movimientos.registrar()` levanta `UnidadRetenida` cuando la unidad esta
+    # retenida y quien la mueve no tiene el permiso. El camino normal es que la
+    # pantalla haya preguntado antes con `frena_la_retencion` y mostrado el
+    # cartel; esto es lo que pasa si una pantalla se olvida.
+    #
+    # Sin este handler, olvidarse daria un 500 -- que frena igual, pero le dice
+    # al movilizador "error del sistema" cuando lo que hay es una regla de
+    # negocio. La pantalla NO PUEDE QUEDAR MUDA, y menos mentir sobre de quien
+    # es el problema.
+    #
+    # Hoy la pregunta explicita la hace el IT. Las otras cinco pantallas que
+    # llaman a `registrar` --Movimientos, PDI, check list, check list mecanico,
+    # revision de contenedor, inspeccion de despacho-- caen todavia por aca.
+    from modulos.movimientos import UnidadRetenida, quien_destraba
+
+    @app.errorhandler(UnidadRetenida)
+    def _unidad_retenida(e):
+        return render_template("retenida.html", motivo=str(e),
+                               quienes=quien_destraba()), 409
 
     registrar_guardia(app)
     instalar_indices()

@@ -1,14 +1,52 @@
-# REGLA — estado del proyecto
+# Regla Python — estado del proyecto
 
 **2026-08-27.** Reescritura en Python (Flask + réplica SQLite) del sistema
 Logautos (CodeIgniter 3 + MariaDB, `claude.logautos.cl`). Los dos sistemas
-corren **en paralelo**: el legado sigue siendo el que factura y el que usa la
-gente. REGLA no lo reemplaza todavía, lo acompaña.
+corren **en paralelo**: Regla PHP sigue siendo el que factura y el que usa la
+gente. Regla Python no lo reemplaza todavía, lo acompaña.
 
 Eso manda sobre casi todas las decisiones raras que siguen. Cuando dos sistemas
 escriben sobre el mismo dato, **coincidir vale más que tener razón**: cada
 diferencia que aparece en la reconciliación es ruido que alguien tiene que
 explicar, y el ruido se lleva puesta la señal.
+
+### Los dos sistemas se llaman Regla. Nunca "REGLA" a secas
+
+**Regla PHP** es el que está en producción — CodeIgniter 3 + MariaDB en
+`claude.logautos.cl`, el que factura y el que usa la gente hoy.
+**Regla Python** es el nuevo — Flask + réplica SQLite, en Railway.
+
+Vale para el código, los comentarios, los mensajes de commit y este archivo.
+Un nombre para dos cosas es la Regla 0 metida en nuestro propio vocabulario, y
+ya costó una vuelta: "el legado" servía mientras hubo uno solo, pero los dos
+sistemas se llaman igual y la ambigüedad se colaba en frases como *"el bloque
+It del legado"* — que resultó apuntar a un archivo que no era el que corre.
+
+Lo único que conserva la forma vieja son los literales que ya salieron: la
+firma `«enviado automáticamente por sistema REGLA»` del correo, el
+`REGLA-sync/1.0` del User-Agent y las variables `REGLA_SOLO_LOCAL` /
+`REGLA_REPLICA_PROTEGIDA`. Están del lado del cable: cambiarlos sería cambiar
+el comportamiento, no el vocabulario.
+
+### `produccion\` es la fuente. `application\` no se usa más
+
+**Test y producción divergieron en las DOS direcciones, y ninguno contiene al
+otro.** Descubierto el 2026-09-08:
+
+| | Test tiene | Producción tiene |
+|---|---|---|
+| `Pedido.php` | el `case 'It'` viejo | **no lo tiene** |
+| `Nota.php` | — | **`listarFotosVin`**, el arreglo de agosto de `COSCO PACIFIC / YANTIAN` |
+
+No es "test está atrasado": son dos ramas que se separaron. Un archivo de test
+no sirve ni para confirmar ni para descartar nada sobre lo que corre.
+
+**Toda medición contra Regla PHP sale de `C:\Regla_Python\produccion\`, y dice
+de qué archivo salió.** `C:\Regla_Python\application\` no se usa para nada.
+
+Es la misma lección del bloque M1 —leer la spec en vez del archivo desplegado—
+una capa más arriba: allá el archivo equivocado era la spec, acá es una copia
+del servidor equivocado.
 
 ### Cada entrega dice dónde quedó cada cosa
 
@@ -61,26 +99,26 @@ Un 500 en un endpoint se arregla y se vuelve a intentar. Una fila de más en
 ### La fuente del estado es la FILA
 
 `newstocks_cidef.despachado`, y nada más. **No** se deriva del historial de
-REGLA. Cambiado el 2026-08-27, y es lo que ordenó dos semanas de enredo.
+Regla Python. Cambiado el 2026-08-27, y es lo que ordenó dos semanas de enredo.
 
-El motivo es de dato: `registros` —el historial del legado— tiene agujeros. El
+El motivo es de dato: `registros` —el historial de Regla PHP— tiene agujeros. El
 **18,4%** de los cambios de estado no deja fila ahí, porque 58 lugares del PHP
 actualizan la unidad sin llamar a `registromov()`. Un historial con agujeros no
-puede ser la fuente de un estado; una fila que siempre está, sí. Que REGLA
-derivara de SU historial era el mismo error espejado: completo para lo que REGLA
+puede ser la fuente de un estado; una fila que siempre está, sí. Que Regla Python
+derivara de SU historial era el mismo error espejado: completo para lo que Regla Python
 hizo, ciego para todo lo demás.
 
-`movimientos_regla` **no se toca**: sigue siendo el registro de lo que REGLA
+`movimientos_regla` **no se toca**: sigue siendo el registro de lo que Regla Python
 hizo y quién lo hizo, y de ahí salen los KPI y el push. Dejó de ser lo que
 decide dónde está la unidad.
 
 Al guardar, `registrar()` escribe también la fila — **sólo si el movimiento
-viaja**. Si no encola, no se escribe: REGLA no puede afirmar un estado que nunca
+viaja**. Si no encola, no se escribe: Regla Python no puede afirmar un estado que nunca
 va a entregar, y el pull lo revertiría a los 300 s de todos modos.
 
-> **EL SUPUESTO QUE SOSTIENE TODO ESTO: que todo cambio del legado mueve
+> **EL SUPUESTO QUE SOSTIENE TODO ESTO: que todo cambio de Regla PHP mueve
 > `updated_at`.** Si una grilla escribe `despachado` sin tocarlo, el pull no ve
-> la fila y REGLA muestra un estado viejo **como si fuera certero** — antes se
+> la fila y Regla Python muestra un estado viejo **como si fuera certero** — antes se
 > mostraban los dos valores y la discrepancia saltaba sola. `updated_at` está
 > poblado en el 85,6% de las filas y hay 111 escrituras a `despachado` en 24
 > funciones; **cuántas lo tocan no está medido**. Si resulta que hay caminos que
@@ -135,7 +173,7 @@ código, `observacion` y `observaciones` se leen igual; en un `SELECT` escrito d
 memoria, la equivocada devuelve texto plausible y nadie se entera.
 
 > **LA GUARDA:** ninguna consulta nueva nombra esas cuatro columnas sin un
-> comentario al lado que diga qué guardan de verdad. Y en el código de REGLA no
+> comentario al lado que diga qué guardan de verdad. Y en el código de Regla Python no
 > se llaman así: la entidad del push las mapea explícitamente, y quien lea
 > `piezas`, `tipos_de_dano` y `niveles` no puede equivocarse. El nombre malo se
 > queda del lado del cable, que es donde no se puede cambiar.
@@ -185,7 +223,7 @@ Las tres señales de que estás por pisarla:
 La regla 1 es el caso de esta regla que además rompe escrituras, y por eso tiene
 guardas propias en vez de quedar acá.
 
-### 1. El match es por `id`, jamás por VIN — en las tablas propias de REGLA
+### 1. El match es por `id`, jamás por VIN — en las tablas propias de Regla Python
 
 `newstocks_cidef` tiene 71.546 filas para 61.447 VIN. **Cada fila es UNA PASADA
 del vehículo por el patio, no el vehículo**: 6.182 VIN aparecen más de una vez
@@ -207,24 +245,24 @@ la clave: `pdi_de(unidad["vin"])` parece correcto. De ahí las dos defensas:
   Al arranque y no perezosamente, porque perezosa significaba que la tabla
   quedaba sin trigger hasta que alguien visitara esa pantalla.
 
-**LA REGLA DE LA FRONTERA — vale para las tablas de REGLA, NO es universal.**
-Las del legado usan la clave que el legado usa, y hay que preguntarla cada vez
+**LA Regla Python DE LA FRONTERA — vale para las tablas de Regla Python, NO es universal.**
+Las tablas de Regla PHP usan la clave que Regla PHP usa, y hay que preguntarla cada vez
 que una consulta cruza:
 
 | Tabla | Clave correcta |
 |---|---|
 | `registros`, `check_list`, `inspeccion_despacho`, `contenedor`, `reparaciones_externas` | **VIN** — es lo único que tienen |
-| `orden_trabajo` | **VIN**, aunque la columna se llame `id_vehiculo`: el legado la llena con `getidbyvin($vin)` |
+| `orden_trabajo` | **VIN**, aunque la columna se llame `id_vehiculo`: Regla PHP la llena con `getidbyvin($vin)` |
 
 Aplicarla al revés es el mismo error con otra cara, y ya pasó: el sensor de
 "PDI sin OT" reportó 88 sin cobrar en 2026 y **87 tenían su OT colgada de otra
 pasada**. Sobrevivió 1 real.
 
 Ojo con darlo por cerrado: la auditoría dio **0 movimientos contaminados**, pero
-ese cero es la edad de REGLA, no una propiedad del sistema. **Vence solo** en
-cuanto un VIN que ya pasó por REGLA reingrese.
+ese cero es la edad de Regla Python, no una propiedad del sistema. **Vence solo** en
+cuanto un VIN que ya pasó por Regla Python reingrese.
 
-### 2. La plata se redondea como el legado
+### 2. La plata se redondea como Regla PHP
 
 `core.peso()` usa `Decimal` + `ROUND_HALF_UP`. **No** `round()` de Python, que
 es bancario y rompe el empate para el par. PHP redondea alejándose del cero.
@@ -254,7 +292,7 @@ Un cliente sin tarifa **se niega y avisa**; no cae a la genérica en silencio.
 ### 3. Los dos relojes no se concilian
 
 Ni el pull ni el push parsean fechas cruzando sistemas. La marca de agua la pone
-el legado con su reloj; `updated_at` lo pone el receptor con el suyo. El desfase
+Regla PHP con su reloj; `updated_at` lo pone el receptor con el suyo. El desfase
 del dump **no es fijo**: es conversión de zona horaria y cambia con el horario
 de verano (4 h o 3 h según el mes).
 
@@ -264,7 +302,7 @@ igual son una regla; dos que se activan distinto son dos reglas que recordar.
 
 | Guarda | Qué frena | Nació de |
 |---|---|---|
-| `exigir_destino_local` | que una prueba le hable al legado de **producción** | un GET real que salió, 2026-08-27 |
+| `exigir_destino_local` | que una prueba le hable a Regla PHP de **producción** | un GET real que salió, 2026-08-27 |
 | `exigir_replica_de_prueba` | que una prueba abra la **réplica real** | una prueba de humo que escribió sobre la unidad 92095, 2026-09-02 |
 
 La segunda vive en `conectar_db`, que es el único camino por el que se abre la
@@ -275,9 +313,9 @@ push se enganchó en `registrar()`.
 **Lo peor que dejó aquel incidente no fue la fila de más**, y por eso vale
 anotarlo: fue `push_pendiente = 1` sobre una unidad real. El UPSERT del pull
 **saltea** las filas con ese flag, así que esa unidad deja de recibir
-actualizaciones del legado — en silencio, sin error, para siempre. Segunda: la
+actualizaciones de Regla PHP — en silencio, sin error, para siempre. Segunda: la
 entrada de cola quedó viva, y si el demonio hubiera corrido, la prueba habría
-escrito en el legado de producción sin que la guarda de destino la frenara (el
+escrito en Regla PHP de producción sin que la guarda de destino la frenara (el
 demonio no corre bajo un `probar_*`).
 
 **Lo que NO cubre**, dicho para que nadie se confíe: un `sqlite3.connect` escrito
@@ -287,7 +325,7 @@ aplicación, que es por donde entró el daño de verdad — **y está bien que s
 así**: hacerla universal significaría interceptar `sqlite3` entero, que es más
 magia de la que vale.
 
-> **LA REGLA DE HÁBITO, para todo lo que la guarda no alcanza:** ningún script
+> **LA Regla Python DE HÁBITO, para todo lo que la guarda no alcanza:** ningún script
 > suelto apunta a la réplica real. Ni a `/data/local.db` ni a la del repo. Si un
 > script de exploración necesita datos de verdad, **copia primero**:
 >
@@ -311,7 +349,7 @@ El corolario, que ese mismo día costó un informe equivocado: **el doble tampoc
 sirve para AVERIGUAR qué hace producción.** Cuando algo falla allá, se lee el
 archivo desplegado. Ver la nota del pendiente 5e.
 
-> **LA REGLA:** un script que habla con producción usa **el mismo cliente que
+> **LA Regla Python:** un script que habla con producción usa **el mismo cliente que
 > produce el tráfico real**, no `requests` pelado ni un doble. Si no, prueba
 > contra un servidor que no existe. `claude.logautos.cl` corta la conexión con
 > el User-Agent de `requests` —cierra el socket, no responde 403— y eso sale
@@ -319,7 +357,7 @@ archivo desplegado. Ver la nota del pendiente 5e.
 > red». Ya hizo diagnosticar mal una vez. El `USER_AGENT` vive en
 > `modulos/sync_legado.py` y **se importa, no se copia**.
 
-**Y el doble puede ser generoso en lo que NO manda.** El 2026-09-02 el legado
+**Y el doble puede ser generoso en lo que NO manda.** El 2026-09-02 Regla PHP
 simulado devolvía `200` con un `updated_at` inventado en la creación del check
 list mecánico, donde el bloque I devuelve `201` sin ninguno. Eso tapó dos bugs
 del lado de Python: que `crear()` tenía que aceptar 201, y que el camino de
@@ -330,7 +368,7 @@ así mintió. **Un doble se parece al original también en lo que no devuelve.**
 
 ### 4. Un doble más permisivo que el original es un sello de goma
 
-**El legado simulado tiene que RECHAZAR todo lo que rechaza el real.** Si acepta
+**El Regla PHP simulado tiene que RECHAZAR todo lo que rechaza el real.** Si acepta
 de más, la prueba no falla cuando el sistema está roto: falla al revés, da verde
 sobre algo que en producción no funciona. Y eso es peor que no tener prueba,
 porque la prueba se usa para decidir desplegar.
@@ -407,7 +445,7 @@ unidad 66505 de PRUEBA, fila `check_list_mecanica.id = 2964`.
 | C. `contador` = 2, sumado del lado del servidor | ✅ `2` |
 
 Los bloques G–L quedan probados. Costó cuatro defectos, y ninguno lo podía ver el
-legado simulado:
+Regla PHP simulado:
 
 | | Qué | Cómo se encontró |
 |---|---|---|
@@ -472,7 +510,7 @@ rota.
 | 2026-09-04 | **`reconciliar.py` moría con `KeyError`** | la corrida diaria no corría |
 
 El tercero es el peor. La reconciliación es **el instrumento de aceptación del
-mes en paralelo**: es lo único que ve el 18,4% de cambios de estado que el legado
+mes en paralelo**: es lo único que ve el 18,4% de cambios de estado que Regla PHP
 hace sin dejar fila en `registros`. Si puede morirse en silencio, *«la
 reconciliación no mostró nada»* no es evidencia de nada — es la misma frase tanto
 si todo está bien como si el informe no se imprimió.
@@ -556,7 +594,7 @@ Cosas del push que no se deducen del código:
   cuando `It` es la forma vieja (`IT` es 97,8% en lo reciente).
 - **El IT pasa `empuja_movimiento=False`.** El motivo técnico es que encolaba
   dos entradas con el mismo `conocido` y la segunda chocaba contra la primera —
-  un 409 falso. El motivo de fondo es mejor: el bloque `It` del legado llama a
+  un 409 falso. El motivo de fondo es mejor: el bloque `It` de Regla PHP llama a
   `registromov()` **cero veces**, así que empujarlo le metería al historial una
   fila que su propia pantalla nunca genera. El PDI llama **dos** veces, así que
   ahí sí va.
@@ -579,12 +617,12 @@ mecánico manda a buscar el problema al lugar equivocado. Es la Regla 0 aplicada
 a la cola.
 - **El origen no viaja; el destino sí, los tres.** `newcalle`/`newestado`/
   `newpatio` los resuelve el endpoint leyendo la fila dentro de su transacción:
-  mandarlos sería mandar lo que REGLA *cree* que el legado tenía, con hasta una
+  mandarlos sería mandar lo que Regla Python *cree* que Regla PHP tenía, con hasta una
   vuelta de sync de atraso, y quedaría escrito en su historial como un hecho.
   Del lado del destino viajan `accion`, `estado` **y `patio`** — este último
   desde el 2026-08-27, ver el pendiente 2. La distinción no es "qué columnas
-  sabemos" sino **quién es la fuente**: el origen lo sabe el legado, el destino
-  lo decide REGLA.
+  sabemos" sino **quién es la fuente**: el origen lo sabe Regla PHP, el destino
+  lo decide Regla Python.
 - **Las columnas de `registros` están invertidas** y el prefijo miente:
   `accion`/`estado`/`patio` son el **DESTINO**, `newcalle`/`newestado`/`newpatio`
   el **ORIGEN**. Verificado a mano sobre la fila 305637.
@@ -598,7 +636,7 @@ a la cola.
 `modulos/ubicacion.py` + el bloque de la pantalla, y recién después `STOCK`
 fuera de `SIN_CALLE`. **El orden es la mitad del trabajo**: al revés, el push
 habría mandado la calle mayoritaria, que acierta el 25%, escrita en el historial
-del legado como un hecho.
+de Regla PHP como un hecho.
 
 Es el único estado cuya calle y cuyo patio salen del formulario en vez de
 `CALLE_POR_ESTADO` / `PATIO_POR_ESTADO`. `encolar_movimiento` acepta `calle` y
@@ -631,7 +669,7 @@ nunca agregarlos.** El atajo *prepara*, no confirma — el piso son dos toques
 siempre, y el botón nombra el destino completo antes de escribirlo. Un atajo
 errado (1 de cada 6,5) cuesta exactamente lo mismo que no haber tenido atajo: un
 toque en la calle correcta. Si alguna vez esto pasa a confirmar de una, ese
-15,4% se convierte en ubicaciones falsas en el legado.
+15,4% se convierte en ubicaciones falsas en Regla PHP.
 
 La recencia sale de `movimientos_regla` y **no** de `registros`, que en la
 réplica sólo se actualiza con el dump y tiene semanas de atraso. Eso resuelve el
@@ -645,7 +683,7 @@ sigue sugiriendo, sólo que la mitad de las veces mal, y no hay forma de notarlo
 mirándola.
 
 Los otros tres siguen excluidos, pero **el motivo de `DYP` estaba mal escrito** y
-se corrigió el 2026-08-27. Decía "depende del proveedor asignado, que REGLA no
+se corrigió el 2026-08-27. Decía "depende del proveedor asignado, que Regla Python no
 elige" y la calle es **determinista**: la rama `if($calle == 'Dyp')` de
 `Pedido.php:8577` descarta lo que el usuario eligió y fuerza `PATIO 2` /
 `ENTREGADO DYP` / `ubicacion 1`. En los datos, 189 de 204 movimientos, **92,6%**
@@ -671,7 +709,7 @@ misma clave. **Sin tocar el PHP**: `Api_regla_movimientos.php` ya aceptaba
 **Las dos razones que estaban escritas acá eran falsas, y las dos se cayeron
 midiendo.**
 
-La primera era "el patio lo decide el legado por rama y REGLA no lo pregunta".
+La primera era "el patio lo decide Regla PHP por rama y Regla Python no lo pregunta".
 No hace falta preguntarlo: **el patio es función del estado destino**, porque
 cada etapa vive en un patio fijo. Los catorce estados traducibles dan entre
 93,6% y 100% sobre los últimos 6 meses.
@@ -680,7 +718,7 @@ La segunda era "como la unidad no cambia de patio, lo correcto sería repetir el
 origen". **Es al revés.** Para `Cc`, las 3.247 filas del semestre van a PATIO 1
 vengan de donde vengan, y 2.948 venían de PATIO 2 — ninguna repite el origen. Ir
 a control de calidad *es* ir al patio 1. Repetir el origen en la 305637 habría
-escrito `PATIO 5`, que es justo el valor que el legado nunca escribe para `Cc`.
+escrito `PATIO 5`, que es justo el valor que Regla PHP nunca escribe para `Cc`.
 
 **Por estado y no por calle**, que fue el segundo intento y era peor. Medido por
 calle, `A` daba PATIO 2 al 78,8% y parecía el único caso ambiguo. No lo era: `A`
@@ -689,7 +727,7 @@ el 21% era el estacionamiento contaminando la cuenta. Separados por estado, los
 dos que usan `A` dan 100%. Misma lección que el histórico contra los 6 meses: la
 mayoría falsa aparece cuando se agrega sobre una clave que mezcla dos cosas.
 
-**La excepción es la PDI**: el legado deja el patio vacío en las 3.241 filas del
+**La excepción es la PDI**: Regla PHP deja el patio vacío en las 3.241 filas del
 semestre, las 3.241, porque su bloque arranca con `$patiopdi = ' '` y nunca lo
 usa. `patio_para()` devuelve `None` y se manda vacío a propósito. Cuando entre
 la entidad PDI hay que dejarlo así — coincidir vale más que tener razón.
@@ -714,8 +752,8 @@ Las tres cuelgan del movimiento con **`depende_de`**. Se escriben en la misma
 transacción que la PDI — sobreviven a que el proceso muera — y no se intentan
 hasta que el movimiento esté resuelto **y sin error**. Encolarlas *después* de
 que el movimiento vuelva OK las perdería si el proceso muere en el medio, y eso
-deja una PDI aplicada en el legado y sin cobrar. Un 409 en el movimiento
-significa que el legado ganó: no hay PDI que cobrar, y `orden_trabajo` es
+deja una PDI aplicada en Regla PHP y sin cobrar. Un 409 en el movimiento
+significa que Regla PHP ganó: no hay PDI que cobrar, y `orden_trabajo` es
 append-only.
 
 > **La guarda va en `ejecutar_entrada`, no sólo en el selector de pendientes.**
@@ -740,7 +778,7 @@ y no sólo el número final, que puede coincidir de casualidad.
 > `modelo='V9 2.0'` a una unidad PRUEBA.
 
 **La compuerta** (`modulos/combustible.py`) se evalúa contra la **réplica**: si
-el legado está lento, la pantalla del patio no se puede colgar. Frena de verdad
+Regla PHP está lento, la pantalla del patio no se puede colgar. Frena de verdad
 hoy — el diesel tiene 5 litros contra un umbral de 20. `fila_de()` exige
 encontrar **exactamente una** fila y distingue los dos modos de falla, porque no
 se arreglan igual: tabla vacía (*"falta el pull"*) contra combustible sin fila
@@ -759,8 +797,8 @@ cerrar nada.
 
 ### 5. El runbook del corte — NUNCA el PHP solo sobre el sistema vivo
 
-Hoy quedó el **PHP adelante del Python**: el legado acepta 19 columnas de las
-que REGLA manda 5, y tiene **tres endpoints de escritura que nadie llama** —
+Hoy quedó el **PHP adelante del Python**: Regla PHP acepta 19 columnas de las
+que Regla Python manda 5, y tiene **tres endpoints de escritura que nadie llama** —
 `descontar_stock`, `crear_ot_pdi` y el PUT ampliado.
 
 Sobre la copia congelada eso es inerte. **Al corte, esos endpoints van al
@@ -781,13 +819,13 @@ Hoy DYP es **el único paso que la pantalla deja elegir y que no viaja**. Se
 guarda en `movimientos_regla`, no se escribe la fila, y la pantalla lo dice:
 *"Este paso todavía no viaja al sistema anterior"*.
 
-El obstáculo escrito en `SIN_CALLE` es que la rama del legado **manda un correo
+El obstáculo escrito en `SIN_CALLE` es que la rama de Regla PHP **manda un correo
 al cliente** con la patente de la unidad entregada al proveedor, así que empujar
 sólo la columna deja media entrega hecha.
 
 **Ese obstáculo ya no es lo que era.** Para las OT de la PDI decidimos que los
-efectos que el query builder no dispara **los hace REGLA** — por eso existe
-`ot_pdi.py` y el endpoint estrecho del bloque D. Mismo criterio: REGLA manda el
+efectos que el query builder no dispara **los hace Regla Python** — por eso existe
+`ot_pdi.py` y el endpoint estrecho del bloque D. Mismo criterio: Regla Python manda el
 correo, o lo manda un endpoint estrecho como el de las OT.
 
 La calle es determinista (`ENTREGADO DYP`, 92,6%) y el patio también (PATIO 2),
@@ -795,17 +833,17 @@ así que la traducción no es el problema. Lo que falta es el correo.
 
 Más adelante, no ahora.
 
-### 5c. La OT del check list: la sigue creando el legado
+### 5c. La OT del check list: la sigue creando Regla PHP
 
 **Divergencia consciente, decidida el 2026-08-28**, para el mes en paralelo.
 
-El flujo: el movilizador hace el check list en REGLA, el push escribe
+El flujo: el movilizador hace el check list en Regla Python, el push escribe
 `check_list`, y **administración abre la pantalla del correo en el sistema
 viejo** — ahí se crea la OT, sale el correo y se mueve el estado, que vuelve por
 el pull. Es un paso más para administración, que ya está en el sistema viejo
 igual.
 
-Por eso REGLA **no** empuja `estado_check_list` ni `calle`/`despachado`/`patio`
+Por eso Regla Python **no** empuja `estado_check_list` ni `calle`/`despachado`/`patio`
 para el check list, y **no** manda ese correo.
 
 **El motivo no es el tiempo, es la calidad.** El cálculo de la PDI eran diez
@@ -834,11 +872,11 @@ letras del menú tenían cero movimientos.
 
 ### 5d. Los destinatarios de correo van en una tabla
 
-El legado los tiene **cableados en el PHP**, por cliente: seis direcciones para
+Regla PHP los tiene **cableados en el PHP**, por cliente: seis direcciones para
 CARFLEX, una para CIDEF, más ASTARA, POMPEYO e internos de Logautos. Nadie los
 puede cambiar sin desplegar.
 
-En REGLA van en una **tabla**. Es un problema heredado que no vale la pena
+En Regla Python van en una **tabla**. Es un problema heredado que no vale la pena
 copiar, y la lista de a quién le llega un correo con daños de un vehículo es
 justo lo que cambia sin avisar cuando alguien entra o sale de un puesto.
 
@@ -849,7 +887,7 @@ al escribir esto); **el PHP no está desplegado** — los bloques G, H, I, J y K
 `scripts/Api_regla_check_list.php` siguen esperando. Hasta que lo estén, el push
 del módulo va a fallar con 404, que es ruidoso y por lo tanto está bien.
 
-**Lo que hace REGLA:** los pasos 1 (los 65 campos) y 2 (las fallas con su foto).
+**Lo que hace Regla Python:** los pasos 1 (los 65 campos) y 2 (las fallas con su foto).
 **El paso 3 no** — el correo que cierra el check list lo aprieta administración
 en el sistema viejo y el estado vuelve por el pull. Mismo criterio que el check
 list de ingreso; mantenerlos iguales vale más que optimizar cada uno.
@@ -858,9 +896,9 @@ list de ingreso; mantenerlos iguales vale más que optimizar cada uno.
 
 | Qué | Por qué no se replica |
 |---|---|
-| `precios` / `precios_adicionales` | Comentados en el código del legado, y **16 filas de 2.956**; la última con valor ≠ 0 es del **2026-02-13**, seis meses. |
+| `precios` / `precios_adicionales` | Comentados en el código de Regla PHP, y **16 filas de 2.956**; la última con valor ≠ 0 es del **2026-02-13**, seis meses. |
 | `faltante` | No es que se use poco: **inalcanzable**. La línea que la leería está comentada y la vista no tiene ningún campo con ese nombre. 0 filas en 2026. |
-| `servicios_mecanicos` | **No está replicada** — la única tabla del módulo que el pull no trae. REGLA sugiere contra lo que realmente se escribió, ordenado por frecuencia, que es mejor fuente además de ser la única. |
+| `servicios_mecanicos` | **No está replicada** — la única tabla del módulo que el pull no trae. Regla Python sugiere contra lo que realmente se escribió, ordenado por frecuencia, que es mejor fuente además de ser la única. |
 
 **Lo que sí se replicó y casi no se ve: la REAPERTURA.** Un check list en
 `REABIERTO` escribe en `fallas_adicionales` / `modalidad_adicional` /
@@ -876,12 +914,12 @@ Validado contra **89.760 valores históricos: 0 fuera del menú** (16 son el cor
 de `varchar` de MySQL, que ya conocíamos).
 
 **Las fotos van por una ruta pública con token**, `/f/<43 caracteres>`, y eso
-sube la barra respecto del legado, que tiene la carpeta abierta con el nombre del
+sube la barra respecto de Regla PHP, que tiene la carpeta abierta con el nombre del
 archivo adivinable (lleva el VIN y la fecha). Dos condiciones que son de diseño y
 están construidas así:
 
 1. **La ruta resuelve por TOKEN contra `fotos_publicadas`, nunca por ruta de
-   archivo.** Si fuera `/f/<hmac(ruta)>`, toda foto de REGLA quedaría alcanzable
+   archivo.** Si fuera `/f/<hmac(ruta)>`, toda foto de Regla Python quedaría alcanzable
    para quien conozca el esquema — incluidas las de `check_list_regla`, que
    llevan `link_guia`, la guía con nombres y RUT. Publicar es un acto, no una
    propiedad de estar guardado en el disco.
@@ -890,6 +928,128 @@ están construidas así:
    de daños de un vehículo es aceptable; para un documento con datos de una
    persona no lo sería, y por eso la condición 1 importa más que el largo del
    token.
+
+### 12. El port del IT — en curso desde el 2026-09-08
+
+**Medido contra `produccion/Pedido.php` y `produccion/Pedido_model.php`.**
+
+#### Regla Python replicaba una rama que en producción NO EXISTE
+
+`Pedido.php` toca `'It'` en dos lugares, y en producción son **dos, no tres**:
+
+| | Dónde | Qué es |
+|---|---|---|
+| 8773 | dentro de la guarda de retención | sólo el `redirect` |
+| **9412** | `elseif ($calle == 'It')` — el IT nuevo | **la única que escribe** |
+
+El `case 'It'` dentro de `switch($calle)` —la rama vieja, con
+`fecha_revision_salida`, `patio` y `ubicacion`— **está en test y no está en
+producción**. Y aunque estuviera: `actualizar_it_process()` hace
+`$_POST['calle'] = 'IT'`, `actulocproccess` lo normaliza a `'It'` con
+`ucwords(strtolower())`, y las cuatro salidas de la rama 9412 son
+`redirect(); return;`. La cadena de nueve `elseif($calle==…)` es una sola
+—contado por llaves, no por indentación— y el `switch` viene después.
+
+**Regla Python manda hoy `calle='It'` y `despachado='INGRESO A TALLER'`: es la
+rama vieja, campo por campo.** Cada IT hecho en Regla Python le escribe a Regla
+PHP un estado que la pantalla de Regla PHP ya no produce.
+
+#### Y decía que `registromov()` se llamaba cero veces. Es UNA
+
+Estaba escrito acá y en `movimientos.registrar()`. **Falso**: la rama viva lo
+llama en `produccion/Pedido.php:9505`. El conteo se había hecho sobre el
+archivo de test.
+
+El dato lo confirma sin leer código — `registros` con `accion='It'` en 2026:
+
+```
+'INSPECCION MECANICA DESPACHO'   111    ultima 2026-07-30
+'INGRESO A TALLER'                56    ultima 2026-07-29
+```
+
+Exactamente los dos estados que esa rama produce, y ningún otro. O sea que
+Regla Python le está **sacando** al historial de Regla PHP una fila que Regla
+PHP sí escribe — el error espejado del pendiente 8, donde metíamos una de más.
+
+*(El `accion='IT'` en mayúsculas, 600–1500 por mes, es otra cosa: lo escribe la
+pantalla de LAVADO al mandar la unidad a taller. Y es esa misma rama la que
+estampa `fecha_revision_salida`, no el IT — así que el KPI de Incidencia
+Mecánica de CIDEF, cuyo universo es esa fecha, no depende del IT.)*
+
+#### Lo que el IT nuevo hace, de `destinos_it()`
+
+| Destino | patio | calle | estado | evidencia |
+|---|---|---|---|---|
+| ZD | `PATIO 1` | `ZD` | `ZONA DE DESPACHO` | no |
+| DYP | `PATIO 2` | `ENTREGADO DYP` | `DYP` | **sí** |
+| FR | `PATIO 1` ⚠ | `Cmp3` | `FR - MECANICA` | **sí** |
+
+Excepción heredada: CARFLEX con ZD queda en `INSPECCION MECANICA DESPACHO`.
+
+> **⚠ El `PATIO 1` de FR es un BUG VIVO de Regla PHP desde el 2026-09-02**,
+> confirmado por Franco, que lo arregla de su lado y cuenta las unidades
+> afectadas. Lo correcto es `PATIO 2`, que es lo que `PATIO_POR_ESTADO` ya dice
+> con **98,9%, n=809**. Regla Python usa PATIO 2 y la tabla queda como estaba.
+> Es el primer caso donde *coincidir vale más que tener razón* **no** aplica:
+> no se copia un bug que el dueño del sistema ya decidió arreglar.
+
+Observación y al menos una foto son obligatorias si el destino es DYP o FR **o**
+si el estado IT es `PRESENTA FALLAS`. Tope 6 fotos, 8 MB cada una, en
+`assets/images/it/{VIN}/`, nombre `IT_{VIN}_{Y-m-d_H-i-s}_{n}.{ext}`. La fila
+va a la tabla `fotos_it` por `insertar_foto_it` (`Pedido_model.php:3494`).
+
+#### El correo del IT SÍ llega a un tercero
+
+`destinatarios_it()` en producción tiene `$modoPrueba = FALSE`:
+
+```
+fgonzalez@logautos.cl, nrodriguez@logautos.cl, felipe.leon@logautos.cl
++ preentrega@cidef.cl   cuando el cliente es CIDEF
+```
+
+**Es el segundo canal hacia un tercero que Regla Python va a manejar**, y a
+diferencia de la inspección de despacho, acá las fotos van **incrustadas por
+`cid`**, no como enlaces. `rparra` no está en el correo: está en la guarda de
+retención, y confundir las dos listas era un dato del documento de diseño, no
+del código.
+
+#### La guarda de retención — CONSTRUIDA el 2026-09-08
+
+`produccion/Pedido.php:8738` bloquea el movimiento cuando el estado es
+`NO DISPONIBLE`, `FR - MECANICA` o `IT FALTA SEGUNDA PDI`, **o** cuando la calle
+es `Cmp3`; sólo `fgonzalez` y `rparra` la saltean. **No es del IT**: está arriba
+de toda la cadena de `actulocproccess`, así que cubre ocho pantallas. Hoy hay
+**24 unidades retenidas** (23 en `FR - MECANICA`, 1 sólo por la calle).
+
+**La calle va aparte del estado y no es redundante**: esa unidad número 24 está
+en `Cmp3` con otro estado, y sin esa condición se mueve.
+
+**El permiso va por PERSONA, no por rol, y eso lo decidió el dato:**
+`rparra@logautos.cl` (userId 241, activo) es **roleId 6 = "Patio", el mismo de
+otros 36 usuarios activos**. Un permiso derivado del rol se lo daría a los 36 y
+la guarda quedaría encendida sin frenar a nadie — peor que no tenerla, porque
+se ve prendida. Va en `permisos_regla`, sembrada con las dos direcciones que
+Regla PHP tiene cableadas.
+
+**La guarda vive en `movimientos.registrar()`**, mismo argumento que el push: es
+el único camino por el que se escribe un movimiento y lo llaman seis pantallas.
+Levanta `UnidadRetenida`, que `app.py` convierte en la pantalla `retenida.html`
+con el motivo y **quién puede destrabarla** — un cartel que dice "no podés" y no
+dice quién sí, manda a preguntar por los pasillos. Los intentos frenados van a
+`intentos_bloqueados_regla`, que es tabla y no log: si la guarda se dispara
+cincuenta veces por día, eso es dato.
+
+**Hay una SEGUNDA guarda en Regla PHP que no se replica todavía**:
+`segundolavado_proces()` (`produccion/Pedido.php:12105`), con los mismos tres
+estados, **sin `Cmp3` y sin excepción para nadie**. Regla Python no tiene esa
+pantalla; cuando la tenga, es otra regla y se copia aparte.
+
+#### Lo que falta del port
+
+Las fotos con su tabla, el selector de destino, el correo por Resend con la
+tabla de destinatarios, y las entidades de push —`destino_it` (que **no está**
+en las 31 columnas de la lista blanca, medido en vivo), el movimiento que hoy
+falta, y las fotos—.
 
 ### 6. Migraciones versionadas — aprobado, sin construir
 
@@ -904,18 +1064,18 @@ Correr `estado` justo después de la 1 es **obligatorio** en el runbook.
 Descubierto contando las llamadas a `registromov()` de las cuatro funciones de
 check list de una sola pasada:
 
-| Función del legado | `registromov()` | `actualizar_vin()` |
+| Función de Regla PHP | `registromov()` | `actualizar_vin()` |
 |---|---|---|
 | `check_list()` | **0** | 1 |
 | `check_list_mecanica_proces()` | **0** | 1 |
 | `subida_foto_check_list_mecanico_proces()` | 0 | 0 |
 
 El mecánico nació con `empuja_movimiento=False`. El de ingreso lo empujaba, así
-que cada check list hecho en REGLA le metía a `registros` una fila que la
-pantalla del legado nunca genera — y de ese historial salen sus reportes.
+que cada check list hecho en Regla Python le metía a `registros` una fila que la
+pantalla de Regla PHP nunca genera — y de ese historial salen sus reportes.
 
 **Se contó antes de tocar y el número era CERO:** no había ningún check list
-cargado en REGLA en Railway, así que no quedó ninguna fila espuria que limpiar.
+cargado en Regla Python en Railway, así que no quedó ninguna fila espuria que limpiar.
 El cambio es sólo hacia adelante. `check_list.py` pasa `empuja_movimiento=False`
 desde el 2026-09-02.
 
@@ -931,17 +1091,17 @@ módulo, y no se resolvió sola porque en la prueba anduvieran las dos:
 
 | Orden | Qué queda | Cómo termina |
 |---|---|---|
-| **1 entra, 2 falla** | el legado tiene el check list; la unidad todavía no lo dice | la cola reintenta con backoff y **converge sola**. Mientras tanto hay una fila en `check_list` que se puede encontrar |
+| **1 entra, 2 falla** | Regla PHP tiene el check list; la unidad todavía no lo dice | la cola reintenta con backoff y **converge sola**. Mientras tanto hay una fila en `check_list` que se puede encontrar |
 | **2 entra, 1 falla** | la unidad **dice** que tiene check list y no existe ninguno | **nadie lo nota**: `fecha_check_list` es una fecha plausible y nada se ve roto |
 
 Por eso `depende_de` va en la 2 y no al revés: la primera se recupera, la
 segunda hay que hacerla **imposible**. Probado en `probar_circulo_ingreso.py`
 forzando cada mitad — ejecutar la 2 primero devuelve `espera` y la unidad queda
-intacta; con el legado caído la 2 falla, queda sin resolver con el intento
-contado, la fila del check list sigue ahí, y al volver el legado entra sola.
+intacta; con Regla PHP caído la 2 falla, queda sin resolver con el intento
+contado, la fila del check list sigue ahí, y al volver Regla PHP entra sola.
 
 **`observaciones` acumula y NO se duplica.** El endpoint concatena (bloque J),
-así que REGLA manda **sólo los daños de esta pasada**. Verificado con dos
+así que Regla Python manda **sólo los daños de esta pasada**. Verificado con dos
 guardados seguidos sobre la 66505 en producción:
 
 ```
@@ -949,8 +1109,8 @@ antes   : ...ANTORCHA CAJON DEL IZQ DESPEGADA (1) LEVE | SONDA-ACUMULA-1
 agregado:  CAPOT RAYA (1) LEVE | PARACH DEL ABOLLADO (1) MEDIO |
 ```
 
-Lo anterior no se tocó y la primera pasada aparece **una sola vez**. Si REGLA
-mandara el acumulado completo —como hacía el legado, que leía con
+Lo anterior no se tocó y la primera pasada aparece **una sola vez**. Si Regla Python
+mandara el acumulado completo —como hacía Regla PHP, que leía con
 `getobservacion_dyp()` y concatenaba del lado del cliente— cada guardado
 duplicaría todo lo anterior. El riesgo acá es al revés que en la PDI: allá era
 **pisar**, acá es **repetir**.
@@ -965,12 +1125,12 @@ tienen más de un elemento.
 `requerimiento` topan en **990 caracteres** y MySQL corta —la base no está en
 modo estricto—, así que las tres listas se desalinean y la pieza *n* deja de
 corresponderse con su tipo de daño. La fila 20058 tiene 63 piezas, 65 tipos y 90
-niveles: `requerimiento` termina cortado en `-A`. REGLA lo avisa en el log antes
+niveles: `requerimiento` termina cortado en `-A`. Regla Python lo avisa en el log antes
 de mandar; no lo arregla, porque recortar del lado nuestro sería una divergencia
 en vez de un aviso. (Y no es un guion dentro de un nombre: de los 429 nombres de
 `piezas`, los 35 de `tipo_dano` y los 4 de `nivel_dano`, **ninguno** tiene uno.)
 
-**Lo que REGLA no manda, con su número:**
+**Lo que Regla Python no manda, con su número:**
 
 | Columna | Por qué |
 |---|---|
@@ -1012,11 +1172,11 @@ lee `archivo1..archivo9` y por cada una llama a `descargarImagenComoDataUri()`
 
 #### El envío es un acto aparte, y es mejor que el original
 
-El legado inserta la fila al confirmar y después le pega las fotos con UPDATE.
-REGLA manda la fila **una sola vez, completa**, con un botón que el legado no
-tiene. No es una concesión al endpoint desplegado: **ese estado intermedio del
-legado es el peligroso**, porque una fila sin fotos es la que el PDF del despacho
-renderiza con la sección vacía — el bug de agosto — y el legado tiene esa ventana
+Regla PHP inserta la fila al confirmar y después le pega las fotos con UPDATE.
+Regla Python manda la fila **una sola vez, completa**, con un botón que Regla PHP no
+tiene. No es una concesión al endpoint desplegado: **ese estado intermedio de
+Regla PHP es el peligroso**, porque una fila sin fotos es la que el PDF del despacho
+renderiza con la sección vacía — el bug de agosto — y Regla PHP tiene esa ventana
 abierta hoy.
 
 **La ventana no es teórica, es 1 a 2% por mes.** Inspecciones sin ninguna foto
@@ -1031,10 +1191,10 @@ abierta hoy.
 Entre 4 y 17 por mes, sostenido. Cada una es un PDF que llegó al cliente con la
 sección de fotos vacía. **No se pide la ruta PUT.**
 
-#### El acoplamiento nuevo: un documento del cliente depende de REGLA
+#### El acoplamiento nuevo: un documento del cliente depende de Regla Python
 
 **Es la primera vez que algo que sale a un tercero depende del sistema nuevo.**
-Las URL con token viven en `archivo1..archivo9` del legado, y el legado las
+Las URL con token viven en `archivo1..archivo9` de Regla PHP, y Regla PHP las
 descarga **recién en el despacho, otro día**.
 
 Cuánto después, medido sobre 8.953 pares inspección→despacho de los últimos 12
@@ -1061,13 +1221,13 @@ del mismo día no depende de eso.)*
    fechas. **Es permanente por construcción** — y desde ahora eso es un
    requisito, no una casualidad: `probar_check_list_mecanica.py` lo afirma por
    código, así que agregar un TTL o una limpieza rompe la suite.
-2. **El correo al cliente depende de que REGLA esté arriba en el momento del
+2. **El correo al cliente depende de que Regla Python esté arriba en el momento del
    despacho**, que puede ser dentro de un año. Cada despliegue a Railway es una
    ventana chica; si cae justo ahí, el PDF sale con «No se pudo cargar la
-   imagen» y la URL impresa —el legado ya lo hace así, para poder diagnosticar—.
+   imagen» y la URL impresa —Regla PHP ya lo hace así, para poder diagnosticar—.
 3. **Y depende del volumen de Railway.** Si alguien limpia `DATA_DIR`, los PDF
-   de los despachos futuros pierden sus fotos. No hay copia del otro lado: el
-   legado guarda la URL, no el archivo.
+   de los despachos futuros pierden sus fotos. No hay copia del otro lado: Regla
+   PHP guarda la URL, no el archivo.
 
 #### El tope de nueve es del cable, no del modelo
 
@@ -1075,10 +1235,10 @@ Las fotos viven en `inspeccion_despacho_fotos_regla`, una por fila, **sin
 límite**. El aplanado a `archivo1..archivo9` pasa recién al empujar y
 `aplanar_para_push` devuelve `sobrantes` con las que no entraron; la pantalla lo
 dice antes de enviar. `link_unidad` va con **todas**, así que la foto once llega
-igual al legado: lo que no llega es a la sección de fotos del PDF.
+igual a Regla PHP: lo que no llega es a la sección de fotos del PDF.
 
 **`contador` lleva el número real, no la cantidad de slots.** Con once fotos va
-11. Es lo que hace el legado —su `_proces()` guarda `'contador'=>$cont` siempre,
+11. Es lo que hace Regla PHP —su `_proces()` guarda `'contador'=>$cont` siempre,
 y la cadena de `elseif` sólo decide a qué `archivoN` va la foto— y no rompe nada
 porque **nadie lo lee para recorrer los archivos**: el único lector es
 `getcont_insp_desp` (`Nota_model:2994`), llamado desde el propio paso de subida
@@ -1094,9 +1254,9 @@ El dato lo justifica: **0 filas** en `registros.estado` —coherente con
 rastro que deja es el movimiento que *sale* de él, los dos a `DESPACHADO`. Es una
 marca de paso, la misma especie que `SOLICITUD DESPACHO`.
 
-**Pero es el primero de esa lista que ORIGINA REGLA.** Hasta ahora esos estados
-los ponía el legado y REGLA sólo los mostraba: una lista de pasos vacía era
-coherente porque REGLA no había hecho nada. Acá el movilizador llega **justo
+**Pero es el primero de esa lista que ORIGINA Regla Python.** Hasta ahora esos estados
+los ponía Regla PHP y Regla Python sólo los mostraba: una lista de pasos vacía era
+coherente porque Regla Python no había hecho nada. Acá el movilizador llega **justo
 después de confirmar su trabajo**, y el cartel genérico —«no hay paso siguiente
 definido»— se lee como que la pantalla se rompió.
 
@@ -1106,30 +1266,30 @@ paso definido — ahí la ausencia sí es rara y no hay que taparla.
 
 ### 11. Almacenamiento: se escribe en LOS DOS lados, y el objeto queda postergado
 
-**Decisión de Franco, 2026-09-04.** Durante el mes de mejoras las fotos van al
-**legado** —para que su PDF las encuentre donde siempre— **y a Railway**, que es
+**Decisión de Franco, 2026-09-04.** Durante el mes de mejoras las fotos van a
+**Regla PHP** —para que su PDF las encuentre donde siempre— **y a Railway**, que es
 la copia que tiene que sobrevivir.
 
-**La subida al legado NO se enciende hasta que Franco confirme que el disco
+**La subida a Regla PHP NO se enciende hasta que Franco confirme que el disco
 bajó.** El cPanel está al **97% de 200 GB** (~8 GB libres) y él está liberando
 correo (más de 160 GB en cuentas). Un cPanel al 97% es donde MySQL empieza a
 fallar escrituras, y eso rompe el sistema con el que trabaja la empresa hoy, no
-REGLA. Por eso el endpoint lleva un **interruptor explícito** en `FALSE`.
+Regla Python. Por eso el endpoint lleva un **interruptor explícito** en `FALSE`.
 
 **Y no está resuelto:** Railway sigue acumulando sobre 4,6 GB, o sea ~3 meses aun
 con fotos más chicas. **El almacenamiento de objetos queda POSTERGADO, no
 cancelado**, y vuelve cuando dejen el cPanel — el plan de fondo es que a fin del
-mes de pruebas ese servidor quede sólo para correo y para el legado.
+mes de pruebas ese servidor quede sólo para correo y para Regla PHP.
 
 #### El caudal y el peso, medidos
 
 18.300 fotos/mes con los cuatro módulos vivos: check list de ingreso 8.116,
 inspección 6.096, IT 3.584, mecánico 503.
 
-Fotos reales del legado (n=24): **96 KB promedio, 201 KB máximo**. Y un hallazgo
-que cambia la discusión: **ninguna foto del legado supera los 1000 px** — el PHP
+Fotos reales de Regla PHP (n=24): **96 KB promedio, 201 KB máximo**. Y un hallazgo
+que cambia la discusión: **ninguna foto de Regla PHP supera los 1000 px** — el PHP
 las reduce al subirlas. Lo que el cliente ve en el PDF hace años es eso. **Los
-1600 px de REGLA están por encima de la base que ya funciona.**
+1600 px de Regla Python están por encima de la base que ya funciona.**
 
 `hoja_fotos.html` es la hoja de comparación con tres fotos reales de daños en
 1000/800/600 px × calidad 0,8/0,7/0,6, con el peso y un recorte al 100% para
@@ -1146,7 +1306,7 @@ juzgar si el rayón sobrevive, más la tabla de meses de autonomía por cada pes
 **Daños** (check list de ingreso, mecánica, IT con evidencia): **800 px, calidad
 0,8**. **Inspección de despacho**: **600 px, calidad 0,7**.
 
-El criterio de Franco: 800 está dentro de la banda que el legado ya entrega
+El criterio de Franco: 800 está dentro de la banda que Regla PHP ya entrega
 —existen fotos de 565×750 en producción y nadie reclamó—, así que no es una
 apuesta; y en daños se movió **una sola palanca**, porque la pérdida de
 resolución y la de compresión se suman y en un rayón fino se nota el doble.
@@ -1167,16 +1327,16 @@ resolución y la de compresión se suman y en un rayón fino se nota el doble.
 | | **18.300** | **758 MB/mes** |
 
 **6,2 meses de autonomía** contra los 4,6 GB de Railway — contra **1,0 a 1,3**
-con los 1600 px de antes. **Es un PISO, no un pronóstico**: cuando REGLA produzca sus primeras fotos reales hay que medir el promedio de verdad y volver sobre el número.
+con los 1600 px de antes. **Es un PISO, no un pronóstico**: cuando Regla Python produzca sus primeras fotos reales hay que medir el promedio de verdad y volver sobre el número.
 
-> **El caveat del número:** las fuentes medidas son fotos del legado, ya
+> **El caveat del número:** las fuentes medidas son fotos de Regla PHP, ya
 > comprimidas y ya reducidas a ≤1000 px. Una foto de teléfono bajada a 800
 > conserva más detalle real y va a pesar más. Acotado: **+40% → 4,4 meses**,
 > **+80% → 3,5 meses**. El número medido es el piso, no el techo.
 
 #### Dónde van los daños del check list: los seis lectores
 
-`danos/` **no es "la convención vieja"**. La rama del legado es
+`danos/` **no es "la convención vieja"**. La rama de Regla PHP es
 `if (empty($motonave))`: sin motonave va a `assets/images/danos/` plana, con
 motonave va a `assets/images/{motonave}/{vin}/`. **Las dos conviven hoy** — en
 2026, **1.181 de 4.539** check lists (26%) van a la plana.
@@ -1194,15 +1354,15 @@ motonave va a `assets/images/{motonave}/{vin}/`. **Las dos conviven hoy** — en
 satisface a todos.**
 
 Y el dato que cambia el peso de la decisión: **los lectores 4, 5 y 6 ya son
-ciegos al 26% del legado** — las unidades sin motonave. No es un fallo que REGLA
-introduce; es uno que REGLA compartiría.
+ciegos al 26% de Regla PHP** — las unidades sin motonave. No es un fallo que Regla Python
+introduce; es uno que Regla Python compartiría.
 
 **Las dos opciones, con su costo:**
 
 | | Qué es | Costo | Qué deja roto |
 |---|---|---|---|
-| **A** | `assets/images/danos/` plana | **cero PHP** | Los lectores 4, 5 y 6 no ven las de REGLA — igual que hoy no ven el 26% sin motonave |
-| **B** | A, **más** tocar `listarFotos()` y el `glob` de la masiva del servidor para que miren también `danos/` por VIN | dos ediciones **aditivas** en funciones de **lectura** — si el agregado falla, devuelven lo mismo que hoy | nada. Y **arregla de paso el 26% del legado** que hoy no sale en la exportación masiva |
+| **A** | `assets/images/danos/` plana | **cero PHP** | Los lectores 4, 5 y 6 no ven las de Regla Python — igual que hoy no ven el 26% sin motonave |
+| **B** | A, **más** tocar `listarFotos()` y el `glob` de la masiva del servidor para que miren también `danos/` por VIN | dos ediciones **aditivas** en funciones de **lectura** — si el agregado falla, devuelven lo mismo que hoy | nada. Y **arregla de paso el 26% de Regla PHP** que hoy no sale en la exportación masiva |
 
 **Descartada, y vale decir por qué:** `assets/images/danos/{vin}/` —la
 subcarpeta por VIN bajo prefijo fijo— **rompe el lector 3**, que barre `danos/`
@@ -1211,7 +1371,7 @@ A en todo.
 
 **Elegida B**, y el argumento que la cierra es de Franco y es mejor: ese 26% es
 de **hoy**, con los check lists repartidos entre los dos sistemas. **Durante el
-paralelo todos los usuarios de patio trabajan sólo en REGLA**, así que desde el
+paralelo todos los usuarios de patio trabajan sólo en Regla Python**, así que desde el
 primer día la masiva dejaría de ver el **100%** de los check lists nuevos. La
 ceguera no se queda en 26%: se vuelve total. Eso no es compartir un agujero
 existente, es **apagar una función que se usa**.
@@ -1239,7 +1399,7 @@ referencia. Es código muerto, y editarlo habría sido trabajo invisible.
 | *(sin botón)* | — | `procesarExportacionMasiva`, **muerto** |
 
 **Lo individual ya estaba resuelto**: el segundo botón se llama literalmente
-«SIN MOTONAVE» y usa `listarFotosViejas`, que barre `danos/`. El legado ya tenía
+«SIN MOTONAVE» y usa `listarFotosViejas`, que barre `danos/`. Regla PHP ya tenía
 el problema y ya lo había resuelto con un botón aparte.
 
 **La masiva es la única sin salida** — y es la que importa.
@@ -1275,6 +1435,21 @@ nuevo, y su ausencia se ve.
 > previa está en el bloque, desde el navegador porque `nota/...` responde 307 al
 > login.
 
+> **EL BLOQUE R2 SE CAYÓ ENTERO Y LO REEMPLAZA EL R3**, medido contra
+> `produccion/Nota.php`. De las cuatro ediciones queda **una**: producción
+> ya tiene `listarFotosVin`, que devuelve URL completas y que la masiva ya
+> llama. Lo único que le falta es mirar la carpeta plana `danos/`, donde el
+> VIN está en el NOMBRE del archivo y no en una subcarpeta. La edición es
+> aditiva —cero líneas quitadas, 42 agregadas— y **suma siempre** en vez de
+> ser un respaldo: durante el paralelo una unidad puede tener fotos viejas
+> bajo su motonave y las nuevas en `danos/`, y un respaldo las taparía.
+>
+> Y el paquete que arma la masiva —una carpeta por VIN con el PDF de la OT y
+> las fotos— **es la evidencia que Franco sube a mano a un Google Drive para
+> el requerimiento DYP mensual de CIDEF**, separado por embarque, a partir de
+> un Excel con las OT del mes. Una exportación sin fotos no es una molestia:
+> es el paquete que le falta al cliente.
+
 **Los dos bloques —el endpoint de subida y estas lecturas— se despliegan JUNTOS**
 cuando Franco confirme que el disco del cPanel bajó.
 
@@ -1285,7 +1460,7 @@ Cinco propiedades, y **dos cosas que no se pudieron cumplir tal cual**:
 | | |
 |---|---|
 | **El margen de disco no ve la cuota de cPanel** | `disk_free_space()` informa el *filesystem*, que en hosting compartido es el del servidor entero: puede decir cientos de GB libres con la cuenta al 97%. Se implementan **dos frenos** y el que protege de verdad es el interruptor manual. |
-| **La carpeta del check list de ingreso no se replica** | El legado usa `assets/images/{motonave}/{vin}/`, y las dos partes salen del dato — la motonave es texto libre y ya rompió una vez (`COSCO PACIFIC / YANTIAN` crea dos directorios). Replicarlo exigiría aceptar la carpeta desde el cuerpo, que es justo lo prohibido. Los daños de REGLA van a `assets/images/danos/`, que el legado ya usa. **No afecta al PDF**: ése lee `archivo1..9` → `assets/images/unidades/`, que sí es plana y se replica exacta. |
+| **La carpeta del check list de ingreso no se replica** | Regla PHP usa `assets/images/{motonave}/{vin}/`, y las dos partes salen del dato — la motonave es texto libre y ya rompió una vez (`COSCO PACIFIC / YANTIAN` crea dos directorios). Replicarlo exigiría aceptar la carpeta desde el cuerpo, que es justo lo prohibido. Los daños de Regla Python van a `assets/images/danos/`, que Regla PHP ya usa. **No afecta al PDF**: ése lee `archivo1..9` → `assets/images/unidades/`, que sí es plana y se replica exacta. |
 
 **Dónde escribe hoy cada módulo**, medido sobre el PHP:
 
@@ -1297,7 +1472,7 @@ Cinco propiedades, y **dos cosas que no se pudieron cumplir tal cual**:
 | Inspección de despacho | `assets/images/unidades/` | `{vin}_INSPECCION_{rótulo}_{Y-m-d H:i:s}_.jpg` |
 | IT | `assets/images/it/{vin}/` | `IT_{vin}_{Y-m-d_H-i-s}_{n}.jpg` |
 
-**Tres detalles del nombre que hay que copiar** para que los de REGLA no se
+**Tres detalles del nombre que hay que copiar** para que los de Regla Python no se
 reconozcan de lejos: el saneo es `strtr($n, " ", "_")` —**sólo espacios**, los
 dos puntos de la hora se quedan—; hay un **guion bajo antes de la extensión**
 (`_.jpg`), que sale de un pegado accidental pero lo tienen los 16.365 archivos
@@ -1311,7 +1486,7 @@ destinatarios se comentó A PROPÓSITO.** El cliente no quiere recibir el correo
 de la inspección; las imágenes le llegan en el PDF del despacho. Quedó viva sólo
 `controldespachos@logautos.cl`, para tener registro interno.
 
-Así que REGLA **replica lo que corre**: una dirección, interna, tabla de una
+Así que Regla Python **replica lo que corre**: una dirección, interna, tabla de una
 fila. **Los destinatarios comentados no se reviven** — revivirlos sería un
 cambio de comportamiento hacia terceros disfrazado de migración.
 
@@ -1331,8 +1506,8 @@ líneas no se ve en un `grep`.
 | Reply-To | el mismo |
 | Asunto | `Inspeccion de Despacho Logautos. Destino: {destino}` |
 | Para | `controldespachos@logautos.cl` |
-| Cuerpo | el HTML del legado, los nueve campos en el mismo orden |
-| Firma | «enviado automáticamente por sistema REGLA» — **ya lo decía el legado** |
+| Cuerpo | el HTML de Regla PHP, los nueve campos en el mismo orden |
+| Firma | «enviado automáticamente por sistema REGLA» — **ya lo decía Regla PHP** |
 
 Los espacios de más del nombre del remitente (`'...Unidad '.' '.$vin.' '`) se
 copian tal cual: no son un descuido nuestro, son la firma que el destinatario ya
@@ -1349,15 +1524,15 @@ cosas que mantener sincronizadas para nada.
     $emailcli = explode(',', $emailcli);                     <- NO comentada
     foreach ($emailcli as $indices) { $mail->addCC($indices); }
 
-El legado hace `explode` sobre una variable que nunca se asignó y agrega un CC
+Regla PHP hace `explode` sobre una variable que nunca se asignó y agrega un CC
 vacío que PHPMailer descarta. **El comportamiento observable es «sin CC»**, y eso
-es lo que REGLA replica. **No se reproduce el MECANISMO**: copiar un bug para que
+es lo que Regla Python replica. **No se reproduce el MECANISMO**: copiar un bug para que
 el síntoma coincida es copiar dos cosas donde hacía falta una.
 
 > **ANOTADO APARTE: el día que ese hosting pase a PHP 8, esa línea deja de ser
 > un aviso silencioso.** `explode()` sobre `null` es un `Warning` en PHP 7 y un
 > `TypeError` en PHP 8 — el correo de la inspección dejaría de salir, con un 500.
-> No es de REGLA, pero es de este archivo y hay que tenerlo escrito.
+> No es de Regla Python, pero es de este archivo y hay que tenerlo escrito.
 
 #### La cola: si Resend se cae, la inspección no se pierde
 
@@ -1366,7 +1541,7 @@ que las dos entradas del push, y lo manda el mismo hilo de fondo. **No se manda
 en el request.**
 
     1. la fila local
-    2. la cola del push        (la fila del legado y las tres columnas)
+    2. la cola del push        (la fila de Regla PHP y las tres columnas)
     3. la cola del aviso
                                los tres en el MISMO commit
 
@@ -1379,7 +1554,7 @@ intentos queda `agotado = 1` y **la fila no se borra**: es la evidencia de que
 alguien tiene que mirar, y la reconciliación la cuenta.
 
 `procesar_avisos()` va en el hilo de fondo **antes** del `if not push_activo():
-continue`, y eso no es un detalle de orden: el correo es de REGLA, no del legado,
+continue`, y eso no es un detalle de orden: el correo es de Regla Python, no de Regla PHP,
 así que apagar el push no puede apagarlo. La primera versión quedó detrás del
 `continue`, contradiciendo su propio comentario.
 
@@ -1389,14 +1564,14 @@ así que apagar el push no puede apagarlo. La primera versión quedó detrás de
 correo de la inspección y el PDF— y uno respaldaba al otro. Con el correo
 confirmado como interno, una inspección empujada con **cero fotos** dejó de ser
 una molestia y pasó a ser **un cliente que no recibe nada**. Son 4 a 17 por mes
-en el legado.
+en Regla PHP.
 
 Va a la reconciliación diaria, no a un log:
 
 ```
 INSPECCIONES SIN FOTOS  (el PDF del despacho sale con la seccion vacia)
    en el sistema anterior, desde 2025-09 :   107
-   en REGLA                        :     0   <- tiene que ser 0
+   en Regla Python                        :     0   <- tiene que ser 0
 
 AVISOS POR CORREO  (controldespachos@ es el unico registro interno)
    enviados / pendientes / AGOTADOS
@@ -1405,14 +1580,14 @@ AVISOS POR CORREO  (controldespachos@ es el unico registro interno)
 Más `destinos_sin_regla`, que hoy da cero y **existe igual**: es el precedente de
 `LAVADO KSM` — un destino que no calza tiene que APARECER, no perderse.
 
-#### `cliente_cost` no está replicada — para cuando REGLA mande el correo del despacho
+#### `cliente_cost` no está replicada — para cuando Regla Python mande el correo del despacho
 
 El correo que sí toca a terceros es otro: `Pedido.php:inicio_proces()`, el del
 despacho, con **más de 80 direcciones vivas** más una lista dinámica por cliente
 que ahí sí está viva (`if (!empty($emailcli))`, leída de `cliente_cost.email`).
-**Ése lo sigue mandando administración desde el legado.**
+**Ése lo sigue mandando administración desde Regla PHP.**
 
-`cliente_cost` **no está en el pull**. El día que REGLA mande ese correo, esa
+`cliente_cost` **no está en el pull**. El día que Regla Python mande ese correo, esa
 tabla entra primero. Fase siguiente.
 
 #### Las dos condiciones de la tabla quedan escritas aunque hoy no apliquen
@@ -1425,7 +1600,7 @@ decididas y no discutirse de nuevo:
 2. **Pero un destino que no calza cae al conjunto por defecto Y SE REGISTRA.**
    Cero en doce meses no es «muerta», es «no observada».
 
-La búsqueda es **por subcadena**, como el `strstr` del legado: los destinos son
+La búsqueda es **por subcadena**, como el `strstr` de Regla PHP: los destinos son
 texto libre —438 distintos en doce meses— y una igualdad exacta no engancharía
 casi nunca.
 
@@ -1444,9 +1619,9 @@ existe, tiene ruta, y ninguna vista la invoca. No hay nada que revisar.
 
 ### 7. Decisiones que esperan datos, no código
 
-- **CARFLEX 0,022 vs 0,026.** El legado tiene **dos implementaciones vivas** con
+- **CARFLEX 0,022 vs 0,026.** Regla PHP tiene **dos implementaciones vivas** con
   tarifas distintas para el mismo cliente (`dash_acopio.php` y
-  `Examples.php::acopio_logautos`). REGLA replica la primera. **No se decide
+  `Examples.php::acopio_logautos`). Regla Python replica la primera. **No se decide
   leyendo el código**: que haya dos valores vivos significa que nadie lo revisó
   en años, no que uno sea el bug. El oráculo es una factura emitida, que está
   fuera del sistema.
@@ -1474,7 +1649,7 @@ Para leer el estado real de una unidad en producción **sin escribir**: un PUT c
 `legado_updated_at_conocido` del año 2000 y sin campos de la lista blanca
 devuelve 409 con `datos_actuales`.
 
-**`C:\Regla_Python\application` es SOLO LECTURA** — es el legado. El PHP nuevo se
+**`C:\Regla_Python\application` es SOLO LECTURA** — es Regla PHP. El PHP nuevo se
 escribe como archivo aparte en `scripts/`.
 
 **EL LINT SE CORRE EN EL SERVIDOR, Y NO ES OPCIONAL.** No hay `php` en la
@@ -1518,7 +1693,7 @@ llamaba nadie. Un spec que agrega un helper tiene que listar TODOS los puntos de
 llamada, y la verificación es buscar el literal viejo hasta que no quede
 ninguno.
 
-**El legado devuelve 200 con cuerpo vacío en vez de 404** (`404_override`), así
+**Regla PHP devuelve 200 con cuerpo vacío en vez de 404** (`404_override`), así
 que el cliente exige `ok: true` explícito y no se conforma con un 2xx.
 
 ### La regla de hábito tenía un costo que no estaba contado
@@ -1560,16 +1735,19 @@ tempdir y lo borra. Tres decisiones que se tomaron midiendo, no suponiendo:
 Medido después: de 33 GB acumulados y 717 MB por corrida a **371 MB de pico**,
 que la corrida siguiente barre.
 
-Las trece suites, ninguna escribe en producción:
+Las catorce suites, ninguna escribe en producción:
 
 ```bash
-# las trece, y `ficha_estados` NO esta en la lista porque el script no existe:
+# las catorce, y `ficha_estados` NO esta en la lista porque el script no existe:
 # estuvo nombrado aca meses y nadie lo notó, que es el mismo agujero de siempre
-for s in estados reconciliacion motivo_desvio push facturacion ubicacion ot_pdi          pull circulo circulo_ingreso circulo_mecanica check_list_mecanica          correo_inspeccion; do
+for s in estados reconciliacion motivo_desvio push facturacion ubicacion ot_pdi \
+         pull circulo circulo_ingreso circulo_mecanica check_list_mecanica \
+         correo_inspeccion retencion; do
   python scripts/probar_$s.py || echo "FALLA $s"
 done
 # circulo         el circuito entero, y la PDI contra las DOS listas blancas
 # correo_inspeccion  el correo; NO manda ninguno, RESEND_API_KEY va sin poner
+# retencion       las unidades que Regla PHP no deja mover, y quien las destraba
 python scripts/verificar_push_produccion.py   # 5 sondas contra producción, ninguna escribe
 python scripts/probar_precio_ot.py            # sondas; con --crear escribe OT reales sobre PRUEBA
 ```

@@ -1305,11 +1305,108 @@ def movimientos_por_vin(vin, excluir_unidad=None):
         "ORDER BY id DESC LIMIT 30", (vin,))
 
 
+# ---------------------------------------------------------------------------
+# La retencion: unidades que Regla PHP no deja mover
+# ---------------------------------------------------------------------------
+#
+# ES UNA DIVERGENCIA VIVA, NO UNA QUE INTRODUZCA EL PORT DEL IT. Regla PHP
+# bloquea el movimiento desde hace tiempo y Regla Python lo deja pasar, asi que
+# hoy una unidad retenida se puede mover desde la pantalla nueva.
+#
+# Copiado de produccion/Pedido.php:8738 -- la guarda esta ARRIBA DE TODA la
+# cadena de `actulocproccess`, antes del primer `if($calle == 'Dyp')`, asi que
+# no es del IT: bloquea actuloc, actudyp, actulava, actulami, actupdi,
+# actupdi_2, actuinv y el IT. Ocho pantallas.
+#
+#     if (($estado_por_id == 'NO DISPONIBLE' || $estado_por_id == 'FR - MECANICA'
+#          || $estado_por_id == 'IT FALTA SEGUNDA PDI' || $calle_por_id == 'Cmp3')
+#         && $_SESSION['email'] != "fgonzalez@logautos.cl"
+#         && $_SESSION['email'] != "rparra@logautos.cl")
+#
+# LA CALLE VA APARTE DEL ESTADO, y no es redundante: `Cmp3` es la calle de
+# `FR - MECANICA`, pero una unidad puede quedar en esa calle con OTRO estado --
+# hoy hay una asi en la replica. Sin la condicion de calle esa unidad se mueve.
+#
+# HAY UNA SEGUNDA GUARDA EN REGLA PHP y no se replica todavia:
+# `segundolavado_proces()` (produccion/Pedido.php:12105) usa los mismos tres
+# estados, SIN `Cmp3` y **sin excepcion para nadie**. Regla Python no tiene
+# pantalla de segundo lavado; cuando la tenga, esa guarda es distinta de esta y
+# hay que copiarla aparte en vez de reusar esta.
+ESTADOS_RETENIDOS = ("NO DISPONIBLE", "FR - MECANICA", "IT FALTA SEGUNDA PDI")
+CALLES_RETENIDAS = ("Cmp3",)
+
+
+class UnidadRetenida(Exception):
+    """La unidad esta retenida y quien la mueve no tiene el permiso.
+
+    Es una EXCEPCION y no un `return None` a proposito: `registrar` es la ultima
+    linea de defensa, y una pantalla que se olvide de preguntar tiene que
+    romperse fuerte y no escribir a medias. El camino normal es que la pantalla
+    llame antes a `motivo_retencion` y muestre el cartel."""
+
+
+def motivo_retencion(unidad):
+    """Por que esta unidad esta retenida, o None si no lo esta.
+
+    Devuelve el texto que va al cartel, con el valor adentro: "FR - MECANICA"
+    dice bastante mas que "esta bloqueada"."""
+    if unidad is None:
+        return None
+    estado = normalizar(unidad["despachado"] or "").upper()
+    if estado in ESTADOS_RETENIDOS:
+        return "estado {}".format(estado)
+    calle = (unidad["calle"] or "").strip()
+    if calle in CALLES_RETENIDAS:
+        return "calle {}".format(calle)
+    return None
+
+
+def puede_mover_retenida(email=None):
+    from modulos.permisos import MOVER_RETENIDA, tiene
+    return tiene(MOVER_RETENIDA, email)
+
+
+def quien_destraba():
+    from modulos.permisos import MOVER_RETENIDA, quienes
+    return quienes(MOVER_RETENIDA)
+
+
+def frena_la_retencion(unidad):
+    """El motivo si hay que frenar a QUIEN ESTA MIRANDO, o None si puede seguir.
+
+    Es lo que llaman las pantallas. La distincion con `motivo_retencion` no es
+    cosmetica: una unidad retenida que mira fgonzalez no se frena, y el cartel
+    no tiene que aparecer."""
+    motivo = motivo_retencion(unidad)
+    if motivo is None or puede_mover_retenida():
+        return None
+    return motivo
+
+
 def registrar(unidad, datos):
     """Devuelve el id del movimiento escrito. Lo necesita el check list, que
     guarda su propia fila y la cuelga del movimiento que la originó."""
     db = get_db()
     _asegurar_tabla(db)
+
+    # -- LA RETENCION, ANTES DE ESCRIBIR NADA --------------------------------
+    #
+    # Va aca y no en cada pantalla por el mismo argumento que el push:
+    # `registrar` es el unico camino por el que se escribe un movimiento y lo
+    # llaman seis pantallas. Pantalla por pantalla, la proxima queda sin guarda
+    # y sin que nadie lo note -- que es exactamente como llegamos a tener el
+    # push enganchado aca.
+    #
+    # El camino normal es que la pantalla haya llamado antes a
+    # `frena_la_retencion` y mostrado el cartel. Esto es la ultima linea: si
+    # una pantalla se olvida, revienta fuerte en vez de escribir la mitad.
+    motivo = frena_la_retencion(unidad)
+    if motivo is not None:
+        from modulos.permisos import MOVER_RETENIDA, registrar_intento
+        registrar_intento(db, MOVER_RETENIDA, unidad, motivo)
+        db.commit()
+        raise UnidadRetenida(motivo)
+
     cur = db.execute("""
         INSERT INTO movimientos_regla
           (unidad_id, vin, paso, paso_recomendado, es_desvio, motivo,
@@ -1352,12 +1449,21 @@ def registrar(unidad, datos):
     # avanzaria el `updated_at` del legado y la segunda chocaria contra su
     # propia escritura con un 409 falso.
     #
-    # El motivo de fondo es que EL LEGADO NO ESCRIBE ESA FILA. El bloque `It`
-    # de Pedido.php:9219 cambia el estado y NO llama a `registromov()` -- son 0
-    # llamadas, contadas --, que es la divergencia #1 que taller.py documento y
-    # decidio no imitar EN NUESTRA tabla. Pero empujarla al legado seria meterle
-    # a SU historial una fila que su propia pantalla nunca genera, y el
-    # historial del legado es de donde salen sus reportes.
+    # CORREGIDO EL 2026-09-08, Y ERA UN ERROR CARO. Aca decia que el bloque `It`
+    # de Regla PHP "llama a registromov() CERO veces". Es falso, y lo era
+    # cuando se escribio: la rama viva lo llama UNA vez
+    # (produccion/Pedido.php:9505). El conteo se habia hecho sobre el archivo de
+    # TEST, que ademas tenia una rama vieja que produccion no tiene.
+    #
+    # El dato lo confirma sin leer codigo: `registros` tiene filas de IT
+    # sostenidas, y las de `accion='It'` traen exactamente los dos estados que
+    # esa rama produce -- INSPECCION MECANICA DESPACHO 111 e INGRESO A TALLER 56
+    # en 2026. O sea que Regla Python le esta SACANDO al historial de Regla PHP
+    # una fila que Regla PHP si escribe.
+    #
+    # Se arregla en el port del IT, no aca: la fila que hay que escribir no es
+    # la de este `estado_hacia` sino la del DESTINO que el IT eligio
+    # (ZD / DYP / FR), y eso necesita la entidad nueva. Ver `taller.py`.
     #
     # El PDI es al reves: su bloque llama a registromov() dos veces, asi que
     # cuando entre esa entidad el movimiento SI se empuja.

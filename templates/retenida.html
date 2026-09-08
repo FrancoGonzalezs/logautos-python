@@ -1,0 +1,34 @@
+{% extends "base.html" %}
+{% block titulo %}Unidad retenida — Logautos{% endblock %}
+{% block contenido %}
+  {#
+    El cartel dice TRES cosas, y las tres hacen falta:
+
+      1. que la unidad esta retenida  -- si no, parece que la pantalla fallo
+      2. POR QUE, con el valor adentro -- "FR - MECANICA" dice mucho mas que
+         "esta bloqueada", y es lo que el movilizador repite por radio
+      3. QUIEN puede destrabarla       -- un cartel que dice "no podes" y no
+         dice quien si, manda a preguntar por los pasillos
+
+    El texto de Regla PHP es "UNIDAD BLOQUEADA, RETORNAR A TALLER DE PARRA",
+    y esa instruccion se conserva porque es la que la gente ya conoce.
+  #}
+  <div class="aviso">
+    <strong>Unidad retenida — retornar a taller De Parra.</strong>
+    <p>No se puede mover porque tiene {{ motivo }}.</p>
+    {% if quienes %}
+      <p>
+        La pueden destrabar:
+        {% for q in quienes %}<strong>{{ q }}</strong>{% if not loop.last %}, {% endif %}{% endfor %}.
+      </p>
+    {% else %}
+      <p>
+        Hoy no hay nadie con permiso para destrabarla. Avisá a sistemas: la
+        tabla de permisos quedó vacía.
+      </p>
+    {% endif %}
+    <p>
+      El movimiento no se guardó, así que no hay nada que deshacer.
+    </p>
+  </div>
+{% endblock %}
