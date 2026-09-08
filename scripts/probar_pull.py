@@ -33,11 +33,12 @@ import os
 import shutil
 import sqlite3
 import sys
-import tempfile
 import time
 
 RAIZ = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, RAIZ)
+
+from temporales import carpeta_de_prueba
 
 os.environ.setdefault("SECRET_KEY", "prueba")
 
@@ -133,7 +134,7 @@ def main(argv=None):
                     help="saltea la medicion de WAL (copia la replica, ~380 MB)")
     args = ap.parse_args(argv)
 
-    tmp = tempfile.mkdtemp(prefix="probar_pull_")
+    tmp = carpeta_de_prueba("probar_pull_")
     ruta = os.path.join(tmp, "prueba.db")
 
     # ------------------------------------------------------------------ 1

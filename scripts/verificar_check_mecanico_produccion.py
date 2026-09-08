@@ -83,11 +83,12 @@ import os
 import shutil
 import sqlite3
 import sys
-import tempfile
 import uuid
 
 RAIZ = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, RAIZ)
+
+from temporales import carpeta_de_prueba
 os.environ.setdefault("SECRET_KEY", "verificacion")
 
 try:
@@ -252,7 +253,7 @@ def main():
     #
     # Este script no se llama `probar_*`, asi que `exigir_replica_de_prueba` no
     # se activa sola. La regla de habito de CLAUDE.md aplica igual: se copia.
-    tmp = tempfile.mkdtemp(prefix="regla_verif_")
+    tmp = carpeta_de_prueba("regla_verif_")
     copia = os.path.join(tmp, "prueba.db")
     shutil.copy(real, copia)
     os.environ["DB_PATH"] = copia

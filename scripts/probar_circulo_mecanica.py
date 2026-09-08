@@ -43,12 +43,13 @@ import json
 import os
 import subprocess
 import sys
-import tempfile
 import time
 import urllib.request
 
 RAIZ = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, RAIZ)
+
+from temporales import carpeta_de_prueba
 os.environ.setdefault("SECRET_KEY", "prueba")
 
 PUERTO = 8799
@@ -80,7 +81,7 @@ def main():
     if not os.path.exists(origen):
         print("no hay local.db: esta prueba necesita la replica")
         return 1
-    tmp = tempfile.mkdtemp(prefix="regla_circ_mec_")
+    tmp = carpeta_de_prueba("regla_circ_mec_")
     # Se COPIA la replica, igual que probar_circulo.py: la prueba necesita una
     # unidad de verdad con sus columnas de verdad, y no puede tocar local.db.
     import shutil

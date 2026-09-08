@@ -36,10 +36,11 @@ import os
 import shutil
 import sqlite3
 import sys
-import tempfile
 
 RAIZ = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, RAIZ)
+
+from temporales import carpeta_de_prueba
 os.environ.setdefault("SECRET_KEY", "verificacion")
 
 try:
@@ -124,7 +125,7 @@ def main():
         print("\nNO SE ESCRIBIO NADA. Para el push real, agrega --escribir")
         return 0
 
-    tmp = tempfile.mkdtemp(prefix="regla_ing_")
+    tmp = carpeta_de_prueba("regla_ing_")
     copia = os.path.join(tmp, "prueba.db")
     shutil.copy(real, copia)
     os.environ["DB_PATH"] = copia

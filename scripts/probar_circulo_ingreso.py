@@ -47,12 +47,13 @@ import os
 import shutil
 import subprocess
 import sys
-import tempfile
 import time
 import urllib.request
 
 RAIZ = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, RAIZ)
+
+from temporales import carpeta_de_prueba
 os.environ.setdefault("SECRET_KEY", "prueba")
 
 PUERTO = 8801
@@ -105,7 +106,7 @@ def main():
     if not os.path.exists(origen):
         print("no hay local.db")
         return 1
-    tmp = tempfile.mkdtemp(prefix="regla_ing_c_")
+    tmp = carpeta_de_prueba("regla_ing_c_")
     shutil.copy(origen, os.path.join(tmp, "prueba.db"))
     os.environ["DB_PATH"] = os.path.join(tmp, "prueba.db")
     os.environ["DATA_DIR"] = tmp

@@ -469,7 +469,7 @@ def exigir_replica_de_prueba(path):
         "  {}\n"
         "  Las pruebas trabajan sobre una COPIA. Las dos formas de hacerlo, "
         "las dos ya usadas en el proyecto:\n"
-        "    tmp = tempfile.mkdtemp()\n"
+        "    tmp = temporales.carpeta_de_prueba('regla_x_')   # mkdtemp que se borra solo\n"
         "    shutil.copy(os.path.join(RAIZ, 'local.db'), "
         "os.path.join(tmp, 'prueba.db'))   # necesita datos reales\n"
         "    os.environ['DB_PATH'] = os.path.join(tmp, 'prueba.db')\n"

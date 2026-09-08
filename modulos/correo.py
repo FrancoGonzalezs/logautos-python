@@ -62,7 +62,8 @@ def destinatarios(clave):
     return [d.strip() for d in os.environ.get(clave, "").split(",") if d.strip()]
 
 
-def mandar(destinatarios, asunto, texto, html, adjuntos=()):
+def mandar(destinatarios, asunto, texto, html, adjuntos=(),
+           remitente=None, responder_a=None):
     """Manda por la API de Resend. Devuelve (estado, detalle) y NUNCA levanta.
 
     El correo es una notificacion: que el proveedor este caido no puede hacer
@@ -95,14 +96,27 @@ def mandar(destinatarios, asunto, texto, html, adjuntos=()):
     try:
         import resend
         resend.api_key = clave
-        r = resend.Emails.send({
-            "from": REMITENTE,
+        cuerpo = {
+            # `remitente` y `responder_a` son opcionales y por defecto None,
+            # asi que todo lo que ya llamaba a `mandar` sigue mandando desde
+            # REMITENTE. Existen porque la inspeccion de despacho tiene que
+            # SALIR IGUAL que la del legado -- mismo From y mismo Reply-To,
+            # con el VIN en el nombre -- y el destinatario no tiene por que
+            # notar que cambio el sistema que se lo manda.
+            #
+            # OJO: el dominio de `remitente` tiene que estar verificado en
+            # Resend. `logautos.cl` lo esta (la raiz, ver el encabezado);
+            # `operaciones@logautos.cl` entra por esa verificacion.
+            "from": remitente or REMITENTE,
             "to": destinatarios,
             "subject": asunto,
             "text": texto,
             "html": html,
             "attachments": adjuntos_api,
-        })
+        }
+        if responder_a:
+            cuerpo["reply_to"] = responder_a
+        r = resend.Emails.send(cuerpo)
         id_correo = (r or {}).get("id") if isinstance(r, dict) else getattr(r, "id", None)
         detalle = "id={} para {}".format(id_correo, ", ".join(destinatarios))
         log("enviado", asunto, detalle)

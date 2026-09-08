@@ -181,6 +181,7 @@ def _hilo_sync():
     import time
 
     def vueltas():
+        from modulos.avisos import procesar as procesar_avisos
         from modulos.push_legado import procesar_pendientes, push_activo
         from modulos.sync_legado import todo
         while True:
@@ -195,6 +196,24 @@ def _hilo_sync():
                               if r.get("saltadas") else ""), flush=True)
             except Exception as e:              # noqa: BLE001 -- ver docstring
                 print("[sync] error: {}: {}".format(type(e).__name__, e), flush=True)
+
+            # LOS AVISOS. Va ANTES del `continue` de `push_activo()` a
+            # proposito: el correo lo manda REGLA, no el legado, asi que tiene
+            # que salir aunque el push este apagado. Puesto despues, el
+            # `continue` se lo comia y el comentario habria dicho una cosa
+            # mientras el codigo hacia otra.
+            #
+            # Y va DESPUES del pull de esta vuelta por el mismo motivo que el
+            # push: primero se sabe que hay, despues se avisa.
+            try:
+                a = procesar_avisos()
+                if a["intentados"]:
+                    print("[avisos] intentados={intentados} enviados={enviados} "
+                          "errores={errores} agotados={agotados}".format(**a),
+                          flush=True)
+            except Exception as e:              # noqa: BLE001
+                print("[avisos] error: {}: {}".format(type(e).__name__, e),
+                      flush=True)
 
             # El push va DESPUES del pull de la misma vuelta, no antes. El
             # UPSERT saltea las filas con push_pendiente=1; si el push corriera

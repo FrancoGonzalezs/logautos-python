@@ -518,6 +518,124 @@ def agregar_foto(id_inspeccion):
 # proposito: seria una ruta mas en el legado para reproducir un orden de
 # escritura que no le sirve a nadie.
 
+# ---------------------------------------------------------------------------
+# El correo, copiado del legado
+# ---------------------------------------------------------------------------
+#
+# LOS CUATRO DATOS SALEN DEL ARCHIVO, no de una idea de como deberia ser. El
+# destinatario tiene que recibir lo mismo que recibia antes, y por eso hasta el
+# nombre del remitente lleva el VIN pegado con los mismos espacios raros:
+#
+#     $mail->setFrom('operaciones@logautos.cl',
+#                    'Inspeccion Despacho Unidad '.' '.$vin.' ');
+#     $mail->addReplyTo(... lo mismo ...);
+#     $mail->Subject = 'Inspeccion de Despacho Logautos. Destino: '.$destino;
+#     $mail->addAddress('controldespachos@logautos.cl');
+#
+# Los destinatarios NO estan aca: salen de `modulos/destinatarios.py`. Es lo
+# unico que cambia de forma respecto del legado, y es el punto del pendiente
+# 5d -- sacarlos del codigo.
+REMITENTE_CORREO = "operaciones@logautos.cl"
+
+
+def _remitente(vin):
+    """`operaciones@logautos.cl` con el VIN en el nombre, como el legado.
+
+    Los espacios de mas son del original (`'...Unidad '.' '.$vin.' '`) y se
+    copian: no son un descuido nuestro, son la firma que el destinatario ya
+    conoce. Se colapsan los saltos porque un nombre de remitente no puede
+    llevarlos."""
+    return 'Inspeccion Despacho Unidad  {} <{}>'.format(
+        (vin or "").strip(), REMITENTE_CORREO)
+
+
+def _cuerpo_correo(fila):
+    """El HTML del legado, campo por campo y en el mismo orden.
+
+    Las dos ramas del original --`if($cliente == 'CARFLEX')` y el `else`--
+    producen el MISMO cuerpo salvo `SPA` contra `SpA` y un `<br>` de mas. Se
+    replica la del `else`, que es la que cubre a todos los clientes menos uno,
+    y no se replica la rama: dos plantillas identicas que difieren en una
+    mayuscula son dos cosas que mantener sincronizadas para nada.
+
+    La firma dice "enviado automaticamente por sistema REGLA" -- **y ya lo
+    decia en el legado**. El destinatario no va a notar el cambio de sistema
+    ni por el remitente ni por el pie."""
+    ahora = datetime.now()
+    campos = (
+        ("Destino", fila["destino"]),
+        ("Vin", fila["vin"]),
+        ("Marca", fila["marca"]),
+        ("Modelo", fila["modelo"]),
+        ("Color", fila["color"]),
+        ("Encargado", fila["encargado"]),
+        ("Estanque", fila["estanque"]),
+        ("Guia Despacho", fila["guia_despacho"]),
+        ("Kilometraje", fila["kilometraje"]),
+    )
+    filas_html = "".join(
+        "<h3>{}: {}</h3>\n".format(k, v if v not in (None, "") else "")
+        for k, v in campos)
+    html = (
+        "<h2>Inspeccion de Despacho Logautos</h2>\n<br>\n<br>\n"
+        + filas_html
+        + "\n<br>\n<br>\n"
+          "<h4>Saludos Cordiales Logistica Automotriz SpA</h4>\n<br>\n"
+          "<p>Este mail fue enviado automaticamente por sistema REGLA a las "
+          "{} el dia {}</p>".format(ahora.strftime("%H:%M:%S"),
+                                    ahora.strftime("%d-%m-%Y")))
+    texto = "Inspeccion de Despacho Logautos\n\n" + "".join(
+        "{}: {}\n".format(k, v or "") for k, v in campos)
+    return texto, html
+
+
+def _encolar_correo(db, fila):
+    """Deja el aviso en la cola, en la MISMA transaccion que todo lo demas.
+
+    NO SE MANDA ACA. Si Resend esta caido, la inspeccion ya viajo al legado y
+    el correo tiene que salir igual cuando el proveedor vuelva -- y
+    `controldespachos@` es el unico registro interno de que esto ocurrio.
+    Ver el encabezado de `modulos/avisos.py`.
+
+    SIN CC, Y ES A PROPOSITO. El legado hace
+
+        //$data['emailo']= $emailcli= ...getemailbyid($clin);   <- comentada
+        $emailcli = explode(',', $emailcli);                     <- NO comentada
+        foreach ($emailcli as $indices) { $mail->addCC($indices); }
+
+    o sea que hace `explode` sobre una variable que nunca se asigno y agrega un
+    CC vacio, que PHPMailer descarta. **El comportamiento observable es "sin
+    CC"**, y eso es lo que se replica. No se reproduce el MECANISMO: copiar un
+    bug para que el sintoma coincida es copiar dos cosas donde hacia falta una.
+
+    (Y queda anotado aparte: el dia que ese hosting pase a PHP 8, esa linea
+    deja de ser un aviso silencioso y se vuelve un error.)"""
+    from modulos import avisos, destinatarios
+
+    direcciones, general = destinatarios.para(
+        destinatarios.MODULO_INSPECCION, fila["destino"])
+    if not direcciones:
+        # Sin destinatarios no se encola nada: un aviso sin nadie a quien
+        # mandarlo se reintentaria cinco veces para terminar agotado.
+        import logging
+        logging.getLogger(__name__).warning(
+            "inspeccion %s: no hay destinatarios configurados", fila["id"])
+        return None
+
+    texto, html = _cuerpo_correo(fila)
+    return avisos.encolar(
+        db, avisos_modulo(), fila["id"], direcciones,
+        asunto="Inspeccion de Despacho Logautos. Destino: {}".format(
+            fila["destino"] or ""),
+        texto=texto, html=html,
+        remitente=_remitente(fila["vin"]),
+        responder_a=REMITENTE_CORREO)
+
+
+def avisos_modulo():
+    return "inspeccion_despacho"
+
+
 @bp.route("/inspecciones/<int:id_inspeccion>/enviar", methods=["POST"])
 def enviar(id_inspeccion):
     """Publica las fotos, aplana a los nueve slots y encola las dos escrituras."""
@@ -571,6 +689,11 @@ def enviar(id_inspeccion):
                    " WHERE id = ?",
                    (datetime.now().isoformat(timespec="seconds"),
                     id_inspeccion))
+
+        # EL CORREO, en el MISMO commit que la cola del push. No se manda acá:
+        # se encola. Ver `_encolar_correo`.
+        _encolar_correo(db, fila)
+
         db.commit()
     except Exception:                            # noqa: BLE001
         import logging

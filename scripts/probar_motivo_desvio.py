@@ -26,10 +26,11 @@ import re
 import sqlite3
 import shutil
 import sys
-import tempfile
 
 RAIZ = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, RAIZ)
+
+from temporales import carpeta_de_prueba
 os.environ["SECRET_KEY"] = "prueba"
 
 # ARMADO DE BASE. Vivian en `probar_ficha_estados.py` y se mudaron aca el
@@ -170,7 +171,7 @@ CC = "CONTROL DE CALIDAD DESPACHO"
 
 
 def main():
-    tmp = tempfile.mkdtemp(prefix="probar_motivo_")
+    tmp = carpeta_de_prueba("probar_motivo_")
     ruta = os.path.join(tmp, "prueba.db")
 
     # ------------------------------------------------------------------ 1

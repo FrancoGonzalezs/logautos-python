@@ -43,6 +43,8 @@ import urllib.request
 RAIZ = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, RAIZ)
 
+from temporales import carpeta_de_prueba
+
 CLAVE = "clave-de-prueba"
 os.environ["LEGADO_API_KEY"] = CLAVE
 os.environ.setdefault("SECRET_KEY", "prueba")
@@ -181,10 +183,9 @@ def cliente(puerto):
 
 
 def main():
-    import tempfile
     from modulos.push_legado import ejecutar_entrada, procesar_pendientes
 
-    tmp = tempfile.mkdtemp(prefix="probar_push_")
+    tmp = carpeta_de_prueba("probar_push_")
     ruta = os.path.join(tmp, "prueba.db")
 
     # ----------------------------------------------------------------- 1

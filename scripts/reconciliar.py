@@ -95,6 +95,36 @@ def main(argv=None):
                           x["niveles"],
                           "" if x["toca_el_tope"] else "   <- NO toca el tope"))
 
+    f = r.get("inspecciones_sin_fotos") or {}
+    if f:
+        print()
+        print("INSPECCIONES SIN FOTOS  (el PDF del despacho sale con la seccion vacia)")
+        print("   en el sistema anterior, desde {} : {:>5}".format(
+            f["desde"], f["legado_sin_fotos"]))
+        print("   en REGLA                        : {:>5}   <- tiene que ser 0"
+              .format(f["regla_sin_fotos"]))
+        for x in f.get("detalle", [])[:5]:
+            print("      inspeccion {} VIN {} destino {}".format(
+                x["id"], x["vin"], x["destino"]))
+
+    a = r.get("avisos") or {}
+    if a:
+        print()
+        print("AVISOS POR CORREO  (controldespachos@ es el unico registro interno)")
+        print("   enviados                        : {:>5}".format(a["enviados"]))
+        print("   pendientes de reintento         : {:>5}".format(a["pendientes"]))
+        print("   AGOTADOS                        : {:>5}   <- no salen mas solos"
+              .format(a["agotados"]))
+
+    d = r.get("destinos_sin_regla") or {}
+    if d and d.get("cuantos"):
+        print()
+        print("DESTINOS SIN REGLA DE DESTINATARIOS")
+        print("   cayeron al conjunto general     : {:>5}".format(d["cuantos"]))
+        for x in d.get("detalle", [])[:5]:
+            print("      {!r}  {} veces, ultima {}".format(
+                x["destino"], x["veces"], x["ultima_vez"]))
+
     return 0
 
 

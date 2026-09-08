@@ -39,10 +39,11 @@ import os
 import shutil
 import sqlite3
 import sys
-import tempfile
 
 RAIZ = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, RAIZ)
+
+from temporales import carpeta_de_prueba
 os.environ.setdefault("SECRET_KEY", "prueba")
 
 FALLOS = []
@@ -312,7 +313,7 @@ def probar_guarda_de_replica():
 
 
 def main():
-    tmp = tempfile.mkdtemp(prefix="regla_clm_")
+    tmp = carpeta_de_prueba("regla_clm_")
     os.environ["DB_PATH"] = os.path.join(tmp, "prueba.db")
     os.environ["DATA_DIR"] = tmp
 

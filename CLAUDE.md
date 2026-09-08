@@ -1304,57 +1304,137 @@ dos puntos de la hora se quedan—; hay un **guion bajo antes de la extensión**
 que ya existen; y el IT es el único con otro estilo, porque lo escribió otra
 persona.
 
-### 5d. Los destinatarios — LA PREMISA SE CAYÓ, hay que redecidir
+### 5d. Los destinatarios y el correo de la inspección — CONSTRUIDO el 2026-09-08
 
-**El correo de la inspección de despacho va a UNA sola dirección, y es interna:
-`controldespachos@logautos.cl`.** No llega al cliente, ni al concesionario de
-destino, ni a ningún tercero.
+**Decisión de Franco, y no es una lectura del código: el bloque de
+destinatarios se comentó A PROPÓSITO.** El cliente no quiere recibir el correo
+de la inspección; las imágenes le llegan en el PDF del despacho. Quedó viva sólo
+`controldespachos@logautos.cl`, para tener registro interno.
 
-**Corrección de un informe mío.** Había reportado «13 ramas por `$destino` y
-4.236 de 5.560 CIDEF caen al else». Conté las ocurrencias de `strstr` con una
-expresión regular sobre el archivo, **sin mirar si eran código vivo**. No lo son:
+Así que REGLA **replica lo que corre**: una dirección, interna, tabla de una
+fila. **Los destinatarios comentados no se reviven** — revivirlos sería un
+cambio de comportamiento hacia terceros disfrazado de migración.
 
-| Qué | Dónde está |
+**Corrección de un informe mío, y es la misma clase de error que M1.** Había
+reportado «13 ramas por `$destino`, 4.236 de 5.560 CIDEF caen al else». Conté
+las ocurrencias de `strstr` con una expresión regular **sobre el texto del
+archivo, sin mirar si eran código vivo**. No lo son: las 13 ramas + CIDEF +
+POMPEYO + CARFLEX están dentro de un `/* */` de 116 líneas, y las otras ocho
+direcciones internas están comentadas con `//` una por una. Un `/* */` de 116
+líneas no se ve en un `grep`.
+
+#### Lo que se copió del archivo, dato por dato
+
+| | |
 |---|---|
-| Las 13 ramas de `$destino` + CIDEF + POMPEYO + CARFLEX | dentro de un `/* */` — líneas 284 a 400 de la función |
-| `$emailcli` (la lista por cliente) | su origen, `getemailbyid($clin)`, está comentado con `//`, así que la variable nunca se asigna y el `addCC` recibe cadena vacía |
-| Las otras ocho direcciones internas | comentadas con `//` una por una |
+| From | `operaciones@logautos.cl`, nombre `Inspeccion Despacho Unidad  {vin}` |
+| Reply-To | el mismo |
+| Asunto | `Inspeccion de Despacho Logautos. Destino: {destino}` |
+| Para | `controldespachos@logautos.cl` |
+| Cuerpo | el HTML del legado, los nueve campos en el mismo orden |
+| Firma | «enviado automáticamente por sistema REGLA» — **ya lo decía el legado** |
 
-Es el mismo error que ya me costó el bloque M1 y la medición del 44,1%: **contar
-sobre el texto en vez de sobre lo que corre.** Un `/* */` de 116 líneas no se ve
-en un `grep`.
+Los espacios de más del nombre del remitente (`'...Unidad '.' '.$vin.' '`) se
+copian tal cual: no son un descuido nuestro, son la firma que el destinatario ya
+conoce. **Nada cambia para quien lo recibe.**
 
-#### Y el correo que SÍ toca a terceros es otro, y REGLA no lo manda
+**Las dos ramas del original** —`if($cliente == 'CARFLEX')` y el `else`— dan el
+MISMO cuerpo salvo `SPA` contra `SpA` y un `<br>`. Se replica la del `else`; la
+rama no, porque dos plantillas idénticas que difieren en una mayúscula son dos
+cosas que mantener sincronizadas para nada.
 
-`Pedido.php:inicio_proces()` —**el despacho**, el del PDF— tiene **más de 80
-direcciones vivas**: Rosselot, Forcenter, Carmona, Colón, Vega Artus, Astara,
-Pompeyo, Gellona, Piamonte, Curifor, Americar, Salazar Israel, Carflex… **más**
-una lista dinámica por cliente que ahí sí está viva (`if (!empty($emailcli))`,
-leída de `cliente_cost.email`).
+#### Lo que NO se replica, porque es un bug y no un comportamiento
 
-Ése es el correo que ve el tercero. Y **es el que administración sigue mandando
-desde el legado** — ya decidido. REGLA no lo toca.
+    //$data['emailo']= $emailcli= ...getemailbyid($clin);   <- comentada
+    $emailcli = explode(',', $emailcli);                     <- NO comentada
+    foreach ($emailcli as $indices) { $mail->addCC($indices); }
 
-| | Inspección (REGLA) | Despacho (el legado) |
-|---|---|---|
-| Quién lo manda | REGLA, al guardar | administración, en el sistema viejo |
-| Destinatarios vivos | **1**, interna | **80+**, externas, + lista por cliente |
-| Adjunto | ninguno | el PDF con las fotos |
+El legado hace `explode` sobre una variable que nunca se asignó y agrega un CC
+vacío que PHPMailer descarta. **El comportamiento observable es «sin CC»**, y eso
+es lo que REGLA replica. **No se reproduce el MECANISMO**: copiar un bug para que
+el síntoma coincida es copiar dos cosas donde hacía falta una.
 
-**Lo que esto cambia:** la tabla de destinatarios ya no es «la pieza que toca a
-un tercero». Sigue valiendo la pena —sacar una dirección del código a una tabla
-es correcto— pero su contenido de hoy es **una fila**, y las dos condiciones que
-se le pusieron (las tres ramas en cero, el registro del destino no reconocido)
-**no tienen sobre qué aplicarse**: esas ramas no se ejecutan desde hace tiempo.
+> **ANOTADO APARTE: el día que ese hosting pase a PHP 8, esa línea deja de ser
+> un aviso silencioso.** `explode()` sobre `null` es un `Warning` en PHP 7 y un
+> `TypeError` en PHP 8 — el correo de la inspección dejaría de salir, con un 500.
+> No es de REGLA, pero es de este archivo y hay que tenerlo escrito.
 
-**Y una limitación concreta:** `cliente_cost` —la tabla de la que el legado saca
-los correos por cliente— **no está replicada**. Si alguna vez REGLA tiene que
-mandar el correo del despacho, esa tabla entra primero al pull.
+#### La cola: si Resend se cae, la inspección no se pierde
 
-**Falta decidir**, y no lo decido yo: si REGLA replica lo que el legado hace hoy
-(una dirección interna, que es lo que «coincidir vale más que tener razón» pide)
-o si se aprovecha para revivir los destinatarios que alguien comentó — que es un
-cambio de comportamiento hacia terceros y no una migración.
+`modulos/avisos.py`. El aviso se **encola en la misma transacción** que la fila y
+que las dos entradas del push, y lo manda el mismo hilo de fondo. **No se manda
+en el request.**
+
+    1. la fila local
+    2. la cola del push        (la fila del legado y las tres columnas)
+    3. la cola del aviso
+                               los tres en el MISMO commit
+
+**El correo nunca va primero.** Un aviso de algo que después no se guardó es peor
+que no avisar: alguien lee que la inspección se hizo y no está.
+
+Backoff `60/300/900/3600/21600` —más corto que el del push a propósito: un correo
+con veinte minutos de atraso sirve, uno del día siguiente ya no—. A los cinco
+intentos queda `agotado = 1` y **la fila no se borra**: es la evidencia de que
+alguien tiene que mirar, y la reconciliación la cuenta.
+
+`procesar_avisos()` va en el hilo de fondo **antes** del `if not push_activo():
+continue`, y eso no es un detalle de orden: el correo es de REGLA, no del legado,
+así que apagar el push no puede apagarlo. La primera versión quedó detrás del
+`continue`, contradiciendo su propio comentario.
+
+#### El chequeo nuevo de la reconciliación, y por qué subió de categoría
+
+**El PDF del despacho es el ÚNICO canal hacia el cliente.** Antes había dos —el
+correo de la inspección y el PDF— y uno respaldaba al otro. Con el correo
+confirmado como interno, una inspección empujada con **cero fotos** dejó de ser
+una molestia y pasó a ser **un cliente que no recibe nada**. Son 4 a 17 por mes
+en el legado.
+
+Va a la reconciliación diaria, no a un log:
+
+```
+INSPECCIONES SIN FOTOS  (el PDF del despacho sale con la seccion vacia)
+   en el sistema anterior, desde 2025-09 :   107
+   en REGLA                        :     0   <- tiene que ser 0
+
+AVISOS POR CORREO  (controldespachos@ es el unico registro interno)
+   enviados / pendientes / AGOTADOS
+```
+
+Más `destinos_sin_regla`, que hoy da cero y **existe igual**: es el precedente de
+`LAVADO KSM` — un destino que no calza tiene que APARECER, no perderse.
+
+#### `cliente_cost` no está replicada — para cuando REGLA mande el correo del despacho
+
+El correo que sí toca a terceros es otro: `Pedido.php:inicio_proces()`, el del
+despacho, con **más de 80 direcciones vivas** más una lista dinámica por cliente
+que ahí sí está viva (`if (!empty($emailcli))`, leída de `cliente_cost.email`).
+**Ése lo sigue mandando administración desde el legado.**
+
+`cliente_cost` **no está en el pull**. El día que REGLA mande ese correo, esa
+tabla entra primero. Fase siguiente.
+
+#### Las dos condiciones de la tabla quedan escritas aunque hoy no apliquen
+
+Porque el día que alguien agregue una regla por destino tienen que estar ya
+decididas y no discutirse de nuevo:
+
+1. **Las ramas en cero no se migran.** `Vega`, `REAL` y `Grass` tenían cero
+   inspecciones en doce meses.
+2. **Pero un destino que no calza cae al conjunto por defecto Y SE REGISTRA.**
+   Cero en doce meses no es «muerta», es «no observada».
+
+La búsqueda es **por subcadena**, como el `strstr` del legado: los destinos son
+texto libre —438 distintos en doce meses— y una igualdad exacta no engancharía
+casi nunca.
+
+**Probado** en `scripts/probar_correo_inspeccion.py`, sin mandar un solo correo:
+`RESEND_API_KEY` se deja **sin poner a propósito**, porque el camino de fallo es
+el que hay que probar. Seis secciones: los destinatarios, el cuerpo campo por
+campo, sin CC, Resend caído (la inspección queda enviada, las dos entradas de
+push encoladas, el aviso pendiente), el reintento —incluida la vuelta inmediata
+que **no** lo toma, que es el backoff existiendo— y el que se agota.
 
 ### Cerrado sin trabajo: revisar `application/logs/`
 
@@ -1441,12 +1521,55 @@ ninguno.
 **El legado devuelve 200 con cuerpo vacío en vez de 404** (`404_override`), así
 que el cliente exige `ok: true` explícito y no se conforma con un 2xx.
 
-Las diez suites, ninguna escribe en producción:
+### La regla de hábito tenía un costo que no estaba contado
+
+**El 2026-09-08 la suite entera no corrió**, y no por un bug: el disco de la
+notebook llegó a **cero libre**. Cinco suites murieron con
+`OSError: No space left on device` adentro de un `shutil.copy`.
+
+La causa es la regla de hábito de la Regla 3 —*«copiá primero, ningún script
+suelto apunta a la réplica real»*—, que está bien y se sigue. Lo que no estaba
+contado es el costo: la copia son **370 MB**, hay trece suites, y **ninguna
+borraba su carpeta**. Habían quedado **104 copias, 33 GB**.
+
+**El modo de falla es de la familia que ya conocemos**: el error no apunta a
+nada roto del sistema, y la verificación entera queda sin correr. *«La suite no
+mostró nada»* se lee igual esté todo bien o no se haya impreso el informe —
+exactamente lo que pasó con `reconciliar.py` muriendo con `KeyError`.
+
+`temporales.carpeta_de_prueba(prefijo)` hace las dos cosas juntas: crea el
+tempdir y lo borra. Tres decisiones que se tomaron midiendo, no suponiendo:
+
+- **Vive en su propio módulo y NO en `core`.** `core.DB_PATH` se fija al
+  importar, y toda prueba crea el temporal ANTES de apuntar `DB_PATH`. Ponerlo
+  en `core` obligaría a importarlo en el paso uno, con `DB_PATH` todavía en la
+  réplica real — **construiría dentro del arreglo la trampa que la guarda avisa
+  por escrito**.
+- **`atexit` y no un `finally`**: la carpeta tiene que sobrevivir a que la
+  prueba falle a la mitad, o el fallo se lleva la evidencia justo cuando hay que
+  mirarla.
+- **Y `atexit` solo NO ALCANZA.** Se comprobó corriendo las trece: en Windows el
+  `rmtree` falla si SQLite todavía tiene el archivo abierto, y el
+  `ignore_errors` —que está bien, no puede tumbar una prueba que ya dio su
+  resultado— lo tapa. Quedaban **717 MB por corrida**. Por eso la limpieza va
+  **también al crear**, barriendo lo del mismo prefijo con más de 6 horas: lo
+  que una corrida no pudo borrar al salir lo borra la siguiente al entrar. Misma
+  forma que la cola del push, que no confía en que el intento salga bien sino en
+  que el siguiente lo retome.
+
+Medido después: de 33 GB acumulados y 717 MB por corrida a **371 MB de pico**,
+que la corrida siguiente barre.
+
+Las trece suites, ninguna escribe en producción:
 
 ```bash
-for s in estados reconciliacion ficha_estados motivo_desvio push facturacion ubicacion ot_pdi; do python scripts/probar_$s.py; done
-python scripts/probar_pull.py
-python scripts/probar_circulo.py   # el circuito entero, y la PDI contra las DOS listas blancas
+# las trece, y `ficha_estados` NO esta en la lista porque el script no existe:
+# estuvo nombrado aca meses y nadie lo notó, que es el mismo agujero de siempre
+for s in estados reconciliacion motivo_desvio push facturacion ubicacion ot_pdi          pull circulo circulo_ingreso circulo_mecanica check_list_mecanica          correo_inspeccion; do
+  python scripts/probar_$s.py || echo "FALLA $s"
+done
+# circulo         el circuito entero, y la PDI contra las DOS listas blancas
+# correo_inspeccion  el correo; NO manda ninguno, RESEND_API_KEY va sin poner
 python scripts/verificar_push_produccion.py   # 5 sondas contra producción, ninguna escribe
 python scripts/probar_precio_ot.py            # sondas; con --crear escribe OT reales sobre PRUEBA
 ```

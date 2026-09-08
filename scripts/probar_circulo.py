@@ -65,12 +65,13 @@ import socket
 import sqlite3
 import subprocess
 import sys
-import tempfile
 import time
 import urllib.request
 
 RAIZ = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, RAIZ)
+
+from temporales import carpeta_de_prueba
 
 CLAVE = "clave-de-prueba"
 os.environ["LEGADO_API_KEY"] = CLAVE
@@ -152,12 +153,20 @@ def sembrar(puerto, unidad):
         method="POST"), timeout=5).read()
 
 
+# Una sola carpeta para las dos ramas, y se borra sola al terminar. Antes las
+# copias iban a `gettempdir()` con nombre fijo: no se acumulaban --el nombre se
+# repetia-- pero quedaban para siempre, 370 MB cada una. Ver `temporales.py`.
+_CARPETA = None
+
+
 def copia(sufijo):
+    global _CARPETA
     origen = os.path.join(RAIZ, "local.db")
     if not os.path.exists(origen):
         return None
-    destino = os.path.join(tempfile.gettempdir(),
-                           "regla_circulo_{}.db".format(sufijo))
+    if _CARPETA is None:
+        _CARPETA = carpeta_de_prueba("regla_circulo_")
+    destino = os.path.join(_CARPETA, "{}.db".format(sufijo))
     if os.path.exists(destino):
         os.remove(destino)
     shutil.copy(origen, destino)

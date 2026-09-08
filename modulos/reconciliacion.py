@@ -488,6 +488,95 @@ def danos_truncados(db, desde="2025-09"):
 
 
 # ---------------------------------------------------------------------------
+# Inspecciones sin fotos, y los avisos que no salieron
+# ---------------------------------------------------------------------------
+
+def inspecciones_sin_fotos(db, desde="2025-09"):
+    """Inspecciones de despacho cuya seccion de fotos del PDF va a salir vacia.
+
+    POR QUE ESTO SUBIO DE CATEGORIA EL 2026-09-08
+
+    Antes habia DOS canales hacia el cliente: el correo de la inspeccion y el
+    PDF del despacho, y uno respaldaba al otro. Franco confirmo que el correo de
+    la inspeccion **no va al cliente** -- su bloque de destinatarios se comento
+    a proposito, y la unica direccion viva es interna.
+
+    O sea que **el PDF del despacho es el UNICO canal** por el que el cliente se
+    entera de esa inspeccion. Una inspeccion empujada con CERO fotos dejo de ser
+    una molestia y paso a ser un cliente que no recibe nada.
+
+    Y no es hipotetico: en el legado son 4 a 17 por mes (`archivo1` vacio, que
+    coincide exactamente con `contador = 0`).
+
+    SE MIRAN LAS DOS FUENTES, y la distincion importa para saber a quien
+    reclamarle:
+
+      * `inspeccion_despacho`        las del legado -- el problema que ya existe
+      * `inspeccion_despacho_regla`  las de REGLA -- las que podemos evitar
+
+    En REGLA la pantalla ya no deja enviar sin fotos, asi que su columna deberia
+    quedarse en cero. Si algun dia no lo esta, es que alguien encontro un camino
+    que no pasa por el boton -- y eso es justo lo que un sensor tiene que
+    levantar."""
+    legado = db.execute("""
+        SELECT COUNT(*) FROM inspeccion_despacho
+         WHERE fecha_completa >= ?
+           AND (archivo1 IS NULL OR TRIM(archivo1) = '')
+    """, (desde,)).fetchone()[0]
+
+    # Las de REGLA: enviadas y sin una sola foto en la tabla de fotos.
+    try:
+        propias = db.execute("""
+            SELECT i.id, i.vin, i.destino, i.enviado_en
+              FROM inspeccion_despacho_regla i
+             WHERE i.enviado_en IS NOT NULL
+               AND NOT EXISTS (SELECT 1 FROM inspeccion_despacho_fotos_regla f
+                                WHERE f.inspeccion_id = i.id)
+             ORDER BY i.id DESC
+        """).fetchall()
+    except Exception:                            # noqa: BLE001
+        # Las tablas de REGLA se crean al vuelo; si el modulo nunca corrio en
+        # esta base, no existen todavia. No es un error de reconciliacion.
+        propias = []
+
+    return {
+        "desde": desde,
+        "legado_sin_fotos": legado,
+        "regla_sin_fotos": len(propias),
+        "detalle": [dict(f) for f in propias[:20]],
+    }
+
+
+def avisos_sin_salir(db):
+    """Correos que REGLA debe y todavia no mando.
+
+    `controldespachos@logautos.cl` es el UNICO registro interno de que una
+    inspeccion se hizo, asi que un aviso que no sale no es ruido: es una
+    inspeccion que adentro de Logautos no figura."""
+    try:
+        from modulos.avisos import pendientes
+        return pendientes(db)
+    except Exception:                            # noqa: BLE001
+        return {"pendientes": 0, "agotados": 0, "enviados": 0}
+
+
+def destinos_sin_regla(db):
+    """Destinos que no calzaron con ninguna regla de destinatarios.
+
+    Hoy tiene que dar cero: la unica regla es el comodin `*`, asi que todo
+    calza. Existe porque el dia que alguien agregue una regla por destino, un
+    destino nuevo tiene que APARECER y no perderse -- es el precedente de
+    `LAVADO KSM`, un valor que no estaba en la ventana que miramos y existia
+    igual."""
+    try:
+        from modulos.destinatarios import sin_regla
+        filas = sin_regla()
+        return {"cuantos": len(filas), "detalle": [dict(f) for f in filas[:10]]}
+    except Exception:                            # noqa: BLE001
+        return {"cuantos": 0, "detalle": []}
+
+
+# ---------------------------------------------------------------------------
 # La corrida
 # ---------------------------------------------------------------------------
 
@@ -502,6 +591,9 @@ def correr(db_path=None, guardar=True):
             "sin_registro": estados_sin_registro(db),
             "pdi_sin_ot": pdi_sin_ot(db),
             "danos_truncados": danos_truncados(db),
+            "inspecciones_sin_fotos": inspecciones_sin_fotos(db),
+            "avisos": avisos_sin_salir(db),
+            "destinos_sin_regla": destinos_sin_regla(db),
         }
         if guardar:
             db.execute(

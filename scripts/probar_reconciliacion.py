@@ -20,6 +20,8 @@ import sys
 
 RAIZ = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, RAIZ)
+
+from temporales import carpeta_de_prueba
 os.environ.setdefault("SECRET_KEY", "prueba")
 
 from modulos.movimientos import RECONOCIDOS_SIN_RUTA, normalizar_estado  # noqa: E402
@@ -102,8 +104,7 @@ def probar_el_instrumento_entero():
 
     import shutil
     import sqlite3
-    import tempfile
-    tmp = tempfile.mkdtemp(prefix="regla_recon_")
+    tmp = carpeta_de_prueba("regla_recon_")
     copia = os.path.join(tmp, "prueba.db")
     shutil.copy(origen, copia)
 
