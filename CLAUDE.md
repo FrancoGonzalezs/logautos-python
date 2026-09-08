@@ -1141,14 +1141,6 @@ juzgar si el rayón sobrevive, más la tabla de meses de autonomía por cada pes
 > `PNG`. Un WebP sale con `$type = null` y la imagen se descarta. Seguimos en
 > JPEG.
 
-#### Perfiles por módulo — la distinción es de Franco y es mejor que un ajuste global
-
-No todas las fotos prueban lo mismo: las de inspección prueban que algo **está**
-(rueda de auxilio, gato, extintor); las del check list prueban **cómo está** un
-daño. Punto de partida, a confirmar contra la hoja: inspección 800 px calidad
-baja, check lists 1200 px calidad alta, IT 1200 px cuando lleva evidencia de DYP
-o FR.
-
 #### Los perfiles, elegidos y MEDIDOS
 
 **Daños** (check list de ingreso, mecánica, IT con evidencia): **800 px, calidad
@@ -1260,7 +1252,7 @@ reemplaza.**
 | # | Qué | Dónde |
 |---|---|---|
 | 1 | `_fotosDeVinEnDanos($vin)` — nuevo, `private` | Nota.php, antes de `_generarPdfOtServer` (línea 21837) |
-| 2 | `listarFotosTodas($m,$vin)` — nuevo, `public`, devuelve **URL completas** | ídem |
+| 2 | `listarUrlsDeFotos($m,$vin)` — nuevo, `public`, devuelve **URL completas**. El nombre dice qué devuelve: al lado vive `listarFotos()`, que devuelve NOMBRES, y dos métodos casi homónimos con contratos distintos son la Regla 0 | ídem |
 | 3 | La ruta | `routes.php`, junto a las de las líneas 93–94 |
 | 4 | El fetch de la masiva | `views/nota/exportar_ot_masivo.php`, líneas 98–112 |
 
@@ -1273,7 +1265,7 @@ nada más.
 OT**. Recorrerlo en PHP serían medio millón de vueltas por un lote de cincuenta.
 
 **La comprobación de contenido es más fuerte esta vez**: un `Nota.php` sin la
-edición responde **404** a `listarFotosTodas`, no una lista vacía. Es la
+edición responde **404** a `listarUrlsDeFotos`, no una lista vacía. Es la
 diferencia con los fallos mudos anteriores — acá lo que se agrega es un método
 nuevo, y su ausencia se ve.
 
@@ -1312,16 +1304,63 @@ dos puntos de la hora se quedan—; hay un **guion bajo antes de la extensión**
 que ya existen; y el IT es el único con otro estilo, porque lo escribió otra
 persona.
 
-### 5d. Los destinatarios, con las dos condiciones
+### 5d. Los destinatarios — LA PREMISA SE CAYÓ, hay que redecidir
 
-Las **tres ramas en cero** (`Vega`, `REAL`, `Grass`) **no se migran**, pero la
-tabla cae al conjunto por defecto **y registra** cuando un destino no calza con
-nada conocido. *Cero en 12 meses no es muerta, es no observada* — es el
-precedente de `LAVADO KSM`.
+**El correo de la inspección de despacho va a UNA sola dirección, y es interna:
+`controldespachos@logautos.cl`.** No llega al cliente, ni al concesionario de
+destino, ni a ningún tercero.
 
-El número que lo hace urgente: **4.236 de 5.560** inspecciones CIDEF del período
-**no calzan con ninguna de las 13 ramas** y caen al else. Y hay **438 destinos
-distintos** contra 13 ramas.
+**Corrección de un informe mío.** Había reportado «13 ramas por `$destino` y
+4.236 de 5.560 CIDEF caen al else». Conté las ocurrencias de `strstr` con una
+expresión regular sobre el archivo, **sin mirar si eran código vivo**. No lo son:
+
+| Qué | Dónde está |
+|---|---|
+| Las 13 ramas de `$destino` + CIDEF + POMPEYO + CARFLEX | dentro de un `/* */` — líneas 284 a 400 de la función |
+| `$emailcli` (la lista por cliente) | su origen, `getemailbyid($clin)`, está comentado con `//`, así que la variable nunca se asigna y el `addCC` recibe cadena vacía |
+| Las otras ocho direcciones internas | comentadas con `//` una por una |
+
+Es el mismo error que ya me costó el bloque M1 y la medición del 44,1%: **contar
+sobre el texto en vez de sobre lo que corre.** Un `/* */` de 116 líneas no se ve
+en un `grep`.
+
+#### Y el correo que SÍ toca a terceros es otro, y REGLA no lo manda
+
+`Pedido.php:inicio_proces()` —**el despacho**, el del PDF— tiene **más de 80
+direcciones vivas**: Rosselot, Forcenter, Carmona, Colón, Vega Artus, Astara,
+Pompeyo, Gellona, Piamonte, Curifor, Americar, Salazar Israel, Carflex… **más**
+una lista dinámica por cliente que ahí sí está viva (`if (!empty($emailcli))`,
+leída de `cliente_cost.email`).
+
+Ése es el correo que ve el tercero. Y **es el que administración sigue mandando
+desde el legado** — ya decidido. REGLA no lo toca.
+
+| | Inspección (REGLA) | Despacho (el legado) |
+|---|---|---|
+| Quién lo manda | REGLA, al guardar | administración, en el sistema viejo |
+| Destinatarios vivos | **1**, interna | **80+**, externas, + lista por cliente |
+| Adjunto | ninguno | el PDF con las fotos |
+
+**Lo que esto cambia:** la tabla de destinatarios ya no es «la pieza que toca a
+un tercero». Sigue valiendo la pena —sacar una dirección del código a una tabla
+es correcto— pero su contenido de hoy es **una fila**, y las dos condiciones que
+se le pusieron (las tres ramas en cero, el registro del destino no reconocido)
+**no tienen sobre qué aplicarse**: esas ramas no se ejecutan desde hace tiempo.
+
+**Y una limitación concreta:** `cliente_cost` —la tabla de la que el legado saca
+los correos por cliente— **no está replicada**. Si alguna vez REGLA tiene que
+mandar el correo del despacho, esa tabla entra primero al pull.
+
+**Falta decidir**, y no lo decido yo: si REGLA replica lo que el legado hace hoy
+(una dirección interna, que es lo que «coincidir vale más que tener razón» pide)
+o si se aprovecha para revivir los destinatarios que alguien comentó — que es un
+cambio de comportamiento hacia terceros y no una migración.
+
+### Cerrado sin trabajo: revisar `application/logs/`
+
+`procesarExportacionMasiva` **no lo llama nadie**. El día de agosto que se perdió
+viendo por qué «respondía algo que no era JSON» era un camino muerto: la función
+existe, tiene ruta, y ninguna vista la invoca. No hay nada que revisar.
 
 ### 7. Decisiones que esperan datos, no código
 

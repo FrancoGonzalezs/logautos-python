@@ -53,7 +53,7 @@
  * =========================================================================
  *
  *   1. `_fotosDeVinEnDanos($vin)`    METODO NUEVO, `private`.
- *   2. `listarFotosTodas($m, $vin)`  METODO NUEVO, `public`.
+ *   2. `listarUrlsDeFotos($m, $vin)`  METODO NUEVO, `public`.
  *
  *      Los dos se agregan juntos, por ejemplo justo antes de
  *      `    private function _generarPdfOtServer($otId, $outputPath)`
@@ -140,7 +140,7 @@
 
 
 /* ===========================================================================
-   EDICION 2 -- `listarFotosTodas`, metodo NUEVO
+   EDICION 2 -- `listarUrlsDeFotos`, metodo NUEVO
    ===========================================================================
 
    ES UN METODO NUEVO Y NO UN CAMBIO A `listarFotos`, y esa es toda la gracia:
@@ -158,14 +158,24 @@
    =========================================================================== */
 
     /**
-     * Las fotos de un VIN, de LAS DOS carpetas, como URL completas.
+     * Las fotos de un VIN, de LAS DOS carpetas, como URL COMPLETAS.
      *
-     * GET /nota/listarFotosTodas/{motonave_con_guiones_bajos}/{vin}
+     * EL NOMBRE DICE QUE DEVUELVE, y no es un detalle de estilo: al lado vive
+     * `listarFotos()`, que devuelve NOMBRES. Dos metodos casi homonimos con
+     * contratos distintos es exactamente la forma de la Regla 0 -- el que lee
+     * `listarFotosTodas` --el nombre que este metodo tuvo un rato-- asume que
+     * es `listarFotos` con mas filas, y arma la URL a mano como hace el JS
+     * viejo. Le sale una ruta rota y no hay error que lo diga.
+     *
+     * `listarUrlsDeFotos` no se puede confundir. Es gratis ahora e imposible
+     * despues, cuando haya tres consumidores.
+     *
+     * GET /nota/listarUrlsDeFotos/{motonave_con_guiones_bajos}/{vin}
      *
      * La motonave puede venir vacia: en ese caso solo devuelve las de `danos/`,
      * que es exactamente lo que corresponde a una unidad sin motonave.
      */
-    public function listarFotosTodas($motonave, $vin)
+    public function listarUrlsDeFotos($motonave, $vin)
     {
         $salida = array();
         $vistos = array();
@@ -206,9 +216,9 @@
 
    Va junto a las otras dos de exportacion, que estan en las lineas 93 y 94:
 
-       $route['nota/listarFotosTodas/(:any)/(:any)'] = 'nota/listarFotosTodas/$1/$2';
+       $route['nota/listarUrlsDeFotos/(:any)/(:any)'] = 'nota/listarUrlsDeFotos/$1/$2';
 
-   Sin la ruta, CodeIgniter igual resuelve `nota/listarFotosTodas/a/b` por el
+   Sin la ruta, CodeIgniter igual resuelve `nota/listarUrlsDeFotos/a/b` por el
    ruteo por defecto. Se agrega igual para que quede al lado de las otras y no
    dependa de que nadie cambie el ruteo por defecto.
    --------------------------------------------------------------------------- */
@@ -241,10 +251,10 @@
    PASA A DECIR:
    --------------------------------------------------------------------------- */
 ?>
-                // Las fotos de las DOS carpetas. `listarFotosTodas` devuelve
+                // Las fotos de las DOS carpetas. `listarUrlsDeFotos` devuelve
                 // URL completas justamente porque las dos carpetas estan en
                 // lugares distintos: acá ya no se puede adivinar la ruta.
-                const fotosRes = await fetch(`<?php echo base_url('nota/listarFotosTodas'); ?>/${motonaveRuta || 'NO_EXISTE'}/${vin}`);
+                const fotosRes = await fetch(`<?php echo base_url('nota/listarUrlsDeFotos'); ?>/${motonaveRuta || 'NO_EXISTE'}/${vin}`);
                 const fotos = await fotosRes.json();
 
                 for(const fotoUrl of fotos) {
@@ -276,20 +286,20 @@
    1. QUE EL METODO NUEVO EXISTE. Con un VIN que tenga fotos en `danos/`
       --sirve cualquiera de un check list sin motonave:
 
-          .../nota/listarFotosTodas/NO_EXISTE/<VIN>
+          .../nota/listarUrlsDeFotos/NO_EXISTE/<VIN>
 
       Tiene que devolver una lista de URL que terminan en
       `/assets/images/danos/...`.
 
       ESTA ES LA COMPROBACION DE CONTENIDO. Un Nota.php sin la edicion
-      responde 404, no una lista vacia: `listarFotosTodas` no existiria. Es la
+      responde 404, no una lista vacia: `listarUrlsDeFotos` no existiria. Es la
       diferencia con los fallos mudos de las otras veces -- aca la ausencia se
       ve, porque lo que se agrega es un metodo nuevo y no el reemplazo de uno
       que ya estaba.
 
    2. QUE LA FUENTE VIEJA SIGUE. Con una unidad que SI tiene motonave:
 
-          .../nota/listarFotosTodas/<MOTONAVE_CON_GUIONES_BAJOS>/<VIN>
+          .../nota/listarUrlsDeFotos/<MOTONAVE_CON_GUIONES_BAJOS>/<VIN>
           -> las mismas fotos de siempre, ahora como URL completas.
 
       Y en paralelo, que lo de siempre no cambio:
@@ -304,3 +314,156 @@
    SI ALGO SALE MAL, lo que se rompe es la masiva y nada mas: `listarFotos` no
    se toco, asi que los dos botones individuales siguen andando.
    =========================================================================== */
+
+
+/* ===========================================================================
+   BLOQUE R2 -- PRE-APROBADO, NO desplegar todavia
+   Un solo glob para todo el lote, con indice VIN -> archivos
+   ===========================================================================
+
+   CUANDO SE USA ESTO
+
+   Solo si la PRIMERA exportacion masiva despues de desplegar el bloque R tarda
+   notoriamente mas que antes. No se despliega "por las dudas": es codigo mas
+   complicado para un problema que puede no existir, y el unico dato que dice si
+   existe es una corrida real.
+
+   POR QUE PODRIA HACER FALTA
+
+   `danos/` tiene del orden de 109.000 archivos, y `_fotosDeVinEnDanos()` hace
+   un `glob()` por cada OT del lote. `glob` filtra a nivel del sistema de
+   archivos --mucho mejor que `scandir` + bucle-- pero igual RECORRE el
+   directorio entero cada vez: cincuenta OT son cincuenta barridos de 109.000
+   entradas.
+
+   No se puede medir desde aca ni desde el cPanel sin terminal. Y estimar cuanto
+   tarda un `glob` sobre un ext4 con 109.000 archivos, sin saber si hay
+   `dir_index` ni como esta el cache del inode, seria inventar un numero. La
+   corrida real lo contesta en un minuto.
+
+   QUE CAMBIA
+
+   Un solo barrido por LOTE en vez de uno por OT, y un indice
+   `VIN -> [archivos]` en memoria. Con 109.000 archivos el indice son unos pocos
+   MB de strings; el `memory_limit` ya esta en 512M en ese metodo.
+
+   EL INDICE SE ARMA CON LOS VIN QUE EL LOTE PIDE, no con todos. Asi el mapa
+   tiene tantas entradas como OT haya --cincuenta, no 109.000-- y el barrido
+   descarta al vuelo lo que no interesa.
+
+   COMO SE APLICA
+
+     1. Se agrega `_indiceDeFotosEnDanos(array $vins)` junto a los otros
+        `private`.
+     2. En `listarUrlsDeFotos` NO se toca nada: esa es de a un VIN y el glob
+        puntual le sirve mejor.
+     3. En el JS de la masiva se agrega UNA llamada previa que pide el indice
+        del lote entero, y el bucle usa el indice en vez de llamar por OT.
+
+   O sea que R2 tampoco reemplaza nada de R: agrega un metodo y cambia el mismo
+   bloque de JS que R ya habia cambiado.
+   =========================================================================== */
+
+    /**
+     * Un solo barrido de `danos/` para TODO un lote. Devuelve VIN -> [urls].
+     *
+     * Se le pasan los VIN del lote y arma el indice solo con esos: el mapa
+     * queda del tamaño del lote, no del directorio.
+     */
+    private function _indiceDeFotosEnDanos(array $vins)
+    {
+        $indice = array();
+        $buscados = array();
+        foreach ($vins as $v) {
+            $v = preg_replace('/[^A-Za-z0-9]/', '', (string) $v);
+            if (strlen($v) >= 10) {
+                $buscados[$v] = TRUE;
+                $indice[$v] = array();
+            }
+        }
+        if (!$buscados) {
+            return array();
+        }
+
+        $dir = FCPATH . 'assets/images/danos/';
+        if (!is_dir($dir)) {
+            return $indice;
+        }
+
+        // UN barrido. `glob` sin patron de VIN devuelve todo el directorio, asi
+        // que se usa un iterador: no carga los 109.000 nombres en un array de
+        // una sola vez.
+        $it = new DirectoryIterator($dir);
+        foreach ($it as $f) {
+            if ($f->isDot() || !$f->isFile()) { continue; }
+            $nombre = $f->getFilename();
+            if (!preg_match('/\.(jpg|jpeg|png|gif)$/i', $nombre)) { continue; }
+            // El VIN esta al principio del nombre en todos los patrones del
+            // legado (`{vin}_...`), pero se busca en cualquier posicion por si
+            // alguno no lo respeta.
+            foreach ($buscados as $vin => $_) {
+                if (strpos($nombre, $vin) !== FALSE) {
+                    $indice[$vin][] = base_url('assets/images/danos/'
+                                               . rawurlencode($nombre));
+                    break;
+                }
+            }
+        }
+        return $indice;
+    }
+
+/* ---------------------------------------------------------------------------
+   Y el endpoint que lo expone, para que el JS lo pida una sola vez.
+
+       POST /nota/indiceDeFotosDanos     cuerpo: vins[] = [...]
+
+   POST y no GET porque un lote de cincuenta VIN de diecisiete caracteres no
+   entra comodo en una URL.
+   --------------------------------------------------------------------------- */
+
+    public function indiceDeFotosDanos()
+    {
+        $vins = $this->input->post('vins');
+        if (!is_array($vins)) { $vins = array(); }
+        header('Content-Type: application/json');
+        echo json_encode($this->_indiceDeFotosEnDanos($vins));
+    }
+
+/* ---------------------------------------------------------------------------
+   Y el JS de la masiva, que pasa a pedir el indice UNA vez antes del bucle.
+
+   ANTES del `for` que recorre las OT:
+
+       // Un solo barrido de danos/ para todo el lote (ver bloque R2).
+       let indiceDanos = {};
+       try {
+           const r = await fetch(`<?php echo base_url('nota/indiceDeFotosDanos'); ?>`, {
+               method: 'POST',
+               headers: {'Content-Type': 'application/x-www-form-urlencoded'},
+               body: new URLSearchParams(vinsDelLote.map(v => ['vins[]', v]))
+           });
+           indiceDanos = await r.json();
+       } catch (e) {
+           console.warn('sin indice de danos, se sigue sin esas fotos', e);
+       }
+
+   Y adentro del bucle, en vez de la llamada por OT:
+
+       const porMotonave = await (await fetch(
+           `<?php echo base_url('nota/listarUrlsDeFotos'); ?>/${motonaveRuta || 'NO_EXISTE'}/${vin}`
+       )).json();
+       const fotos = porMotonave.concat(indiceDanos[vin] || []);
+
+   OJO: `listarUrlsDeFotos` seguiria devolviendo TAMBIEN las de `danos/`, asi
+   que habria dos fuentes para lo mismo y se duplicarian. Si se aplica R2, hay
+   que sacarle a `listarUrlsDeFotos` su segunda fuente O deduplicar por nombre
+   en el JS. La segunda es mas segura: no toca un metodo que ya anda.
+
+       const vistos = new Set();
+       const fotos = porMotonave.concat(indiceDanos[vin] || [])
+                                .filter(u => !vistos.has(u) && vistos.add(u));
+
+   ESO ES LO UNICO DE R2 QUE PUEDE MORDER, y por eso queda dicho acá y no en un
+   comentario suelto: R2 agrega una segunda ruta hacia las mismas fotos, y dos
+   caminos al mismo dato sin deduplicar es un ZIP con todo repetido.
+   --------------------------------------------------------------------------- */
