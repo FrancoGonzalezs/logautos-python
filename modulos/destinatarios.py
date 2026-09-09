@@ -60,11 +60,31 @@ TODOS = "*"
 
 # Lo que el legado manda hoy, copiado del archivo. Se siembra una sola vez; si
 # alguien edita la tabla, no se vuelve a pisar.
+# El IT. Copiado de `destinatarios_it()` de produccion/Pedido.php, donde
+# `$modoPrueba = FALSE`.
+#
+# ES EL SEGUNDO CANAL HACIA UN TERCERO que Regla Python maneja, y a diferencia
+# del de la inspeccion --que resulto ser interno-- este SI sale de la empresa:
+# `preentrega@cidef.cl` es del cliente.
+#
+# `rparra` NO esta, y la aclaracion es porque ya se confundio una vez: Rodrigo
+# Parra esta en la GUARDA DE RETENCION (produccion/Pedido.php:8738), que es
+# otra lista y otra cosa. Mezclarlas seria mandarle a alguien un correo que
+# Regla PHP no le manda.
+MODULO_IT = "it"
+
 SEMILLA = (
     (MODULO_INSPECCION, TODOS, "controldespachos@logautos.cl",
      "El unico destinatario vivo del correo de inspeccion. El resto del bloque "
-     "del legado esta comentado A PROPOSITO: el cliente no quiere este correo, "
-     "las imagenes le llegan en el PDF del despacho."),
+     "de Regla PHP esta comentado A PROPOSITO: el cliente no quiere este "
+     "correo, las imagenes le llegan en el PDF del despacho."),
+
+    (MODULO_IT, TODOS, "fgonzalez@logautos.cl", "Equipo interno: siempre."),
+    (MODULO_IT, TODOS, "nrodriguez@logautos.cl", "Equipo interno: siempre."),
+    (MODULO_IT, TODOS, "felipe.leon@logautos.cl", "Equipo interno: siempre."),
+    (MODULO_IT, "CIDEF", "preentrega@cidef.cl",
+     "EL CLIENTE. Es un TERCERO: este correo sale de la empresa, con las "
+     "fotos incrustadas. Solo cuando el cliente es CIDEF."),
 )
 
 
@@ -153,6 +173,47 @@ def para(modulo, destino=None):
         "SELECT direccion FROM destinatarios_regla "
         " WHERE modulo = ? AND clave = ? AND activo = 1", (modulo, TODOS))]
     return general, True
+
+
+def sumando(modulo, clave=None):
+    """Los del conjunto general MAS los especificos. Devuelve la lista.
+
+    ES OTRA FORMA QUE `para()`, Y NO ES UN DUPLICADO: los dos bloques de Regla
+    PHP tienen formas distintas y hay que replicar cada uno con la suya.
+
+        inspeccion   if/elseif por $destino -> UNO U OTRO   -> `para()`
+        IT           $para = array(tres internos);
+                     if ($cliente === 'CIDEF') $para[] = ...;  -> SUMA
+
+    Si el IT usara `para()`, un vehiculo CIDEF le mandaria el correo SOLO al
+    cliente y no al equipo interno -- que es lo contrario de lo que hace Regla
+    PHP, y de la peor manera: nadie de Logautos se enteraria de la revision,
+    pero el cliente si.
+
+    Aca NO se registra el destino sin regla: en el IT la clave es el cliente,
+    que sale de `clientecompleto` y es un conjunto chico y conocido. La tabla
+    de destinos sin regla existe para el texto libre de la inspeccion --438
+    valores distintos-- donde no aparecer significa que nadie lo va a ver."""
+    db = get_db()
+    _asegurar_tablas(db)
+    db.commit()
+
+    direcciones = [f["direccion"] for f in consultar(
+        "SELECT direccion FROM destinatarios_regla "
+        " WHERE modulo = ? AND clave = ? AND activo = 1 ORDER BY id",
+        (modulo, TODOS))]
+
+    if clave:
+        arriba = str(clave).upper()
+        for f in consultar(
+                "SELECT clave, direccion FROM destinatarios_regla "
+                " WHERE modulo = ? AND activo = 1 AND clave <> ? ORDER BY id",
+                (modulo, TODOS)):
+            if str(f["clave"]).upper() in arriba:
+                if f["direccion"] not in direcciones:
+                    direcciones.append(f["direccion"])
+
+    return direcciones
 
 
 def _registrar_sin_regla(db, modulo, destino):

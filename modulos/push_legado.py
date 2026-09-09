@@ -256,6 +256,36 @@ ENTIDADES = {
         "tabla_espejo": "newstocks_cidef",
         "ruta": "unidades",
     },
+    # EL MOVIMIENTO DEL IT. Entidad propia y no `movimientos` a secas, por el
+    # mismo motivo por el que `pdi` no es `unidades`: lo que se lee en la cola,
+    # en el log y en la reconciliacion es el NOMBRE, y una entrada que dijera
+    # `movimientos` para el IT manda a buscar el problema al lugar equivocado.
+    #
+    # Cuelga de la entrada de `it` con `depende_de`: las dos saldrian con el
+    # mismo `conocido` y la segunda chocaria contra la primera con un 409
+    # falso.
+    "it_movimiento": {
+        "tabla_origen": "movimientos_regla",
+        "tabla_espejo": "newstocks_cidef",
+        "ruta": "movimientos",
+    },
+    # LAS FOTOS DEL IT. Una entrada por foto.
+    #
+    # Una por foto y no una por revision: si fuera una sola y fallara la
+    # tercera de seis, el reintento volveria a subir las dos primeras. Subir
+    # dos veces la misma foto no rompe nada del otro lado --el nombre lleva
+    # sello de tiempo-- pero deja archivos duplicados en un disco que ya esta
+    # al 97%.
+    #
+    # NO VA A ANDAR HASTA QUE EL PHP ESTE DESPLEGADO, y eso esta bien: el
+    # endpoint de subida todavia no existe, asi que va a dar 404 -- ruidoso,
+    # que es lo que corresponde. El interruptor real esta del lado PHP.
+    "it_foto": {
+        "tabla_origen": "it_fotos_regla",
+        "tabla_espejo": "newstocks_cidef",
+        "ruta": "subir_foto/it",
+        "manda_conocido": False,
+    },
     # La PDI. Misma forma que el IT -- PUT sobre la unidad -- porque escribe
     # las mismas columnas de la misma tabla; lo que cambia es CUALES.
     #
@@ -800,7 +830,8 @@ def encolar_it(db, unidad, it_id, campos):
 
 
 def encolar_movimiento(db, unidad, movimiento_id, estado_hacia, usuario,
-                       calle=None, patio=None):
+                       calle=None, patio=None, entidad="movimientos",
+                       depende_de=None):
     """Encola un movimiento hacia el legado. Devuelve el id de cola, o None si
     ese estado no se puede traducir a una calle.
 
@@ -878,14 +909,18 @@ def encolar_movimiento(db, unidad, movimiento_id, estado_hacia, usuario,
             campos["created_by"] = int(usuario)
         except (TypeError, ValueError):
             pass
+    # `entidad` y `depende_de` los pasa el IT (`encolar_movimiento_it`) y por
+    # defecto no cambian nada: quien llamaba antes sigue encolando
+    # `movimientos` sin dependencia.
     return encolar_push(
-        db, "movimientos",
+        db, entidad,
         python_id=movimiento_id,
         legado_id=legado_id,
         operacion="crear",
         campos=campos,
         legado_updated_at_conocido=(unidad["updated_at"] or ""),
-        requiere_unidad=0)
+        requiere_unidad=0,
+        depende_de=depende_de)
 
 
 def campos_pdi(datos, usuario):
@@ -1429,19 +1464,36 @@ def encolar_descuento(db, pdi_id, consumible_id, litros, depende_de):
         depende_de=depende_de)
 
 
-def campos_it(estado_it, observacion_it, estado_hacia, usuario):
-    """El payload del IT, con los nombres del legado.
+def campos_it(estado_it, observacion_it, estado_hacia, usuario,
+              destino=None, patio=None, calle=None):
+    """El payload del IT, con los nombres de Regla PHP.
 
-    `estado_hacia` es lo que `taller.py:_destino_it()` ya calculo, y coincide
-    rama por rama con el PHP: CARFLEX -> 'INSPECCION MECANICA DESPACHO', el
-    resto -> 'INGRESO A TALLER'. No se vuelve a decidir aca para que no haya
-    dos lugares donde se pueda desincronizar."""
+    HASTA EL 2026-09-09 ESTO MANDABA LA RAMA VIEJA. Mandaba `calle='It'` y
+    `despachado='INGRESO A TALLER'` -- que es el `case 'It'` del `switch`, una
+    rama que en produccion NO EXISTE. Cada IT hecho en Regla Python le escribia
+    a Regla PHP un estado que su propia pantalla ya no produce.
+
+    Ahora `calle`, `patio` y `despachado` salen del DESTINO que el operario
+    eligio, con la tabla de `taller.DESTINOS_IT`, que es lo que hace
+    `actualizar_it_process()`.
+
+    `destino_it` VIAJA AUNQUE TODAVIA NO ESTE EN LA LISTA BLANCA. Medido en
+    vivo el 2026-09-08: son 31 columnas y `destino_it` no esta entre ellas, asi
+    que hoy el endpoint la IGNORA -- responde 200 y la reporta en `ignoradas`,
+    que es exactamente para lo que sirve ese campo. Mandarla igual es lo
+    correcto: el dia que Franco suba el bloque PHP empieza a escribirse sola,
+    sin tocar Python. Sacarla ahora obligaria a acordarse de volver a ponerla,
+    que es como se pierden las columnas."""
     campos = {
         "estado_it": estado_it,
         "observacion_it": observacion_it,
         "despachado": estado_hacia,
-        "calle": CALLE_IT,
+        "calle": calle or CALLE_IT,
     }
+    if destino:
+        campos["destino_it"] = destino
+    if patio:
+        campos["patio"] = patio
     if usuario:
         # `updated_by` es int del otro lado. `id_actual()` devuelve texto.
         try:
@@ -1449,6 +1501,27 @@ def campos_it(estado_it, observacion_it, estado_hacia, usuario):
         except (TypeError, ValueError):
             pass
     return campos
+
+
+def encolar_movimiento_it(db, unidad, movimiento_id, estado_hacia, usuario,
+                          calle=None, patio=None, depende_de=None):
+    """El movimiento del IT, colgado de la entrada de `it`.
+
+    POR QUE EXISTE ESTA FUNCION Y NO SE USA `encolar_movimiento` A SECAS: por
+    el `depende_de`. Las dos entradas --la de `it` y la del movimiento-- saldrian
+    con el MISMO `legado_updated_at_conocido`; la primera avanza el `updated_at`
+    del otro lado y la segunda choca contra su propia escritura con un 409
+    falso. Es el mismo patron que la PDI y sus OT.
+
+    Y EL MOVIMIENTO SI VA, contra lo que decia este archivo hasta el
+    2026-09-09: la rama viva de Regla PHP llama a `registromov()` UNA vez
+    (produccion/Pedido.php:9505). La afirmacion de que llamaba cero veces salio
+    de contar sobre el archivo de TEST, que tiene una rama que produccion no
+    tiene."""
+    return encolar_movimiento(db, unidad, movimiento_id, estado_hacia, usuario,
+                              calle=calle, patio=patio,
+                              entidad="it_movimiento",
+                              depende_de=depende_de)
 
 
 # ---------------------------------------------------------------------------

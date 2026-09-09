@@ -14,11 +14,6 @@
     · está en {{ estado_actual }}
   </p>
 
-  {# El destino depende del cliente y se dice de entrada, para que el operario
-     sepa a dónde va a quedar la unidad antes de guardar. #}
-  <div class="aviso">
-    Al guardar, la unidad queda en <strong>{{ destino }}</strong>.
-  </div>
 
   {% if previo %}
     <div class="aviso">
@@ -35,7 +30,10 @@
     </div>
   {% endif %}
 
-  <form method="post" class="form-paso"
+  {#- `enctype` porque ahora el formulario lleva fotos. Sin esto el navegador
+      manda los nombres de archivo como texto y `request.files` llega vacío:
+      el guardado diría "falta la foto" con la foto elegida en pantalla. -#}
+  <form method="post" class="form-paso" enctype="multipart/form-data"
         action="{{ url_for('taller.guardar_it', id_unidad=u['id']) }}">
 
     {# De dónde se vino, para saber a dónde volver al guardar. #}
@@ -79,13 +77,50 @@
       </label>
     </div>
 
+    {#- EL DESTINO. Es la decisión del IT: a dónde va la unidad.
+
+        Se muestran los tres con su patio y su calle, y no sólo el nombre,
+        porque el movilizador tiene que poder confirmar contra lo que ve en el
+        patio. Un desplegable que dijera sólo "FR" lo obligaría a acordarse de
+        que eso significa PATIO 2 / Cmp3. -#}
+    <fieldset class="destinos-it">
+      <legend>¿A dónde va la unidad? <em>(obligatorio)</em></legend>
+      {% for clave, d in destinos.items() %}
+        <label class="destino-it">
+          <input type="radio" name="destino_it" value="{{ clave }}"
+                 data-destino data-evidencia="{{ 1 if d['evidencia'] else 0 }}"
+                 {% if v.get('destino_it') == clave %}checked{% endif %}>
+          <span class="destino-it-nombre">{{ clave }} — {{ d['nombre'] }}</span>
+          <span class="destino-it-detalle">
+            {{ d['descripcion'] }}<br>
+            queda en <strong>{{ d['estado'] }}</strong>,
+            {{ d['patio'] }} · calle {{ d['calle'] }}
+            {%- if d['evidencia'] %} · <strong>pide foto y observación</strong>{% endif %}
+          </span>
+        </label>
+      {% endfor %}
+    </fieldset>
+
     <label class="campo-ancho">
       <span>Observación IT</span>
       <textarea name="observacion_it" rows="3"
                 data-observacion-it>{{ v.get('observacion_it') or '' }}</textarea>
       <small data-nota-obligatoria hidden>
-        Obligatoria porque la unidad presenta fallas.
+        Obligatoria por el destino elegido o porque la unidad presenta fallas.
       </small>
+    </label>
+
+    {#- LAS FOTOS. Hasta {{ tope_fotos }}: el tope es del formulario, no del
+        modelo — la tabla no tiene límite, así que si algún día la pantalla
+        acepta más, lo que ya está guardado no hay que migrarlo. -#}
+    <label class="campo-ancho">
+      <span>Fotos de la unidad <em>(hasta {{ tope_fotos }})</em></span>
+      <input type="file" name="fotos_it" accept="image/*" multiple
+             capture="environment" data-fotos-it>
+      <small data-nota-fotos hidden>
+        Al menos una foto, por el destino elegido o porque presenta fallas.
+      </small>
+      <small data-cuenta-fotos></small>
     </label>
 
     <p class="firma">La registra <strong>{{ encargado }}</strong></p>
@@ -104,14 +139,40 @@
       var nota = document.querySelector('[data-nota-obligatoria]');
       if (!estado || !obs || !nota) { return; }
 
+      var fotos = document.querySelector('[data-fotos-it]');
+      var notaFotos = document.querySelector('[data-nota-fotos]');
+      var cuenta = document.querySelector('[data-cuenta-fotos]');
+      var tope = {{ tope_fotos }};
+
       function revisar() {
-        var hace_falta = estado.value === 'PRESENTA FALLAS';
+        /* Las dos condiciones son un O, igual que en el servidor:
+           el destino exige evidencia, O el estado es PRESENTA FALLAS. */
+        var elegido = document.querySelector('[data-destino]:checked');
+        var porDestino = !!(elegido && elegido.dataset.evidencia === '1');
+        var hace_falta = porDestino || estado.value === 'PRESENTA FALLAS';
+
         nota.hidden = !hace_falta;
         obs.required = hace_falta;
+        if (notaFotos) { notaFotos.hidden = !hace_falta; }
+        if (fotos) { fotos.required = hace_falta; }
+      }
+
+      function contar() {
+        if (!fotos || !cuenta) { return; }
+        var n = fotos.files ? fotos.files.length : 0;
+        if (!n) { cuenta.textContent = ''; return; }
+        cuenta.textContent = n > tope
+          ? 'Elegiste ' + n + ' y el máximo son ' + tope + '.'
+          : n + (n === 1 ? ' foto elegida.' : ' fotos elegidas.');
       }
 
       estado.addEventListener('change', revisar);
+      Array.prototype.forEach.call(
+        document.querySelectorAll('[data-destino]'),
+        function (r) { r.addEventListener('change', revisar); });
+      if (fotos) { fotos.addEventListener('change', contar); }
       revisar();
+      contar();
     })();
   </script>
 {% endblock %}

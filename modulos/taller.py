@@ -61,14 +61,19 @@ se hicieron durante la PDI.
 from datetime import datetime
 
 from flask import Blueprint, redirect, render_template, request, url_for
+from markupsafe import escape
 
-from core import consultar, exigir_unidad_id, get_db
+import os
+
+from werkzeug.utils import secure_filename
+
+from core import DATA_DIR, consultar, exigir_unidad_id, get_db
 from modulos.acceso import id_actual, nombre_actual
 from modulos.catalogos import normalizar
-from modulos import combustible, ot_pdi
+from modulos import avisos, combustible, destinatarios, imagenes, ot_pdi
 from modulos.movimientos import (MOTIVOS, _buscar, es_desvio, estado_fisico,
                                  motivo_obligatorio, recomendar, registrar)
-from modulos.push_legado import (asegurar_tablas, campos_it, disparar_push,
+from modulos.push_legado import (asegurar_tablas, campos_it, encolar_movimiento_it, disparar_push,
                                  encolar_it)
 from modulos.unidades import TABLA
 
@@ -138,12 +143,45 @@ def _asegurar_tablas(db):
           vin TEXT,
           estado_it TEXT,
           observacion_it TEXT,
+          destino_it TEXT,              -- ZD / DYP / FR
+          patio TEXT,                   -- el que le toca al destino
+          calle TEXT,                   -- idem
           estado_desde TEXT,
           estado_hacia TEXT,
           encargado TEXT,
           usuario TEXT,
           creado_en TEXT
         )""")
+
+    # `destino_it`, `patio` y `calle` llegaron con el port del 2026-09-09.
+    # ALTER y no un CREATE nuevo: la tabla ya existe en Railway con filas
+    # adentro, y recrearla las perderia.
+    cols = {r[1] for r in db.execute("PRAGMA table_info(it_regla)")}
+    for columna in ("destino_it", "patio", "calle"):
+        if columna not in cols:
+            db.execute("ALTER TABLE it_regla ADD COLUMN {} TEXT".format(
+                columna))
+
+    # LAS FOTOS DEL IT. Tabla propia y SIN TOPE.
+    #
+    # El 6 es del formulario --sale de `procesar_fotos_it()` de Regla PHP-- y
+    # no del modelo. Es la misma decision que las nueve de la inspeccion de
+    # despacho: el limite del cable no puede ser el limite de lo que se guarda,
+    # porque entonces la evidencia que no entra se pierde en vez de quedar
+    # guardada y sin empujar.
+    db.execute("""
+        CREATE TABLE IF NOT EXISTS it_fotos_regla (
+          id INTEGER PRIMARY KEY,
+          it_id INTEGER NOT NULL,
+          unidad_id INTEGER NOT NULL,
+          vin TEXT NOT NULL,
+          numero INTEGER NOT NULL,      -- 1..n, el orden en que se cargaron
+          ruta TEXT NOT NULL,           -- relativa a DATA_DIR
+          nota TEXT,                    -- si no se pudo recomprimir, por que
+          creado_en TEXT
+        )""")
+    db.execute("CREATE INDEX IF NOT EXISTS ix_it_fotos_regla "
+               "ON it_fotos_regla (it_id)")
     db.execute("CREATE INDEX IF NOT EXISTS ix_it_regla_vin ON it_regla (vin)")
 
     # La guarda: rechaza filas sin unidad. Va acá porque esta
@@ -530,11 +568,142 @@ def guardar_pdi(id_unidad):
 # IT
 # ---------------------------------------------------------------------------
 
-def _destino_it(unidad):
-    """CARFLEX va a inspeccion mecanica; el resto entra a taller."""
-    if normalizar(unidad["clientecompleto"]) == "CARFLEX":
-        return "INSPECCION MECANICA DESPACHO"
-    return "INGRESO A TALLER"
+# ---------------------------------------------------------------------------
+# El IT: los tres destinos
+# ---------------------------------------------------------------------------
+#
+# Copiados de `destinos_it()` de produccion/Pedido.php. La pantalla vieja de
+# Regla Python no tenia destino: mandaba siempre `calle='It'` /
+# `despachado='INGRESO A TALLER'`, que es la rama que en PRODUCCION NO EXISTE.
+# Cada IT hecho asi le escribia a Regla PHP un estado que su propia pantalla ya
+# no produce.
+#
+# `evidencia=True` obliga observacion Y al menos una foto.
+DESTINOS_IT = {
+    "ZD": {
+        "nombre": "ZONA DE DESPACHO",
+        "descripcion": "La unidad queda conforme y pasa a zona de despacho.",
+        "patio": "PATIO 1",
+        "calle": "ZD",
+        "estado": "ZONA DE DESPACHO",
+        "evidencia": False,
+    },
+    "DYP": {
+        "nombre": "DESABOLLADURA Y PINTURA",
+        "descripcion": "Presenta danos de carroceria y se entrega a DYP.",
+        "patio": "PATIO 2",
+        "calle": "ENTREGADO DYP",
+        "estado": "DYP",
+        "evidencia": True,
+    },
+    "FR": {
+        "nombre": "FR - MECANICA",
+        "descripcion": "Queda retenida por falla mecanica (taller De Parra).",
+        # PATIO 2, Y NO EL PATIO 1 QUE DICE EL CODIGO DE REGLA PHP.
+        #
+        # Es el unico lugar de todo el proyecto donde NO aplica "coincidir vale
+        # mas que tener razon", y es porque el dueño del sistema ya decidio:
+        # `destinos_it()` tenia PATIO 1, Franco confirmo que es un bug vivo
+        # desde el 2026-09-02 y lo corrigio en produccion. El historico decia
+        # PATIO 2 con 98,9% sobre 809 casos y tenia razon.
+        #
+        # Coincidir vale mas que tener razon cuando la diferencia es una
+        # convencion. Cuando es un error que el otro sistema ya esta
+        # arreglando, copiarlo seria propagarlo.
+        "patio": "PATIO 2",
+        "calle": "Cmp3",
+        "estado": "FR - MECANICA",
+        "evidencia": True,
+    },
+}
+
+# El maximo de fotos del FORMULARIO, no del modelo. `it_fotos_regla` no tiene
+# tope: el 6 sale de `procesar_fotos_it()` de Regla PHP y es una decision de
+# pantalla. Guardar siete y mostrar seis es una divergencia; no poder guardar
+# la septima es perder evidencia de un daño.
+TOPE_FOTOS_IT = 6
+
+SUBCARPETA_IT = os.path.join("uploads", "it")
+CARPETA_FOTOS_IT = os.path.join(DATA_DIR, SUBCARPETA_IT)
+EXTENSIONES_IT = (".jpg", ".jpeg", ".png", ".webp", ".heic", ".heif")
+
+
+def destinos_para(unidad):
+    """Los tres destinos, con el estado que le toca a ESTA unidad.
+
+    La excepcion heredada de CARFLEX se resuelve aca y no en el guardado, para
+    que la pantalla muestre el estado real al que va a ir la unidad y no uno
+    generico que despues cambia."""
+    salida = {}
+    for clave, base in DESTINOS_IT.items():
+        d = dict(base)
+        if clave == "ZD" and normalizar(unidad["clientecompleto"]) == "CARFLEX":
+            # Excepcion heredada: CARFLEX conserva su nomenclatura de
+            # inspeccion de despacho. Es de Regla PHP y se replica tal cual.
+            d["estado"] = "INSPECCION MECANICA DESPACHO"
+            d["nombre"] = "ZONA DE DESPACHO (CARFLEX)"
+        salida[clave] = d
+    return salida
+
+
+def _destino_it(unidad, clave=None):
+    """El estado al que va la unidad con ese destino.
+
+    Sin `clave` devuelve el de ZD, que es el conforme. Se conserva la firma de
+    un solo argumento porque la usa `_pintar_it` para el contexto de motivo."""
+    ds = destinos_para(unidad)
+    return ds.get(clave or "ZD", ds["ZD"])["estado"]
+
+
+def exige_evidencia(clave_destino, estado_it):
+    """True si hay que pedir observacion Y al menos una foto.
+
+    Las dos condiciones son un O, y la segunda es la que se olvida: una unidad
+    que va a ZD --sin evidencia-- pero con estado `PRESENTA FALLAS` tambien
+    tiene que traer foto. Es de `actualizar_it_process()`:
+
+        $exigeEvidencia = ($destinos[$d]['evidencia'] === TRUE
+                           || $estadoIt === 'PRESENTA FALLAS');
+    """
+    d = DESTINOS_IT.get(clave_destino)
+    return bool(d and d["evidencia"]) or estado_it == "PRESENTA FALLAS"
+
+
+def _guardar_foto_it(archivo, vin, numero):
+    """Escribe una foto del IT con el perfil de daños. Devuelve (ruta, nota).
+
+    PERFIL DE DAÑOS -- 800 px, calidad 0,8 -- porque una foto del IT es
+    evidencia de un daño, igual que la del check list: es lo que sostiene que
+    la unidad se entrego a DYP o que quedo retenida por mecanica.
+
+    El nombre imita al de Regla PHP (`IT_{vin}_{Y-m-d_H-i-s}_{n}.jpg`) para que
+    las dos carpetas se lean igual mientras convivan."""
+    if not archivo or not archivo.filename:
+        return None, None
+    extension = os.path.splitext(archivo.filename)[1].lower()
+    if extension not in EXTENSIONES_IT:
+        extension = ".jpg"
+    # Siempre `.jpg` de salida: `imagenes.procesar` recomprime a JPEG, y dejar
+    # `.heic` en el nombre de un archivo que ya es JPEG confunde a todo el que
+    # lo mire despues.
+    salida = ".jpg"
+
+    carpeta_vin = secure_filename(vin or "") or "sin-vin"
+    destino = os.path.join(CARPETA_FOTOS_IT, carpeta_vin)
+    sello = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+    nombre = "IT_{}_{}_{}{}".format(carpeta_vin, sello, numero, salida)
+    _tam, nota = imagenes.guardar(archivo, os.path.join(destino, nombre),
+                                  imagenes.DANOS)
+    return os.path.join(SUBCARPETA_IT, carpeta_vin, nombre).replace(
+        "\\", "/"), nota
+
+
+def fotos_de_it(it_id):
+    return consultar(
+        "SELECT * FROM it_fotos_regla WHERE it_id = ? ORDER BY numero",
+        (it_id,))
+
+
 
 
 def _pintar_it(unidad, errores=None, codigo=200):
@@ -542,12 +711,17 @@ def _pintar_it(unidad, errores=None, codigo=200):
     pagina = render_template(
         "it.html", u=unidad, resultados=RESULTADO,
         encargado=nombre_actual(),
-        destino=_destino_it(unidad),
+        destinos=destinos_para(unidad),
+        tope_fotos=TOPE_FOTOS_IT,
         estado_actual=estado_fisico(unidad),
         previo=it_de_unidad(unidad["id"]),
         volver=request.values.get("volver", ""),
         errores=errores or [], v=request.form if es_post else {},
-        **_contexto_motivo(unidad, [_destino_it(unidad)]))
+        # Los TRES destinos, no uno: el motivo se pide segun la transicion,
+        # y hasta que el operario elija no se sabe cual va a ser. Pasar uno
+        # solo dejaria sin pedir motivo a las otras dos.
+        **_contexto_motivo(unidad,
+                           [d["estado"] for d in destinos_para(unidad).values()]))
     return (pagina, codigo) if codigo != 200 else pagina
 
 
@@ -559,6 +733,135 @@ def it(id_unidad):
     return _pintar_it(unidad)
 
 
+# ---------------------------------------------------------------------------
+# El correo del IT
+# ---------------------------------------------------------------------------
+#
+# Copiado de `enviar_correo_it()` de produccion/Pedido.php.
+#
+# ES EL SEGUNDO CANAL HACIA UN TERCERO que Regla Python maneja, y a diferencia
+# del de la inspeccion --que resulto ser interno-- este SI sale de la empresa:
+# `preentrega@cidef.cl` es del cliente, y con `$modoPrueba = FALSE` en
+# produccion le llega de verdad.
+#
+# LAS FOTOS VAN INCRUSTADAS, NO COMO ENLACES. Regla PHP usa
+# `addEmbeddedImage` con `cid:`, y la diferencia no es cosmetica: un correo
+# donde las fotos se ven al abrirlo y otro donde hay que seguir seis enlaces no
+# son el mismo correo para quien lo recibe. Ademas un enlace dependeria de que
+# Regla Python este arriba cuando el cliente lo abra, que puede ser cualquier
+# dia; una foto incrustada viaja adentro del mensaje y no depende de nadie.
+REMITENTE_IT = "Regla Python - Revision IT <enviosdespacho@logautos.cl>"
+RESPONDER_A_IT = "fgonzalez@logautos.cl"
+
+
+def _cuerpo_correo_it(unidad, destino, cfg, estado_it, observacion, rutas):
+    """Devuelve (asunto, texto, html, adjuntos)."""
+    vin = unidad["vin"] or ""
+    patente = (unidad["patente"] or "").strip() if "patente" in unidad.keys() \
+        else ""
+
+    asunto = "IT {} || VIN: {}".format(destino, vin)
+    if patente:
+        asunto += " || PATENTE: {}".format(patente)
+
+    color = "#dd4b39" if destino == "FR" else "#3c8dbc"
+
+    filas = [
+        ("VIN", vin),
+        ("Patente", patente),
+        ("Marca", unidad["marca"]),
+        ("Modelo", unidad["modelo"]),
+        ("Color", unidad["color"]),
+        ("Cliente", unidad["clientecompleto"]),
+        ("Estado IT", estado_it),
+        ("Destino", "{} - {}".format(destino, cfg["nombre"])),
+        ("Registrado por", nombre_actual()),
+        ("Fecha y hora", datetime.now().strftime("%d-%m-%Y %H:%M:%S")),
+    ]
+    tabla = ('<table cellpadding="7" cellspacing="0" border="0" '
+             'style="border-collapse:collapse;font-family:Arial,Helvetica,'
+             'sans-serif;font-size:13px;">')
+    for etiqueta, valor in filas:
+        valor = (str(valor) if valor is not None else "").strip()
+        if not valor:
+            continue
+        tabla += (
+            '<tr><td style="border:1px solid #ddd;background:#f7f7f7;'
+            'font-weight:bold;width:150px;">{}</td>'
+            '<td style="border:1px solid #ddd;">{}</td></tr>'.format(
+                escape(etiqueta), escape(valor)))
+    tabla += "</table>"
+
+    adjuntos, galeria = [], ""
+    for i, ruta in enumerate(rutas, start=1):
+        absoluta = os.path.join(DATA_DIR, ruta)
+        if not os.path.exists(absoluta):
+            continue
+        cid = "foto_it_{}".format(i)
+        adjuntos.append({"ruta": absoluta, "cid": cid})
+        galeria += (
+            '<div style="display:inline-block;margin:0 10px 10px 0;'
+            'text-align:center;">'
+            '<img src="cid:{}" width="320" style="max-width:320px;'
+            'border:1px solid #ddd;border-radius:4px;"><br>'
+            '<small style="font-family:Arial;color:#777;">Foto {}</small>'
+            "</div>".format(cid, i))
+    if not galeria:
+        galeria = ('<p style="font-family:Arial;font-size:13px;color:#777;">'
+                   "(No se adjuntaron fotos en este registro.)</p>")
+
+    html = (
+        '<div style="font-family:Arial,Helvetica,sans-serif;font-size:14px;'
+        'color:#333;">'
+        '<h2 style="color:{c};margin:0 0 4px;">Revision IT - Destino {d}</h2>'
+        '<p style="margin:0 0 16px;color:#777;font-size:12px;">'
+        "Aviso automatico generado desde el modulo Actualizar IT.</p>"
+        "{t}"
+        '<h3 style="margin:22px 0 6px;">Observacion</h3>'
+        '<div style="border-left:4px solid {c};background:#f7f7f7;'
+        'padding:10px 14px;font-size:13px;white-space:pre-wrap;">{o}</div>'
+        '<h3 style="margin:22px 0 6px;">Evidencia fotografica ({n})</h3>'
+        "{g}"
+        '<p style="margin-top:24px;font-size:11px;color:#999;">'
+        "Correo generado automaticamente por REGLA - LOGAUTOS. No responder."
+        "</p></div>"
+    ).format(c=color, d=escape(destino), t=tabla,
+             o=escape(observacion or "SIN OBSERVACION"),
+             n=len(adjuntos), g=galeria)
+
+    texto = (
+        "Revision IT - Destino {}\n"
+        "VIN: {}\n"
+        "Estado IT: {}\n"
+        "Observacion: {}\n"
+        "Fotos adjuntas: {}"
+    ).format(destino, vin, estado_it, observacion, len(adjuntos))
+
+    return asunto, texto, html, adjuntos
+
+
+def _encolar_correo_it(db, unidad, it_id, destino, cfg, estado_it,
+                       observacion, rutas):
+    """Deja el aviso listo para que lo mande el hilo de fondo.
+
+    Se llama con la transaccion abierta: el correo se encola en el MISMO commit
+    que la fila del IT, que las dos entradas de push y que las fotos. Si Resend
+    esta caido, la revision NO se pierde y el aviso queda pendiente -- igual
+    que en la inspeccion de despacho."""
+    direcciones = destinatarios.sumando(
+        destinatarios.MODULO_IT, unidad["clientecompleto"])
+    if not direcciones:
+        # Sin destinatarios no se encola nada: un aviso que no puede salir
+        # solo agrega ruido a la cola y a la reconciliacion.
+        return None
+    asunto, texto, html, adjuntos = _cuerpo_correo_it(
+        unidad, destino, cfg, estado_it, observacion, rutas)
+    return avisos.encolar(db, "it", it_id, direcciones, asunto, texto, html,
+                          remitente=REMITENTE_IT,
+                          responder_a=RESPONDER_A_IT,
+                          adjuntos=adjuntos)
+
+
 @bp.route("/movimientos/<int:id_unidad>/it", methods=["POST"])
 def guardar_it(id_unidad):
     unidad = _unidad(id_unidad)
@@ -567,18 +870,46 @@ def guardar_it(id_unidad):
 
     estado_it = _texto("estado_it").upper()
     observacion = _texto("observacion_it").upper()
+    destino = _texto("destino_it").upper()
+    disponibles = destinos_para(unidad)
 
     errores = []
     if estado_it not in RESULTADO:
         errores.append("Elegí el resultado de la revisión.")
-    if estado_it == "PRESENTA FALLAS" and not observacion:
-        errores.append("Si la unidad presenta fallas hay que decir cuáles: "
-                       "la observación es obligatoria.")
+    if destino not in disponibles:
+        errores.append("Elegí a dónde va la unidad: ZD, DYP o FR.")
+
+    # LAS FOTOS SE LEEN ANTES DE VALIDAR, y no despues.
+    #
+    # Si se validara primero y se leyeran despues, un formulario rechazado por
+    # otro motivo perderia las fotos que el operario ya habia elegido -- el
+    # navegador no las vuelve a mandar. Se leen, se cuentan, y si hay que
+    # rechazar se rechaza; lo que no se hace es escribirlas al disco antes de
+    # saber si el guardado va a salir.
+    archivos = [a for a in request.files.getlist("fotos_it")
+                if a and a.filename]
+
+    if len(archivos) > TOPE_FOTOS_IT:
+        errores.append(
+            "Máximo {} fotos por revisión: mandaste {}."
+            .format(TOPE_FOTOS_IT, len(archivos)))
+
+    if destino in disponibles and exige_evidencia(destino, estado_it):
+        porque = ("el destino {} exige evidencia".format(destino)
+                  if DESTINOS_IT[destino]["evidencia"]
+                  else "la unidad presenta fallas")
+        if not observacion:
+            errores.append(
+                "Hay que escribir la observación: {}.".format(porque))
+        if not archivos:
+            errores.append(
+                "Hay que adjuntar al menos una foto: {}.".format(porque))
+
     if errores:
         return _pintar_it(unidad, errores, codigo=400)
 
     estado_actual = estado_fisico(unidad)
-    estado_hacia = _destino_it(unidad)
+    estado_hacia = disponibles[destino]["estado"]
 
     # Mismo corte que `registrar_movimiento`: sin motivo no se guarda. Va
     # DESPUES de validar el resultado del IT para no pedir dos cosas de a una,
@@ -606,10 +937,23 @@ def guardar_it(id_unidad):
         "es_desvio": es_desvio(clave, paso),
         "estado_desde": estado_actual,
         "estado_hacia": estado_hacia,
-        # El IT tiene su propia entidad de push, que ya manda calle y
-        # despachado. Y el legado NO escribe fila de `registros` en su bloque
-        # It, asi que empujar el movimiento le meteria a su historial algo que
-        # su pantalla nunca genera. Ver la nota en `registrar`.
+        # EL MOVIMIENTO SI SE EMPUJA, y hasta el 2026-09-09 no lo hacia.
+        #
+        # Aca decia `False`, apoyado en que "el bloque It de Regla PHP llama a
+        # registromov() cero veces". Era falso: la rama VIVA lo llama UNA vez,
+        # en produccion/Pedido.php:9505. El conteo se habia hecho sobre el
+        # archivo de test, que ademas tiene una rama que produccion no tiene.
+        #
+        # El dato lo confirma sin leer codigo: `registros` con accion='It'
+        # trae exactamente los dos estados que esa rama produce. O sea que
+        # Regla Python le estaba SACANDO al historial de Regla PHP una fila que
+        # Regla PHP si escribe -- y de ese historial salen sus reportes.
+        #
+        # Va por su propia entidad `it_movimiento`, con `depende_de` sobre la
+        # entrada de `it`: las dos saldrian con el mismo
+        # `legado_updated_at_conocido`, la primera avanzaria el `updated_at`
+        # del otro lado y la segunda chocaria contra su propia escritura con un
+        # 409 falso. Es el mismo patron que la PDI y sus OT.
         "empuja_movimiento": False,
         "motivo": motivo,
         "motivo_detalle": motivo_detalle,
@@ -626,31 +970,77 @@ def guardar_it(id_unidad):
     # COMMIT implicito. Llamarlo despues del INSERT partiria en dos lo que
     # tiene que ser atomico.
     asegurar_tablas(db)
+    _asegurar_tablas(db)
 
     cur = db.execute("""
         INSERT INTO it_regla
           (unidad_id, movimiento_id, vin, estado_it, observacion_it,
+           destino_it, patio, calle,
            estado_desde, estado_hacia, encargado, usuario, creado_en)
-        VALUES (?,?,?,?,?,?,?,?,?,?)""", (
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)""", (
         unidad["id"], movimiento_id, unidad["vin"], estado_it, observacion,
+        destino, disponibles[destino]["patio"], disponibles[destino]["calle"],
         estado_actual, estado_hacia, nombre_actual(), id_actual(),
         datetime.now().isoformat(timespec="seconds")))
+    it_id = cur.lastrowid
 
-    # El push al legado. Las tres escrituras -- la fila de it_regla, el
-    # push_pendiente de la unidad y la entrada de cola -- caen en el mismo
-    # commit, que es lo que hace que el pull no pueda pisarnos: mientras el
-    # flag este en 1, el UPSERT saltea la fila.
+    # -- LAS FOTOS, en la misma transaccion ---------------------------------
+    #
+    # El archivo se escribe al disco fuera de la transaccion --no hay forma de
+    # hacer un rollback de un write-- pero la FILA que lo referencia entra con
+    # todo lo demas. El orden importa: si el commit fallara quedaria un archivo
+    # huerfano en disco, que no molesta a nadie; al reves quedaria una fila
+    # apuntando a un archivo que no existe, y eso es una foto rota en el correo
+    # de un cliente.
+    rutas = []
+    for n, archivo in enumerate(archivos, start=1):
+        ruta, nota = _guardar_foto_it(archivo, unidad["vin"], n)
+        if not ruta:
+            continue
+        rutas.append(ruta)
+        db.execute("""
+            INSERT INTO it_fotos_regla
+              (it_id, unidad_id, vin, numero, ruta, nota, creado_en)
+            VALUES (?,?,?,?,?,?,?)""", (
+            it_id, unidad["id"], unidad["vin"], n, ruta, nota,
+            datetime.now().isoformat(timespec="seconds")))
+
+    # -- EL PUSH: `it` primero, el movimiento colgado de el -----------------
     #
     # Encolar es local y no le manda nada a nadie. Lo que sale a la red es
-    # disparar_push, y eso ademas esta detras de PUSH_LEGADO_ACTIVO.
-    id_cola = encolar_it(db, unidad, cur.lastrowid,
+    # `disparar_push`, y eso ademas esta detras de PUSH_LEGADO_ACTIVO.
+    id_cola = encolar_it(db, unidad, it_id,
                          campos_it(estado_it, observacion, estado_hacia,
-                                   id_actual()))
+                                   id_actual(),
+                                   destino=destino,
+                                   patio=disponibles[destino]["patio"],
+                                   calle=disponibles[destino]["calle"]))
+
+    id_mov = encolar_movimiento_it(db, unidad, movimiento_id, estado_hacia,
+                                   id_actual(),
+                                   calle=disponibles[destino]["calle"],
+                                   patio=disponibles[destino]["patio"],
+                                   depende_de=id_cola)
+
+    # -- EL CORREO, encolado en la MISMA transaccion ------------------------
+    #
+    # Solo en los destinos con evidencia, igual que Regla PHP: `if
+    # ($destinos[$destinoIt]['evidencia'] === TRUE)`. En ZD no sale correo.
+    #
+    # NUNCA se manda en el request. Un aviso de algo que despues no se guardo
+    # es peor que no avisar, y este le llega a `preentrega@cidef.cl`, que es un
+    # tercero: no se le puede avisar de una revision que no quedo escrita.
+    if DESTINOS_IT[destino]["evidencia"]:
+        _encolar_correo_it(db, unidad, it_id, destino, disponibles[destino],
+                           estado_it, observacion, rutas)
+
     db.commit()
 
     # Despues del commit, nunca antes: si el hilo saliera con la transaccion
     # abierta podria pushear un dato que todavia puede no quedar guardado.
     disparar_push(id_cola)
+    if id_mov:
+        disparar_push(id_mov)
 
     return _volver(id_unidad, "taller.lista_it", "it",
                    unidad["vin"], estado_hacia)

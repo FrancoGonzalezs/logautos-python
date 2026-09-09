@@ -138,11 +138,28 @@ def probar_el_instrumento_entero():
     entorno["DB_PATH"] = copia
     entorno["DATA_DIR"] = tmp
     entorno["SECRET_KEY"] = "prueba"
+    # LAS DOS PUNTAS, no una. Fijar solo la decodificacion del padre deja
+    # el problema al reves: el hijo escribiria cp1252 y el padre leeria
+    # UTF-8. Con esto el hijo escribe UTF-8 siempre, sin importar la
+    # codificacion del sistema ni la del que corre la suite.
+    entorno["PYTHONIOENCODING"] = "utf-8"
     # Sin correo y sin guardar: la prueba no manda mails ni ensucia la tabla.
     r = subprocess.run(
         [_sys.executable, os.path.join(RAIZ, "scripts", "reconciliar.py"),
          "--sin-correo", "--sin-guardar"],
-        capture_output=True, text=True, env=entorno, timeout=300)
+        # `encoding` EXPLICITO, y no el `text=True` a secas que habia antes.
+        #
+        # Sin esto Python decodifica con la codificacion del sistema --cp1252
+        # en Windows-- mientras el hijo puede estar escribiendo UTF-8, y
+        # entonces la Ñ de "DAÑOS CORTADOS" llega rota. La suite reportaba que
+        # FALTABA una seccion que estaba ahi: un fallo del instrumento que se
+        # lee igual que un fallo del sistema medido.
+        #
+        # `errors="replace"` para que un byte raro no tumbe la comprobacion
+        # entera: lo que se busca son nombres de seccion, y si alguno viniera
+        # roto lo correcto es fallar por esa seccion, no por una excepcion.
+        capture_output=True, text=True, encoding="utf-8", errors="replace",
+        env=entorno, timeout=300)
 
     salida = (r.stdout or "") + (r.stderr or "")
     afirmar(r.returncode == 0,

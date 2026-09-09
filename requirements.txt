@@ -3,3 +3,6 @@ gunicorn==23.0.0
 requests==2.32.3
 bcrypt==5.0.0
 resend==2.37.0
+# Los perfiles de foto (modulos/imagenes.py). Sin esto, las fotos se
+# guardan crudas: ~70 GB al mes contra 4,6 GB de volumen.
+Pillow==11.0.0

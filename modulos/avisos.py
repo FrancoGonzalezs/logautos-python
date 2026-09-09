@@ -68,9 +68,18 @@ def _asegurar_tabla(db):
     db.execute("CREATE INDEX IF NOT EXISTS ix_avisos_pendientes "
                "ON avisos_pendientes_regla (enviado_en, proximo_intento)")
 
+    # `adjuntos` llego con el IT, cuyo correo lleva las fotos INCRUSTADAS.
+    # `ALTER TABLE ADD COLUMN` y no un CREATE nuevo: la tabla ya existe en
+    # Railway con avisos adentro, y recrearla los perderia.
+    cols = {r[1] for r in db.execute(
+        "PRAGMA table_info(avisos_pendientes_regla)")}
+    if "adjuntos" not in cols:
+        db.execute("ALTER TABLE avisos_pendientes_regla "
+                   "ADD COLUMN adjuntos TEXT")
+
 
 def encolar(db, modulo, referencia_id, destinatarios, asunto, texto, html,
-            remitente=None, responder_a=None):
+            remitente=None, responder_a=None, adjuntos=()):
     """Deja el aviso listo para salir. NO lo manda.
 
     Recibe `db` en vez de abrirlo: tiene que escribirse en la MISMA
@@ -80,11 +89,16 @@ def encolar(db, modulo, referencia_id, destinatarios, asunto, texto, html,
     cur = db.execute(
         "INSERT INTO avisos_pendientes_regla "
         "  (modulo, referencia_id, destinatarios, remitente, responder_a, "
-        "   asunto, texto, html, proximo_intento, creado_en) "
-        "VALUES (?,?,?,?,?,?,?,?,?,?)",
+        "   asunto, texto, html, adjuntos, proximo_intento, creado_en) "
+        "VALUES (?,?,?,?,?,?,?,?,?,?,?)",
         (modulo, referencia_id,
          json.dumps(list(destinatarios), ensure_ascii=False),
          remitente, responder_a, asunto, texto, html,
+         # Las RUTAS, no los bytes. Un aviso con seis fotos de 51 KB en base64
+         # serian ~400 KB por fila en una tabla que se consulta seguido, y las
+         # fotos ya estan guardadas: duplicarlas para reintentar es guardar dos
+         # veces lo mismo por si acaso.
+         json.dumps(list(adjuntos), ensure_ascii=False) if adjuntos else None,
          ahora.isoformat(timespec="seconds"),
          ahora.isoformat(timespec="seconds")))
     return cur.lastrowid
@@ -111,10 +125,16 @@ def procesar(db_path=None, limite=20):
         resumen = {"intentados": 0, "enviados": 0, "errores": 0, "agotados": 0}
         for f in filas:
             resumen["intentados"] += 1
+            # Las claves de la fila se leen con `keys()` porque `adjuntos`
+            # es una columna que llego despues: una base todavia sin migrar
+            # --o una fila vieja-- no la tiene, y `f["adjuntos"]` reventaria.
+            crudos = (f["adjuntos"] if "adjuntos" in f.keys() else None) or "[]"
+            adjuntos = json.loads(crudos)
             estado, detalle = correo.mandar(
                 json.loads(f["destinatarios"] or "[]"),
                 f["asunto"], f["texto"] or "", f["html"] or "",
-                remitente=f["remitente"], responder_a=f["responder_a"])
+                remitente=f["remitente"], responder_a=f["responder_a"],
+                adjuntos=adjuntos)
 
             if estado == "enviado":
                 db.execute(

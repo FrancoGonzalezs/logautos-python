@@ -78,16 +78,40 @@ def mandar(destinatarios, asunto, texto, html, adjuntos=(),
         log("no_configurado", asunto, "sin destinatarios configurados")
         return "no_configurado", "No hay destinatarios configurados."
 
+    # ADJUNTOS, Y LOS INCRUSTADOS SON OTRA COSA.
+    #
+    # Un elemento de `adjuntos` puede ser:
+    #   "ruta/a/foto.jpg"                    adjunto comun, se baja aparte
+    #   {"ruta": "...", "cid": "foto_1"}     INCRUSTADO: el cuerpo lo muestra
+    #                                        con <img src="cid:foto_1">
+    #
+    # La distincion no es cosmetica y la trajo el IT. Regla PHP manda ese
+    # correo con las fotos INCRUSTADAS --`addEmbeddedImage`, no
+    # `addAttachment`--, y le llega a `preentrega@cidef.cl`, que es un
+    # tercero. Un correo donde las fotos se ven al abrirlo y otro donde hay
+    # que bajar seis adjuntos no son el mismo correo para quien lo recibe, y
+    # el criterio de este proyecto es que el destinatario no note que cambio
+    # el sistema que se lo manda.
+    #
+    # Resend incrusta cuando el adjunto trae `content_id` y el HTML lo
+    # referencia con `cid:`.
     adjuntos_api = []
-    for ruta in adjuntos:
+    for item in adjuntos:
+        if isinstance(item, dict):
+            ruta, cid = item.get("ruta"), item.get("cid")
+        else:
+            ruta, cid = item, None
         if not ruta or not os.path.exists(ruta):
             continue
         try:
             with open(ruta, "rb") as f:
-                adjuntos_api.append({
+                entrada = {
                     "filename": os.path.basename(ruta),
                     "content": list(f.read()),
-                })
+                }
+            if cid:
+                entrada["content_id"] = cid
+            adjuntos_api.append(entrada)
         except OSError:
             # Una foto ilegible no puede impedir que salga el informe: el
             # cuerpo con la tabla de VIN es lo que el cliente necesita.

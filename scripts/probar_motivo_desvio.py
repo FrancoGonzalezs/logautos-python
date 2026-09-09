@@ -172,8 +172,30 @@ def movimientos(ruta):
         db.close()
 
 
-CAMPOS_IT = {"estado_it": "OK", "observacion_it": ""}
+# EL IT YA NO PRODUCE `INGRESO A TALLER`, y por eso estos casos se mudaron
+# a la pantalla de Movimientos.
+#
+# Hasta el port del 2026-09-09 el IT mandaba siempre a INGRESO A TALLER --que
+# era la rama muerta de Regla PHP-- y esa transicion desde CONTROL DE CALIDAD
+# esta en DESVIOS_CON_MOTIVO. Ahora el IT elige entre ZONA DE DESPACHO, DYP y
+# FR - MECANICA, y NINGUNA de las tres esta en la tabla de motivos.
+#
+# El par no murio: `ingreso_taller` sigue siendo un paso de la pantalla de
+# Movimientos, que es de donde se registra ahora. Lo que cambio es POR DONDE
+# se llega, no que se exija.
+CAMPOS_IT = {"estado_it": "OK", "observacion_it": "", "destino_it": "ZD"}
+PASO_TALLER = {"paso": "ingreso_taller"}
 CC = "CONTROL DE CALIDAD DESPACHO"
+
+
+def foto_de_prueba(lado=1200):
+    """Una foto chica en memoria. El IT a FR exige al menos una."""
+    import io as _io
+    from PIL import Image
+    b = _io.BytesIO()
+    Image.new("RGB", (lado, int(lado * 0.75)), (80, 100, 60)).save(b, "JPEG")
+    b.seek(0)
+    return b
 
 
 def main():
@@ -181,74 +203,101 @@ def main():
     ruta = os.path.join(tmp, "prueba.db")
 
     # ------------------------------------------------------------------ 1
-    paso("1. IT desde control de calidad SIN motivo: se corta")
+    paso("1. Movimientos NO registra el ingreso a taller: se lo DELEGA al IT")
+    #
+    # Es la pieza que explica todo lo demas. `ingreso_taller` no se guarda
+    # desde la ficha: la ficha redirige al formulario del IT y le pasa el
+    # motivo por la query string, porque el IT pide cosas que la ficha no
+    # tiene (resultado, destino, fotos).
     base_con(ruta, CC, [])
     c = cliente(ruta)
-    r = c.post("/movimientos/90001/it", data=dict(CAMPOS_IT))
-    afirmar(r.status_code == 400, "responde 400 y no redirige", r.status_code)
-    visible = texto_visible(r.get_data(as_text=True))
-    afirmar("hay que decir por" in visible, "explica por que corta",
-            visible[visible.find("hay que decir") - 60:][:150].strip())
-    afirmar("retrabajo" in visible, "y para que sirve el dato")
-    afirmar(movimientos(ruta) == [], "NO registro el movimiento", movimientos(ruta))
-
-    # -- y la pantalla ofrece la lista correcta para poder cumplir ---------
-    afirmar("Terminación rechazada (pintura, pulido, detalle)" in
-            r.get_data(as_text=True),
-            "muestra la lista 'cc_taller', no una generica")
+    r = c.post("/movimientos/90001/registrar", data=dict(
+        PASO_TALLER, motivo="Daño detectado en el control de calidad",
+        motivo_detalle="rayon en puerta trasera"))
+    afirmar(r.status_code in (302, 303), "redirige", r.status_code)
+    destino = r.headers.get("Location", "")
+    afirmar("/it" in destino, "y redirige AL IT", destino)
+    afirmar("motivo=" in destino, "llevando el motivo en la query string",
+            destino)
+    afirmar(movimientos(ruta) == [],
+            "sin registrar nada todavia: lo registra el IT", movimientos(ruta))
 
     # ------------------------------------------------------------------ 2
-    paso("2. IT desde control de calidad CON motivo: guarda y conserva")
+    paso("2. Y sin motivo, la ficha no deja ni llegar al IT")
     base_con(ruta, CC, [])
     c = cliente(ruta)
-    r = c.post("/movimientos/90001/it", data=dict(
-        CAMPOS_IT, motivo="Daño detectado en el control de calidad",
-        motivo_detalle="rayon en puerta trasera"))
-    afirmar(r.status_code in (302, 303), "guarda y redirige", r.status_code)
-    ms = movimientos(ruta)
-    afirmar(len(ms) == 1, "registro el movimiento", len(ms))
-    if ms:
-        afirmar(ms[0]["motivo"] == "Daño detectado en el control de calidad",
-                "guardo el motivo", ms[0]["motivo"])
-        afirmar(ms[0]["motivo_detalle"] == "rayon en puerta trasera",
-                "y el detalle", ms[0]["motivo_detalle"])
-        afirmar(ms[0]["estado_desde"] == CC and
-                ms[0]["estado_hacia"] == "INGRESO A TALLER",
-                "con el arco correcto", ms[0])
+    r = c.post("/movimientos/90001/registrar", data=dict(PASO_TALLER))
+    afirmar(r.status_code in (302, 303), "redirige en vez de guardar",
+            r.status_code)
+    afirmar("falta_motivo" in r.headers.get("Location", ""),
+            "y dice POR QUE", r.headers.get("Location"))
+    afirmar(movimientos(ruta) == [], "no registro nada", movimientos(ruta))
+    html = c.get("/movimientos/90001?error=falta_motivo&paso=ingreso_taller"
+                 ).get_data(as_text=True)
+    afirmar("Terminación rechazada (pintura, pulido, detalle)" in html,
+            "la ficha muestra la lista 'cc_taller', no una generica")
 
     # ------------------------------------------------------------------ 3
-    paso("3. el motivo que viene de Movimientos ya no se pierde")
+    paso("3. HALLAZGO: el par CC -> INGRESO A TALLER quedo INALCANZABLE")
+    #
+    # No es un test que se rompio: es un cambio de comportamiento que el port
+    # del IT del 2026-09-09 produjo, y que no genera ningun error.
+    #
+    # La cadena era:  ficha --delega--> IT --escribe--> INGRESO A TALLER
+    # y ese arco desde CONTROL DE CALIDAD esta en DESVIOS_CON_MOTIVO con la
+    # lista `cc_taller`.
+    #
+    # Pero el IT mandaba a INGRESO A TALLER porque replicaba el `case 'It'`,
+    # la rama que en produccion NO EXISTE. La rama viva manda a ZONA DE
+    # DESPACHO, DYP o FR - MECANICA. Asi que hoy NADIE produce ese arco, y la
+    # lista `cc_taller` no se le muestra a nadie.
+    #
+    # ESTO NO AFIRMA QUE ESTE MAL. Afirma cual es el estado de hecho, para que
+    # decidir si hay que agregar pares --por ejemplo CC -> FR - MECANICA, que
+    # es un retrabajo de verdad-- sea una decision de Franco y no algo que
+    # alguien redescubra dentro de seis meses.
+    from modulos.movimientos import DESVIOS_CON_MOTIVO
+    from modulos.taller import DESTINOS_IT
+    destinos = {d["estado"] for d in DESTINOS_IT.values()}
+    destinos.add("INSPECCION MECANICA DESPACHO")   # la excepcion de CARFLEX
+    cruces = [par for par in DESVIOS_CON_MOTIVO if par[1] in destinos]
+    afirmar(not cruces, "ningun destino del IT esta en DESVIOS_CON_MOTIVO",
+            "destinos={}".format(sorted(destinos)))
+
     base_con(ruta, CC, [])
     c = cliente(ruta)
-    # Asi redirige `registrar_movimiento`: el motivo en la query string.
-    r = c.get("/movimientos/90001/it?motivo=Limpieza+insuficiente&motivo_detalle=tapiz")
-    afirmar(r.status_code == 200, "el formulario abre", r.status_code)
-    html = r.get_data(as_text=True)
-    afirmar("Limpieza insuficiente" in html,
-            "el formulario recibe el motivo elegido en Movimientos")
-    afirmar('name="motivo"' in html,
-            "y lo lleva en un campo, para que viaje en el POST")
-
-    # El POST que haria el navegador con ese formulario.
-    r = c.post("/movimientos/90001/it", data=dict(
-        CAMPOS_IT, motivo="Limpieza insuficiente", motivo_detalle="tapiz"))
+    r = c.post("/movimientos/90001/it", data=dict(CAMPOS_IT),
+               content_type="multipart/form-data")
     ms = movimientos(ruta)
-    afirmar(r.status_code in (302, 303), "guarda", r.status_code)
-    afirmar(ms and ms[0]["motivo"] == "Limpieza insuficiente",
-            "y el motivo llego hasta la base", ms[0]["motivo"] if ms else None)
+    afirmar(r.status_code in (302, 303),
+            "un IT desde control de calidad guarda SIN pedir motivo",
+            r.status_code)
+    afirmar(ms and ms[0]["estado_hacia"] == "ZONA DE DESPACHO",
+            "y el arco es el del destino elegido, no INGRESO A TALLER",
+            ms[0]["estado_hacia"] if ms else None)
+    afirmar(ms and not ms[0]["motivo"], "sin motivo guardado",
+            ms[0]["motivo"] if ms else None)
 
     # ------------------------------------------------------------------ 4
-    paso("4. IT desde un estado que NO exige motivo: no molesta")
-    base_con(ruta, "DYP", [])
+    paso("4. El IT a FR desde control de calidad: tampoco pide motivo")
+    #
+    # Es el caso que mas se parece a un retrabajo --la unidad venia conforme y
+    # queda retenida por falla mecanica-- y hoy no se registra por que. Es el
+    # candidato mas claro si se decide agregar un par.
+    base_con(ruta, CC, [])
     c = cliente(ruta)
-    r = c.post("/movimientos/90001/it", data=dict(CAMPOS_IT))
+    r = c.post("/movimientos/90001/it", data={
+        "estado_it": "PRESENTA FALLAS", "destino_it": "FR",
+        "observacion_it": "RUIDO EN TREN DELANTERO",
+        "fotos_it": (foto_de_prueba(), "f.jpg"),
+    }, content_type="multipart/form-data")
     ms = movimientos(ruta)
-    afirmar(r.status_code in (302, 303), "guarda sin pedir nada", r.status_code)
-    afirmar(len(ms) == 1 and ms[0]["es_desvio"] == 1,
-            "lo marca como desvio igual", ms)
+    afirmar(r.status_code in (302, 303), "guarda", r.status_code)
+    afirmar(ms and ms[0]["estado_hacia"] == "FR - MECANICA",
+            "queda en FR - MECANICA",
+            ms[0]["estado_hacia"] if ms else None)
     afirmar(ms and not ms[0]["motivo"],
-            "sin motivo, que es lo previsto: DYP->INGRESO A TALLER no esta en "
-            "DESVIOS_CON_MOTIVO")
+            "y sin motivo: CC -> FR - MECANICA no esta en DESVIOS_CON_MOTIVO")
 
     # ------------------------------------------------------------------ 5
     paso("5. el caso de la unidad 91953 — el limite honesto")

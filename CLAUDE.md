@@ -1361,12 +1361,94 @@ cincuenta veces por día, eso es dato.
 estados, **sin `Cmp3` y sin excepción para nadie**. Regla Python no tiene esa
 pantalla; cuando la tenga, es otra regla y se copia aparte.
 
-#### Lo que falta del port
+#### CONSTRUIDO el 2026-09-09
 
-Las fotos con su tabla, el selector de destino, el correo por Resend con la
-tabla de destinatarios, y las entidades de push —`destino_it` (que **no está**
-en las 31 columnas de la lista blanca, medido en vivo), el movimiento que hoy
-falta, y las fotos—.
+| | |
+|---|---|
+| selector de destino | los tres, con su patio y su calle en pantalla: el movilizador confirma contra lo que ve |
+| evidencia | observación **y** foto si el destino es DYP o FR **o** si el estado es `PRESENTA FALLAS` |
+| fotos | `it_fotos_regla`, sin tope; el 6 es del formulario |
+| correo | por Resend, con las fotos **incrustadas por `cid`** |
+| push | tres entidades: `it`, `it_movimiento` con `depende_de`, `it_foto` |
+
+**El perfil de fotos no existía.** Estaba decidido —800 px, calidad 0,8— y las
+fotos se guardaban **tal cual las manda el teléfono**: 3 a 6 MB cada una, que
+con 18.300 al mes son ~70 GB contra 4,6 GB de volumen. `modulos/imagenes.py`
+lo implementa para los dos perfiles. Medido: una foto de 4000×3000 y 184 KB
+sale en 800×600 y 3 KB. Y si Pillow no puede leerla, **se guarda cruda y se
+anota por qué**: perder calidad es un problema de disco, perder la foto es un
+problema del cliente.
+
+**`destinatarios.sumando()` es otra forma que `para()`, y no es un duplicado.**
+Los dos bloques de Regla PHP tienen formas distintas:
+
+```
+inspeccion   if/elseif por $destino          -> UNO U OTRO   -> para()
+IT           $para = array(tres internos);
+             if ($cliente === 'CIDEF') ...   -> SUMA         -> sumando()
+```
+
+Si el IT usara `para()`, un vehículo CIDEF le mandaría el correo **sólo al
+cliente y no al equipo interno** — lo contrario de lo que hace Regla PHP, y de
+la peor manera: nadie de Logautos se enteraría, pero el cliente sí.
+
+#### El efecto que nadie pidió: el IT dejó de pedir motivo
+
+**Y no lo produce ningún error.** Lo encontró la suite del motivo al romperse.
+
+La cadena era: la ficha de Movimientos **delega** `ingreso_taller` al IT, el IT
+escribía `INGRESO A TALLER`, y ese arco desde `CONTROL DE CALIDAD DESPACHO`
+está en `DESVIOS_CON_MOTIVO` con la lista `cc_taller`.
+
+Pero el IT mandaba ahí **porque replicaba la rama muerta**. La rama viva manda a
+`ZONA DE DESPACHO`, `DYP` o `FR - MECANICA`, y **ninguna de las tres está en la
+tabla de motivos**. Así que hoy nadie produce ese arco y la lista `cc_taller` no
+se le muestra a nadie.
+
+> **No está mal: está sin decidir.** El candidato más claro es
+> `CONTROL DE CALIDAD DESPACHO → FR - MECANICA`, que es un retrabajo de verdad —
+> la unidad venía conforme y queda retenida por mecánica— y hoy no registra por
+> qué. Agregar pares es decisión de Franco. La suite lo **afirma como estado de
+> hecho** para que no se redescubra en seis meses.
+
+#### Y la suite de reconciliación medía con un instrumento roto
+
+`probar_reconciliacion.py` corre `reconciliar.py` como proceso y busca los
+nombres de sección. Con `text=True` a secas, Python decodifica con la
+codificación del sistema —cp1252 en Windows— mientras el hijo puede estar
+escribiendo UTF-8: la `Ñ` de `DAÑOS CORTADOS` llegaba rota y **la suite
+reportaba que faltaba una sección que estaba ahí**.
+
+Es la cuarta vez con la misma forma: el instrumento que mide, roto. Arreglado
+fijando **las dos puntas** —`PYTHONIOENCODING=utf-8` en el entorno del hijo y
+`encoding="utf-8"` al decodificar—, porque fijar una sola deja el problema
+dado vuelta. Verificado con la variable puesta, sin ella, y forzando cp1252.
+
+#### Lo que necesita despliegue PHP
+
+`scripts/Api_regla_it.php`: **dos ediciones, las dos aditivas**. Ningún método
+existente se reemplaza, así que no aplica el modo de falla mudo del bloque K.
+
+1. **`destino_it` en la lista blanca** de `newstocks_cidef`. Medido en vivo: son
+   31 columnas y no está. Regla Python ya la manda, y hoy el endpoint la
+   **ignora** —200 con la columna en `ignoradas`, que es para lo que sirve ese
+   campo—. Lleva la comprobación de que la columna exista en la tabla antes de
+   agregarla a la lista, porque si no daría `Unknown column` y tumbaría el PUT.
+2. **La entidad `it` en el endpoint de subida de fotos**, que es la única con
+   subcarpeta por VIN. El prefijo `it/` lo pone la entidad y es fijo; **el VIN
+   viene como campo y el servidor lo valida contra `newstocks_cidef` antes de
+   usarlo**. Lo que viaja en el cuerpo no es una ruta: es un identificador que
+   el servidor resuelve, así que un `../` no llega a ningún lado.
+
+**Nada de esto bloquea el uso del IT**: sin desplegar, la revisión se guarda, el
+movimiento se empuja y el correo sale con las fotos. Lo que falta es que Regla
+PHP tenga el destino y los archivos.
+
+**`fotos_it` no entra en este bloque, a propósito.** Regla PHP le inserta una
+fila por foto; Regla Python sube el archivo, no la fila. Necesita un endpoint
+propio, y el orden correcto es al revés: primero que las fotos lleguen al disco
+y se vean en el PDF, después la fila que las indexa. Una fila que apunta a un
+archivo que no existe es peor que no tener la fila.
 
 ### 6. Migraciones versionadas — aprobado, sin construir
 
@@ -2052,14 +2134,14 @@ tempdir y lo borra. Tres decisiones que se tomaron midiendo, no suponiendo:
 Medido después: de 33 GB acumulados y 717 MB por corrida a **371 MB de pico**,
 que la corrida siguiente barre.
 
-Las dieciséis suites, ninguna escribe en producción:
+Las diecisiete suites, ninguna escribe en producción:
 
 ```bash
-# las dieciseis, y `ficha_estados` NO esta en la lista porque el script no existe:
+# las diecisiete, y `ficha_estados` NO esta en la lista porque el script no existe:
 # estuvo nombrado aca meses y nadie lo notó, que es el mismo agujero de siempre
 for s in estados reconciliacion motivo_desvio push facturacion ubicacion ot_pdi \
          pull circulo circulo_ingreso circulo_mecanica check_list_mecanica \
-         correo_inspeccion retencion arranque traspaso; do
+         correo_inspeccion retencion arranque traspaso it; do
   python scripts/probar_$s.py || echo "FALLA $s"
 done
 # circulo         el circuito entero, y la PDI contra las DOS listas blancas
@@ -2067,6 +2149,7 @@ done
 # retencion       las unidades que Regla PHP no deja mover, y quien las destraba
 # arranque        que la app se NIEGUE a levantar con el entorno mal puesto
 # traspaso        la ruta temporal de la mudanza: que este CERRADA
+# it              el port del IT; NO manda correo, RESEND_API_KEY sin poner
 python scripts/verificar_push_produccion.py   # 5 sondas contra producción, ninguna escribe
 python scripts/probar_precio_ot.py            # sondas; con --crear escribe OT reales sobre PRUEBA
 ```
