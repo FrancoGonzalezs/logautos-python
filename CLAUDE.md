@@ -1374,10 +1374,19 @@ pantalla; cuando la tenga, es otra regla y se copia aparte.
 **El perfil de fotos no existía.** Estaba decidido —800 px, calidad 0,8— y las
 fotos se guardaban **tal cual las manda el teléfono**: 3 a 6 MB cada una, que
 con 18.300 al mes son ~70 GB contra 4,6 GB de volumen. `modulos/imagenes.py`
-lo implementa para los dos perfiles. Medido: una foto de 4000×3000 y 184 KB
-sale en 800×600 y 3 KB. Y si Pillow no puede leerla, **se guarda cruda y se
-anota por qué**: perder calidad es un problema de disco, perder la foto es un
-problema del cliente.
+lo implementa para los dos perfiles.
+
+**El número para planificar capacidad son los 51 KB medidos sobre fotos
+REALES** (n=8, perfil daños 800/0,8; inspección 600/0,7 da 25 KB). De ahí salen
+los 758 MB/mes y los 6,2 meses de autonomía.
+
+> La suite usa una imagen sintética de color plano y ésa sale en 3 KB, porque
+> un color plano comprime a casi nada. **Ese 3 KB no sirve para planificar: se
+> equivoca por 17 veces.** La suite lo usa para verificar que el
+> redimensionado ocurre —800 px de lado mayor—, que es otra pregunta.
+
+Y si Pillow no puede leerla, **se guarda cruda y se anota por qué**: perder
+calidad es un problema de disco, perder la foto es un problema del cliente.
 
 **`destinatarios.sumando()` es otra forma que `para()`, y no es un duplicado.**
 Los dos bloques de Regla PHP tienen formas distintas:
@@ -1552,7 +1561,46 @@ fecha de entrega que no sabe nada de ninguna entrega. **No se arreglan acá.**
 recibe el texto libre que en `check_list_regla` se llama `observaciones`. La
 misma palabra significa una cosa de un lado y otra del otro.
 
-### 10. Inspección de despacho — construida, PHP desplegado el 2026-09-04
+### 10. Inspección de despacho — CERRADA el 2026-09-09
+
+#### Los perfiles de foto no estaban implementados en ningún lado
+
+Estaban decididos desde el 2026-09-04 y **los cuatro módulos hacían
+`archivo.save()`**: guardaban lo que manda el teléfono, 3 a 6 MB por foto. Con
+18.300 al mes son ~70 GB contra 4,6 GB de volumen — se llena en dos días, y el
+síntoma sería el peor de todos, el disco lleno, que ya costó la suite entera
+una vez.
+
+`modulos/imagenes.py` los implementa y ahora **ningún módulo guarda crudo**:
+
+| | perfil | dónde |
+|---|---|---|
+| daños | 800 px, 0,8 | check list de ingreso, mecánica, IT, revisión de contenedor |
+| inspección | 600 px, 0,7 | inspección de despacho |
+
+**El defecto de `_guardar_foto` es el perfil MÁS GRANDE**, a propósito: si un
+módulo nuevo se olvida de elegir, se queda con más calidad de la que necesita en
+vez de con menos. Un archivo de más pesa; una foto de menos no se recupera.
+
+`probar_fotos.py` lo cubre, y su última comprobación mira **el código**: un
+`archivo.save()` suelto es exactamente el estado del que venimos y es invisible
+—la foto se guarda, la pantalla anda, el disco se llena tres semanas después—.
+
+> **Los pesos que imprime esa suite NO sirven para planificar.** Usa imágenes
+> sintéticas de color plano, que comprimen a ~3 KB. Los números para capacidad
+> son los medidos sobre fotos reales: **51 KB (daños) y 25 KB (inspección)**,
+> que dan los 758 MB/mes y los 6,2 meses. Confundirlos se equivoca por 17 veces.
+
+#### Y el módulo no tenía suite del flujo, sólo del correo
+
+`probar_inspeccion.py` cubre las tres decisiones que más fácil se deshacen sin
+que nada avise: que **once fotos entren** en la tabla y dos salgan en
+`sobrantes`; que `contador` lleve **11 y no 9**; y que una inspección **sin
+fotos no se envíe**, con el mensaje que dice la consecuencia. Más que las URL
+que viajan sean absolutas y con el dominio configurado, porque quedan en
+`archivo1..archivo9` para siempre.
+
+### 10-bis. Lo que la inspección ya tenía, del 2026-09-04
 
 Las tres sondas verdes (401 / `no existe inspeccion_despacho 999999999` / 31
 columnas con `patio`) y la fila mínima entró: **`inspeccion_despacho.id = 16408`**.
@@ -2134,14 +2182,15 @@ tempdir y lo borra. Tres decisiones que se tomaron midiendo, no suponiendo:
 Medido después: de 33 GB acumulados y 717 MB por corrida a **371 MB de pico**,
 que la corrida siguiente barre.
 
-Las diecisiete suites, ninguna escribe en producción:
+Las diecinueve suites, ninguna escribe en producción:
 
 ```bash
-# las diecisiete, y `ficha_estados` NO esta en la lista porque el script no existe:
+# las diecinueve, y `ficha_estados` NO esta en la lista porque el script no existe:
 # estuvo nombrado aca meses y nadie lo notó, que es el mismo agujero de siempre
 for s in estados reconciliacion motivo_desvio push facturacion ubicacion ot_pdi \
          pull circulo circulo_ingreso circulo_mecanica check_list_mecanica \
-         correo_inspeccion retencion arranque traspaso it; do
+         correo_inspeccion retencion arranque traspaso it \
+         fotos inspeccion; do
   python scripts/probar_$s.py || echo "FALLA $s"
 done
 # circulo         el circuito entero, y la PDI contra las DOS listas blancas
@@ -2150,6 +2199,8 @@ done
 # arranque        que la app se NIEGUE a levantar con el entorno mal puesto
 # traspaso        la ruta temporal de la mudanza: que este CERRADA
 # it              el port del IT; NO manda correo, RESEND_API_KEY sin poner
+# fotos           que cada modulo guarde con SU perfil, y ninguno crudo
+# inspeccion      el flujo entero: once fotos, nueve ranuras, un solo envio
 python scripts/verificar_push_produccion.py   # 5 sondas contra producción, ninguna escribe
 python scripts/probar_precio_ot.py            # sondas; con --crear escribe OT reales sobre PRUEBA
 ```

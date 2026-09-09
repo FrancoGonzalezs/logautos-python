@@ -23,9 +23,15 @@ reclamo--, asi que no es una apuesta. Y en danos se movio UNA SOLA palanca
 respecto del original, porque la perdida de resolucion y la de compresion se
 suman y en un rayon fino se nota el doble.
 
-Medido sobre fotos reales (n=8): danos 51 KB de promedio, inspeccion 25 KB.
+Medido sobre fotos REALES (n=8): danos 51 KB de promedio, inspeccion 25 KB.
 Eso da 758 MB al mes y 6,2 meses de autonomia, contra 1,0-1,3 con los 1600 px
 que se habian usado antes.
+
+OJO CON MEDIR ESTO SOBRE UNA IMAGEN SINTETICA. Un rectangulo de color plano
+--como el que genera la suite-- sale en 3 KB, porque no tiene detalle que
+comprimir. Es util para verificar que el redimensionado ocurre, y NO SIRVE para
+planificar capacidad: se equivoca por 17 veces. El numero que vale es el de las
+fotos reales.
 
 JPEG Y NO WEBP, CON EVIDENCIA
 =============================

@@ -67,7 +67,13 @@ def afirmar(condicion, que, detalle=""):
 
 
 def foto(nombre="f.jpg", lado=2400):
-    """Una foto grande, como la de un telefono."""
+    """Una foto grande, como la de un telefono.
+
+    ES UN COLOR PLANO, y por eso comprime a ~3 KB. Sirve para comprobar que el
+    redimensionado OCURRE --800 px de lado mayor-- y NO sirve para medir cuanto
+    va a pesar una foto de verdad: sobre fotos reales el perfil de daños da
+    51 KB de promedio. Planificar el volumen con el numero de esta imagen se
+    equivoca por 17 veces."""
     from PIL import Image
     b = _io.BytesIO()
     Image.new("RGB", (lado, int(lado * 0.75)), (90, 120, 60)).save(

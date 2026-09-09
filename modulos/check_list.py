@@ -80,8 +80,16 @@ CARPETA_FOTOS = os.path.join(DATA_DIR, "uploads", "check_list")
 EXTENSIONES = {".jpg", ".jpeg", ".png", ".webp", ".heic", ".heif"}
 
 
-def _guardar_foto(archivo, vin, etiqueta):
+def _guardar_foto(archivo, vin, etiqueta, perfil=None):
     """Escribe una foto subida y devuelve su ruta RELATIVA a CARPETA_FOTOS.
+
+    `perfil` es el de `modulos/imagenes.py`. Por defecto DAÑOS (800 px, 0,8),
+    que es el de este modulo y el de la revision de contenedor; la inspeccion
+    de despacho pasa INSPECCION (600 px, 0,7).
+
+    EL DEFECTO ES EL MAS GRANDE DE LOS DOS, y es a proposito: si algun modulo
+    nuevo se olvida de elegir, se queda con mas calidad de la que necesita en
+    vez de con menos. Un archivo de mas pesa; una foto de menos no se recupera.
 
     Se guarda al toque y no se difiere: la subida diferida necesitaria una
     cola y un reintento, y mientras tanto la foto vive solo en el telefono del
@@ -111,7 +119,19 @@ def _guardar_foto(archivo, vin, etiqueta):
     nombre = "{}_{}_{}{}".format(
         carpeta_vin, secure_filename(etiqueta) or "foto", sello, extension)
 
-    archivo.save(os.path.join(destino, nombre))
+    # EL PERFIL SE APLICA ACA, en el unico lugar por el que pasan las fotos de
+    # tres modulos. Hasta el 2026-09-09 esto hacia `archivo.save()` a secas y
+    # guardaba lo que mandaba el telefono: 3 a 6 MB por foto, contra los 51 KB
+    # que da el perfil de daños sobre fotos reales.
+    #
+    # `imagenes.guardar` NUNCA levanta: si no puede procesar la imagen la
+    # escribe cruda y devuelve una nota. Perder calidad es un problema de
+    # disco; perder la foto es un problema del cliente.
+    from modulos import imagenes
+    _tam, nota = imagenes.guardar(archivo, os.path.join(destino, nombre),
+                                  perfil or imagenes.DANOS)
+    if nota:
+        print("[fotos] {}: {}".format(nombre, nota), flush=True)
     return "{}/{}".format(carpeta_vin, nombre)
 
 

@@ -64,6 +64,7 @@ from modulos.acceso import id_actual, nombre_actual
 # Se reusa el guardado de fotos del check list: deja todas las fotos de la
 # unidad en la misma carpeta y evita una segunda implementacion del manejo de
 # archivos subidos que pueda divergir de la primera.
+from modulos import imagenes
 from modulos.check_list import _guardar_foto, url_de_foto
 from modulos.movimientos import es_desvio, estado_fisico, recomendar, registrar
 from modulos.unidades import TABLA
@@ -386,7 +387,12 @@ def crear(id_unidad):
 
     # La foto general se guarda recien cuando lo demas ya valido, para no dejar
     # archivos huerfanos de un intento rechazado.
-    link_unidad = _guardar_foto(request.files.get("unidad"), unidad["vin"], "unidad")
+    # PERFIL DE INSPECCION (600 px, 0,7) y no el de daños. Es la decision
+    # que tomo Franco mirando la hoja de comparacion: estas fotos son la
+    # unidad entera para el PDF del despacho, no el detalle de un rayon.
+    link_unidad = _guardar_foto(request.files.get("unidad"),
+                                unidad["vin"], "unidad",
+                                perfil=imagenes.INSPECCION)
 
     # El movimiento se registra igual que el check list y la revision de
     # contenedor: origen y destino son el MISMO estado, porque la inspeccion no
@@ -477,7 +483,9 @@ def agregar_foto(id_inspeccion):
     if not archivo or not archivo.filename:
         return _pintar_detalle(fila, ["Elegí una foto para agregar."], codigo=400)
 
-    ruta = _guardar_foto(archivo, fila["vin"], "inspeccion_despacho_{}".format(cont))
+    ruta = _guardar_foto(archivo, fila["vin"],
+                         "inspeccion_despacho_{}".format(cont),
+                         perfil=imagenes.INSPECCION)
     if not ruta:
         return _pintar_detalle(fila, ["No se pudo guardar la foto."], codigo=400)
 

@@ -334,7 +334,14 @@ def _guardar_foto(archivo, vin, numero):
     sello = datetime.now().strftime("%Y-%m-%d_%H%M%S-%f")
     nombre = "{}_FALLA_MECANICA_NRO_{}_{}{}".format(
         carpeta_vin, numero, sello, extension)
-    archivo.save(os.path.join(destino, nombre))
+    # PERFIL DE DAÑOS, igual que el check list de ingreso y el IT: la foto de
+    # una falla mecanica es evidencia de un daño. Antes esto guardaba lo que
+    # mandaba el telefono, 3 a 6 MB por foto.
+    from modulos import imagenes
+    _tam, nota = imagenes.guardar(archivo, os.path.join(destino, nombre),
+                                  imagenes.DANOS)
+    if nota:
+        print("[fotos] {}: {}".format(nombre, nota), flush=True)
     return os.path.join(SUBCARPETA, carpeta_vin, nombre).replace("\\", "/")
 
 
