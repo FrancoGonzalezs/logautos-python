@@ -456,6 +456,196 @@ INDICES_DE_TRABAJO = [
 ]
 
 
+# ---------------------------------------------------------------------------
+# La marca de agua del pull
+# ---------------------------------------------------------------------------
+#
+# EL PASO QUE FALTABA, Y ES EL QUE CONVIERTE UNA CARGA BUENA EN UNA MENTIRA.
+#
+# `sync_estado.marca_agua` es lo unico que le dice al pull desde cuando pedir.
+# Si la replica trae datos del volcado --digamos del 9 de septiembre a las
+# 14:00-- pero la marca dice "16:30", todo lo que cambio entre medio no se pide
+# NUNCA. No faltan filas y ya: el sistema queda convencido de que esta al dia.
+#
+# Y no es hipotetico. Un pull sobre una base sin tablas terminaba con
+# `resultado = ok` y la marca avanzada a la hora de esa corrida (arreglado en
+# `sync_legado`, pero la marca que quedo escrita sigue ahi). El proyecto nuevo
+# de Railway corre el pull cada 300 s desde que se desplegio, o sea que su
+# marca viene avanzando sola contra una base vacia.
+#
+# DE DONDE SALE LA FECHA, Y POR QUE NO DE LA CABECERA DEL VOLCADO
+# ---------------------------------------------------------------------------
+# La cabecera de phpMyAdmin dice `Tiempo de generacion: 29-07-2026 a las
+# 10:14:50`, y esta en el reloj del SERVIDOR. Pero el volcado abre con
+# `SET time_zone = "+00:00"`, asi que las columnas `timestamp` --y `updated_at`
+# es una-- se exportan en UTC. Medido sobre el volcado de julio:
+#
+#     Tiempo de generacion            2026-07-29 10:14:50   servidor
+#     MAX(registros.created_at)       2026-07-29 10:14:37   servidor (datetime)
+#     MAX(newstocks_cidef.updated_at) 2026-07-29 14:14:37   UTC (timestamp)
+#
+# Cuatro horas de diferencia DENTRO DEL MISMO ARCHIVO. Y ese desfase no es fijo:
+# cambia con el horario de verano, que es una leccion que este proyecto ya pago.
+#
+# Asi que la fecha NO se calcula ni se convierte: se LEE DEL DATO. La marca sale
+# de `MAX(updated_at)` de la propia tabla, que esta por construccion en el mismo
+# reloj contra el que el endpoint compara. Sin aritmetica de zonas y sin
+# suponer nada.
+#
+# EL MARGEN, Y POR QUE SE RESTA
+# ---------------------------------------------------------------------------
+# Un volcado de phpMyAdmin no es una foto instantanea: exporta tabla por tabla.
+# Una fila que cambio despues de que se escribio `newstocks_cidef` y antes de
+# que terminara el archivo no esta, y `MAX(updated_at)` no la ve.
+#
+# El costo de los dos errores no se parece:
+#
+#   marca ATRASADA  -> el proximo pull re-trae filas que ya tenemos. El UPSERT
+#                      las reescribe iguales. Cuesta unos segundos, una vez.
+#   marca ADELANTADA-> esas filas no se piden nunca mas. Cuesta el dato, para
+#                      siempre, y en silencio.
+#
+# Con esa asimetria no hay nada que optimizar: se resta un margen holgado.
+MARGEN_MARCA_SEGUNDOS = 3600
+
+
+def _max_updated_at(db, tabla):
+    cols = {r[1] for r in db.execute('PRAGMA table_info("{}")'.format(tabla))}
+    if "updated_at" not in cols:
+        return None
+    fila = db.execute(
+        'SELECT MAX(updated_at) FROM "{}" '
+        ' WHERE updated_at IS NOT NULL AND TRIM(updated_at) NOT IN '
+        "       ('', '0000-00-00 00:00:00', '0000-00-00')".format(tabla)
+    ).fetchone()
+    return fila[0] if fila else None
+
+
+def _restar_margen(marca, segundos):
+    """`marca` viene como 'YYYY-MM-DD HH:MM:SS'. Se resta en el MISMO reloj en
+    el que vino: no se convierte a UTC ni a local, justamente para no repetir
+    el error que esta funcion existe para evitar."""
+    import datetime
+    t = datetime.datetime.strptime(marca[:19], "%Y-%m-%d %H:%M:%S")
+    return (t - datetime.timedelta(seconds=segundos)).strftime(
+        "%Y-%m-%d %H:%M:%S")
+
+
+def fijar_marca_agua(db, margen=MARGEN_MARCA_SEGUNDOS, verbose=True):
+    """Deja la marca de agua del pull acorde al volcado recien importado.
+
+    Devuelve un dict {entidad: marca}. REVIENTA si al terminar alguna marca
+    quedo por delante del dato, que es exactamente la condicion que hace que el
+    pull se saltee cambios para siempre."""
+    # Se importa aca y no arriba para que este script siga corriendo sin la
+    # aplicacion cargada -- se usa tambien sobre bases sueltas.
+    sys.path.insert(0, BASE_DIR)
+    from modulos.sync_legado import ENTIDADES
+
+    db.execute("""
+        CREATE TABLE IF NOT EXISTS sync_estado (
+          entidad            TEXT PRIMARY KEY,
+          marca_agua         TEXT NOT NULL DEFAULT '',
+          ultima_corrida_en  TEXT NOT NULL DEFAULT '',
+          ultimo_resultado   TEXT NOT NULL DEFAULT '',
+          ultimo_detalle     TEXT NOT NULL DEFAULT '',
+          filas_recibidas    INTEGER NOT NULL DEFAULT 0,
+          filas_creadas      INTEGER NOT NULL DEFAULT 0,
+          filas_actualizadas INTEGER NOT NULL DEFAULT 0
+        )""")
+
+    puestas = {}
+    problemas = []
+
+    for entidad, conf in ENTIDADES.items():
+        tabla = conf["tabla"]
+        existe = db.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?",
+            (tabla,)).fetchone()
+        if not existe:
+            problemas.append(
+                "{}: la tabla {} no se importo, asi que su marca no se puede "
+                "fijar".format(entidad, tabla))
+            continue
+
+        # Una entidad `completa` pide todo en cada vuelta y IGNORA la marca
+        # (ver ENTIDADES en sync_legado). Se le deja vacia a proposito: darle
+        # una fecha sugeriria un filtro que no existe.
+        if conf.get("completa"):
+            db.execute(
+                "INSERT INTO sync_estado (entidad, marca_agua) VALUES (?, '') "
+                "ON CONFLICT(entidad) DO UPDATE SET marca_agua = ''",
+                (entidad,))
+            puestas[entidad] = ""
+            if verbose:
+                print("  {:<20} (completa: no usa marca, se deja vacia)"
+                      .format(entidad))
+            continue
+
+        tope = _max_updated_at(db, tabla)
+        if not tope:
+            problemas.append(
+                "{}: {} no tiene ningun updated_at utilizable, no hay de donde "
+                "sacar la marca".format(entidad, tabla))
+            continue
+
+        marca = _restar_margen(tope, margen)
+        db.execute(
+            "INSERT INTO sync_estado (entidad, marca_agua, ultimo_resultado, "
+            "                         ultimo_detalle) "
+            "VALUES (?, ?, 'importado', ?) "
+            "ON CONFLICT(entidad) DO UPDATE SET marca_agua = excluded.marca_agua, "
+            "  ultimo_resultado = 'importado', ultimo_detalle = excluded.ultimo_detalle",
+            (entidad, marca,
+             "fijada desde el volcado: MAX(updated_at)={} menos {}s".format(
+                 tope, margen)))
+        puestas[entidad] = marca
+        if verbose:
+            print("  {:<20} {}   (MAX(updated_at)={}, margen {}s)".format(
+                entidad, marca, tope, margen))
+
+    db.commit()
+
+    # -- LA COMPROBACION, que es el punto de todo esto --------------------
+    #
+    # Se relee de la base en vez de confiar en lo que se acaba de escribir: lo
+    # que importa es lo que quedo, no lo que se quiso poner.
+    for entidad, conf in ENTIDADES.items():
+        if conf.get("completa"):
+            continue
+        fila = db.execute(
+            "SELECT marca_agua FROM sync_estado WHERE entidad = ?",
+            (entidad,)).fetchone()
+        if fila is None or not fila[0]:
+            problemas.append("{}: quedo sin marca de agua".format(entidad))
+            continue
+        tope = _max_updated_at(db, conf["tabla"])
+        if tope and fila[0] > tope:
+            problemas.append(
+                "{}: la marca quedo en {} y el dato mas nuevo del volcado es "
+                "{}. El pull se saltearia todo lo del medio, para siempre."
+                .format(entidad, fila[0], tope))
+
+    if problemas:
+        # NO SE DEJA EL VENENO PUESTO. Si la comprobacion fallo, lo que quedo
+        # escrito es justamente lo que no puede quedar, asi que se borra antes
+        # de reventar.
+        #
+        # Vacia y no "la marca vieja": vacia significa "traer todo" (ver
+        # `sincronizar_entidad`), que es el unico valor seguro cuando no se
+        # sabe. La proxima vuelta del pull re-trae de mas -- cuesta segundos --
+        # en vez de saltear -- que cuesta el dato, para siempre.
+        db.execute("UPDATE sync_estado SET marca_agua = '', "
+                   "       ultimo_resultado = 'marca sin fijar'")
+        db.commit()
+        raise RuntimeError(
+            "la marca de agua NO quedo bien, y se dejo VACIA (= traer todo) "
+            "para que el pull no se saltee nada:" + chr(10) +
+            chr(10).join("  - " + x for x in problemas))
+
+    return puestas
+
+
 def crear_indices_de_trabajo(db):
     # `temp_store=MEMORY` ANTES DE ORDENAR NADA.
     #
@@ -565,6 +755,12 @@ def main():
 
     n_idx = crear_indices_de_trabajo(db)
     print("\n{} indices de trabajo creados".format(n_idx))
+
+    # La marca de agua, DESPUES de cargar y antes de decir que termino. Va aca
+    # y no en un script aparte porque un paso separado es un paso que alguien
+    # no corre, y el sintoma de no correrlo es que todo parece andar.
+    print("\nmarca de agua del pull:")
+    fijar_marca_agua(db)
 
     db.execute("ANALYZE")
     db.execute("PRAGMA optimize")

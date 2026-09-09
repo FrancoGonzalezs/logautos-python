@@ -71,8 +71,33 @@ def crear_app():
     # mientras convivan la direccion de Railway y el dominio propio, derivar la
     # base del request dejaria el host escrito segun por donde entro el que
     # subio la foto. Por eso sale de PUBLIC_BASE_URL y de ningun otro lado.
-    from modulos.fotos_publicas import base_publica_configurada
+    from modulos.fotos_publicas import (base_publica_configurada,
+                                        es_base_provisoria)
     app.config["BASE_PUBLICA"] = base_publica_configurada()
+
+    # ARRANCAR Y PUBLICAR SON DOS PREGUNTAS DISTINTAS, y se contestan distinto.
+    #
+    # Que la aplicacion levante con la direccion temporal de Railway ESTA BIEN:
+    # el proyecto nuevo tiene que poder arrancar antes de que exista el CNAME,
+    # si no no se puede ni probar. Levantar es reversible.
+    #
+    # Publicar una foto no lo es: esa URL viaja a `archivo1..archivo9` de Regla
+    # PHP y queda escrita para siempre. Por eso el corte duro vive en
+    # `fotos_publicas.publicar`, y aca queda un aviso -- fuerte, en el log del
+    # despliegue, que es donde alguien lo va a leer antes de repartir el link.
+    if es_base_provisoria(app.config["BASE_PUBLICA"]):
+        print("=" * 70)
+        print("AVISO: PUBLIC_BASE_URL apunta a una direccion TEMPORAL de "
+              "Railway")
+        print("   {}".format(app.config["BASE_PUBLICA"]))
+        print("   La aplicacion arranca igual, pero PUBLICAR UNA FOTO VA A "
+              "FALLAR:")
+        print("   esa URL quedaria escrita en archivo1..archivo9 de Regla PHP "
+              "para")
+        print("   siempre, y Regla PHP guarda la URL, no el archivo.")
+        print("   Poner el dominio definitivo antes de usar los modulos con "
+              "fotos.")
+        print("=" * 70)
 
     app.config["MAX_CONTENT_LENGTH"] = 64 * 1024 * 1024
 
@@ -186,6 +211,57 @@ def crear_app():
                 salida["uploads_promedio_kb"] = round(total / archivos / 1024, 1)
         except Exception as e:                   # noqa: BLE001
             salida["error_uploads"] = "{}: {}".format(type(e).__name__, e)
+
+        # QUE HAY EN EL VOLUMEN, ENTRADA POR ENTRADA.
+        #
+        # Hasta el 2026-09-09 esto informaba `uploads` y el disco libre, y nada
+        # mas. Con el proyecto nuevo la base arranco vacia y el volumen igual
+        # crecia; no habia forma de contestar QUE crecia sin entrar al
+        # contenedor, y esa pregunta se contesta abriendo una URL o no se
+        # contesta.
+        #
+        # La base y sus dos archivos de al lado van aparte y con nombre propio:
+        # `local.db-wal` puede pasar de cero a decenas de MB entre dos vueltas
+        # del pull -- ya paso, 67,70 MB contra 69 libres-- y sumado adentro de
+        # un total no se distingue de datos.
+        try:
+            entradas = []
+            for nombre in sorted(os.listdir(DATA_DIR)):
+                ruta = os.path.join(DATA_DIR, nombre)
+                if os.path.isfile(ruta):
+                    entradas.append({"nombre": nombre,
+                                     "mb": round(os.path.getsize(ruta) / 1048576.0, 2)})
+                elif os.path.isdir(ruta):
+                    total = archivos = 0
+                    for raiz, _d, nombres in os.walk(ruta):
+                        for n_ in nombres:
+                            try:
+                                total += os.path.getsize(os.path.join(raiz, n_))
+                                archivos += 1
+                            except OSError:
+                                pass
+                    entradas.append({"nombre": nombre + "/",
+                                     "mb": round(total / 1048576.0, 2),
+                                     "archivos": archivos})
+            entradas.sort(key=lambda x: -x["mb"])
+            salida["contenido"] = entradas
+            salida["contenido_mb"] = round(sum(e["mb"] for e in entradas), 2)
+        except Exception as e:                   # noqa: BLE001
+            salida["error_contenido"] = "{}: {}".format(type(e).__name__, e)
+
+        # La base puede no estar dentro de DATA_DIR (en local no lo esta), asi
+        # que se informa por separado y por su ruta real.
+        base = {}
+        for sufijo in ("", "-wal", "-shm"):
+            ruta = DB_PATH + sufijo
+            try:
+                base["local.db" + sufijo] = round(
+                    os.path.getsize(ruta) / 1048576.0, 2)
+            except OSError:
+                base["local.db" + sufijo] = None
+        base["ruta"] = DB_PATH
+        salida["base"] = base
+
         return salida
 
     @app.context_processor

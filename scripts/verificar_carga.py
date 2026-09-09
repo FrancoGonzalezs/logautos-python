@@ -47,6 +47,17 @@ DEL_LEGADO = [
     "stock_consumibles",
 ]
 
+# El mapa entidad -> tabla del pull. Se escribe aca y no se importa de
+# `sync_legado` para que este script siga corriendo sobre una base suelta, sin
+# la aplicacion cargada ni sus variables de entorno puestas.
+TABLA_DE_ENTIDAD = {
+    "unidades": "newstocks_cidef",
+    "stock_consumibles": "stock_consumibles",
+}
+
+# Las entidades que piden todo en cada vuelta e ignoran la marca de agua.
+COMPLETAS = {"stock_consumibles"}
+
 # Sin estas dos no se puede ni entrar, asi que su ausencia no es un aviso.
 IMPRESCINDIBLES = ["tbl_users", "tbl_roles"]
 
@@ -206,6 +217,61 @@ def main():
     if "tbl_roles" in presentes:
         print("  roles                 {:>10}".format(
             db.execute("SELECT COUNT(*) FROM tbl_roles").fetchone()[0]))
+
+    print("")
+    print("LA MARCA DE AGUA DEL PULL")
+    #
+    # Es la comprobacion mas importante de este script, y la menos visible.
+    #
+    # Una marca por DELANTE del dato no rompe nada hoy: el pull corre, dice ok,
+    # y no trae los cambios que quedaron en el medio. La replica no queda con
+    # filas faltantes -- queda CONVENCIDA de que esta al dia. No hay sintoma.
+    #
+    # Pasa de dos maneras, las dos vistas: un pull sobre una base sin tablas
+    # que igual avanzaba la marca (arreglado en `sync_legado`, pero lo que ya
+    # quedo escrito sigue escrito), y una carga que importa un volcado sobre
+    # una base cuya marca es posterior a ese volcado.
+    if "sync_estado" not in presentes:
+        print("  sync_estado NO ESTA: el pull no corrio nunca sobre esta base")
+        mal("falta sync_estado: la marca de agua no esta fijada, y sin ella "
+            "no se sabe desde cuando va a pedir el pull")
+    else:
+        filas = list(db.execute(
+            "SELECT entidad, marca_agua, ultimo_resultado FROM sync_estado "
+            " ORDER BY entidad"))
+        if not filas:
+            print("  sin filas")
+            mal("sync_estado vacia: la marca de agua no quedo fijada")
+        for entidad, marca, resultado in filas:
+            # `stock_consumibles` pide todo en cada vuelta e IGNORA la marca,
+            # asi que vacia es su valor correcto y no un problema.
+            if entidad in COMPLETAS:
+                print("  {:<20} (completa: no usa marca)".format(entidad))
+                continue
+            tabla = TABLA_DE_ENTIDAD.get(entidad)
+            tope = None
+            if tabla and tabla in presentes:
+                cols = {c[1] for c in db.execute(
+                    'PRAGMA table_info("{}")'.format(tabla))}
+                if "updated_at" in cols:
+                    tope = db.execute(
+                        'SELECT MAX(updated_at) FROM "{}" WHERE updated_at '
+                        " IS NOT NULL AND TRIM(updated_at) NOT IN "
+                        "('', '0000-00-00 00:00:00', '0000-00-00')".format(
+                            tabla)).fetchone()[0]
+            print("  {:<20} marca={!r}  dato mas nuevo={!r}  ({})".format(
+                entidad, marca, tope, resultado))
+            if not marca:
+                # Vacia es SEGURO: significa "traer todo". Se avisa igual
+                # porque el proximo pull va a ser el completo.
+                print("     vacia = traer todo. Seguro, pero el proximo pull "
+                      "baja la entidad entera.")
+                continue
+            if tope and marca > tope:
+                mal("{}: la marca de agua ({}) es POSTERIOR al dato mas nuevo "
+                    "de la replica ({}). Todo lo que cambio en Regla PHP entre "
+                    "esas dos fechas no se va a pedir nunca, y el pull va a "
+                    "decir que anduvo bien.".format(entidad, marca, tope))
 
     print("")
     print("INDICES DE TRABAJO")

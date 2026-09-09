@@ -75,7 +75,24 @@ CASOS = [
     ("https://regla.logautos.cl", True,
      "el dominio propio, que es el caso bueno"),
     ("https://logautos-production.up.railway.app", True,
-     "la direccion de Railway: se ACEPTA, ver la nota del final"),
+     "la direccion de Railway: ARRANCA (publicar es otra cosa, seccion 4)"),
+]
+
+# Direcciones temporales de Railway, en las formas en que aparecen.
+PROVISORIAS = [
+    "https://logautos-production.up.railway.app",
+    "https://regla.railway.app",
+    "http://algo.up.railway.app",
+]
+
+# Y las que NO son provisorias, que es la mitad que se olvida: una guarda que
+# ademas frena al dominio bueno no sirve para nada.
+DEFINITIVAS = [
+    "https://regla.logautos.cl",
+    "https://logautos.cl",
+    # El nombre contiene "railway" pero el HOST no es de Railway. Una
+    # comprobacion por subcadena suelta se lo comeria.
+    "https://railway.logautos.cl",
 ]
 
 
@@ -153,6 +170,65 @@ def main():
             "(los comentarios si lo nombran, para explicar por que no)")
 
     print("")
+    print("4. CON UNA DIRECCION DE RAILWAY: ARRANCA, PERO NO PUBLICA")
+    #
+    # Son dos preguntas distintas y por eso tienen dos respuestas. Levantar es
+    # reversible: si la base esta mal se cambia la variable y se redespliega.
+    # Publicar no: esa URL viaja a `archivo1..archivo9` de Regla PHP y queda
+    # escrita para siempre -- Regla PHP guarda la URL, no el archivo.
+    for base in PROVISORIAS:
+        os.environ["PUBLIC_BASE_URL"] = base
+        try:
+            import app as modulo_app
+            importlib.reload(modulo_app)
+            arranco = True
+        except fotos_publicas.FaltaBasePublica:
+            arranco = False
+        afirmar(arranco, "{:<44} arranca".format(repr(base)))
+
+        try:
+            fotos_publicas.url_publica("/f/abc123")
+            afirmar(False, "{:<44} NO publica".format(repr(base)))
+        except fotos_publicas.BasePublicaProvisoria as e:
+            afirmar(True, "{:<44} NO publica".format(repr(base)),
+                    primera_linea(e)[:70])
+
+    for base in DEFINITIVAS:
+        os.environ["PUBLIC_BASE_URL"] = base
+        try:
+            u = fotos_publicas.url_publica("/f/abc123")
+            afirmar(u.startswith(base),
+                    "{:<44} SI publica".format(repr(base)), u)
+        except fotos_publicas.BasePublicaProvisoria:
+            afirmar(False, "{:<44} SI publica".format(repr(base)),
+                    "la freno de mas")
+
+    print("")
+    print("5. Y `publicar` CORTA ANTES DE ESCRIBIR EL TOKEN")
+    # `url_publica` tambien corta, pero para entonces la fila ya estaria
+    # escrita: quedaria un token de una foto que nadie publico, y la proxima
+    # vez `publicar` lo encontraria y lo daria por bueno.
+    os.environ["PUBLIC_BASE_URL"] = "https://logautos-production.up.railway.app"
+    import app as modulo_app
+    importlib.reload(modulo_app)
+    with modulo_app.app.test_request_context():
+        from core import get_db
+        db = get_db()
+        fotos_publicas._asegurar_tabla(db)
+        antes = db.execute(
+            "SELECT COUNT(*) FROM fotos_publicadas").fetchone()[0]
+        try:
+            fotos_publicas.publicar("uploads/x.jpg", origen="prueba",
+                                    referencia=1)
+            afirmar(False, "publicar() corta")
+        except fotos_publicas.BasePublicaProvisoria:
+            afirmar(True, "publicar() corta")
+        despues = db.execute(
+            "SELECT COUNT(*) FROM fotos_publicadas").fetchone()[0]
+        afirmar(antes == despues, "y NO deja el token escrito",
+                "{} -> {}".format(antes, despues))
+
+    print("")
     print("=" * 64)
     if FALLOS:
         print("FALLARON {}:".format(len(FALLOS)))
@@ -162,10 +238,9 @@ def main():
     print("la aplicacion se niega a arrancar sin una base publica valida,")
     print("y la URL de las fotos no depende de por donde entro nadie.")
     print("")
-    print("NOTA: una direccion `*.railway.app` se ACEPTA, y es deliberado: el")
-    print("proyecto nuevo tiene que poder levantar antes de que exista el")
-    print("CNAME. Pero toda foto publicada mientras esa sea la base queda con")
-    print("ese host escrito PARA SIEMPRE en archivo1..archivo9 de Regla PHP.")
+    print("Con una direccion de Railway ARRANCA --hace falta para poder")
+    print("probar antes del CNAME-- pero PUBLICAR una foto falla, porque esa")
+    print("URL quedaria en archivo1..archivo9 de Regla PHP para siempre.")
     return 0
 
 

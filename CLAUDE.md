@@ -969,6 +969,52 @@ PHP —largos, `NOT NULL`, defaults—, sólo los nombres que vienen en el JSON,
 una tabla inventada desde el JSON sería una réplica que se *parece* a la de al
 lado. La carga inicial es de `importar_dump.py`, que sí lee el DDL.
 
+#### La marca de agua queda ENVENENADA, y es un escalón peor
+
+**Es la consecuencia que no estaba en el informe, y la vio Franco.** Que el pull
+avance la marca contra una base vacía no sólo pierde esas filas: deja la réplica
+en un estado en el que **la carga posterior no la arregla**.
+
+Si se importa un volcado del 9 de septiembre a las 14:00 sobre una base cuya
+marca dice 16:30, todo lo que cambió entre medio no se pide nunca. No es que
+falten filas — el sistema queda **convencido de que está al día**, e informa `ok`
+cada vuelta.
+
+> Mi corrida de medición fue contra una base **temporal**, no contra `local.db`
+> ni contra Railway: `local.db` sigue en `2026-08-26 15:44:21`. Lo que sí está
+> envenenándose solo es **el proyecto nuevo**, que corre el pull cada 300 s desde
+> que se desplegó.
+
+**Por eso la carga inicial tiene un paso más, y lo hace `importar_dump.py`:**
+después de cargar y crear los índices, fija la marca y **verifica**. Si al
+terminar la marca quedó por delante del dato, revienta — y deja la marca
+**vacía**, que significa «traer todo». Vacía es el único valor seguro cuando no
+se sabe: re-traer cuesta segundos, saltear cuesta el dato.
+
+**La fecha NO sale de la cabecera del volcado, y el motivo está medido.**
+phpMyAdmin abre con `SET time_zone = "+00:00"`, así que las columnas `timestamp`
+salen en UTC mientras la línea `Tiempo de generación` está en el reloj del
+servidor:
+
+| | valor | reloj |
+|---|---|---|
+| `Tiempo de generación` | `2026-07-29 10:14:50` | servidor |
+| `MAX(registros.created_at)` (`datetime`) | `2026-07-29 10:14:37` | servidor |
+| `MAX(newstocks_cidef.updated_at)` (`timestamp`) | `2026-07-29 14:14:37` | **UTC** |
+
+**Cuatro horas de diferencia dentro del mismo archivo**, y el desfase cambia con
+el horario de verano — la Regla 3, otra vez. Así que la marca sale de
+`MAX(updated_at)` de la propia tabla, que por construcción está en el mismo
+reloj contra el que el endpoint compara, **menos una hora de margen**: un volcado
+de phpMyAdmin exporta tabla por tabla y no es una foto instantánea.
+
+**Y el resto del estado está limpio.** Se auditó todo lo que avanza y condiciona
+trabajo futuro: `sync_estado.marca_agua` es lo único —los otros campos de esa
+tabla son informe de la última corrida—. Las colas (`sync_push_pendientes`,
+`avisos_pendientes_regla`) están vacías, el flag `push_pendiente` no se tocó
+porque nadie puede entrar, y `stock_consumibles` es `completa: True`, o sea que
+**ignora la marca**: aunque la tuviera avanzada no perdería nada.
+
 #### Lo que hay que exportar, y cuánto pesa
 
 Medido sobre el volcado real: de las 121 tablas, **las 21 que la réplica usa son
@@ -1020,14 +1066,62 @@ el acto, en el log del despliegue. **Una URL mal armada viaja a
 guarda la URL, no el archivo—, y no hay variable que la arregle después.
 
 Se rechaza vacía, con espacios, sin esquema y con ruta; se acepta con o sin
-barra final. **Una dirección `*.railway.app` se acepta**, deliberadamente: el
-proyecto nuevo tiene que poder levantar antes de que exista el CNAME. Pero toda
-foto publicada mientras ésa sea la base queda con ese host escrito para siempre.
+barra final.
 
-Probado en `probar_arranque.py`, que además comprueba que la URL **no cambia**
-con un request de otro host y que el módulo no toca `request` —mirando el
-árbol de sintaxis, no el texto, porque los comentarios sí nombran `request.host`
-para explicar por qué no se usa—.
+**ARRANCAR Y PUBLICAR SON DOS PREGUNTAS DISTINTAS**, y se contestan distinto —
+corregido el 2026-09-09 sobre la primera versión, que las juntaba:
+
+| | con una dirección `*.railway.app` | por qué |
+|---|---|---|
+| **arrancar** | **sí**, con un aviso fuerte en el log | levantar es reversible, y el proyecto nuevo tiene que poder probarse antes de que exista el CNAME |
+| **publicar una foto** | **no**, corta con el motivo | esa URL queda en `archivo1..archivo9` de Regla PHP **para siempre** |
+
+La guarda vive donde el daño es permanente. Y está en los **dos** lugares:
+`publicar()` corta antes de registrar el token —si sólo cortara `url_publica`,
+quedaría una fila de una foto que nadie publicó y la próxima vez la daría por
+buena— y `url_publica()` corta como última línea. Mismo patrón que la guarda de
+retención en `registrar()`.
+
+El chequeo es **por host y no por subcadena**: `railway.logautos.cl` es un
+dominio propio legítimo y no se frena. Una guarda que además frena al dominio
+bueno no sirve para nada.
+
+Probado en `probar_arranque.py`: que la URL **no cambia** con un request de otro
+host; que el módulo no toca `request` —mirando el árbol de sintaxis, no el
+texto, porque los comentarios sí nombran `request.host` para explicar por qué no
+se usa—; y que con las tres formas de dirección de Railway arranca y no publica,
+mientras que con las tres definitivas publica.
+
+#### Qué crece en el volumen: la aplicación NO
+
+Medido sobre un despliegue con la base vacía, contando bytes de `DATA_DIR`:
+
+```
+tras crear_app()                          4.096 bytes
+tras visitar las siete pantallas         12.288 bytes
+tras diez vueltas del pull               20.480 bytes   (+8.192)
+```
+
+**20 KB en total.** La aplicación no puede ser lo que mueve los 32,4 MB. Y con
+la base vacía tampoco hay nada más escribiendo: `uploads/` necesita que alguien
+inicie sesión, la reconciliación está detrás del `continue` de `push_activo()`
+—que está apagado—, y las dos colas están vacías.
+
+Lo que queda como explicación principal es **el sistema de archivos del volumen**
+—una partición ext4 recién creada gasta decenas de MB en `lost+found`, journal y
+tablas de inodos—, pero eso es una hipótesis y no una medición.
+
+**Así que se construyó el instrumento en vez de seguir suponiendo.** `/version`
+ahora itemiza `DATA_DIR` entrada por entrada, y reporta `local.db`, `-wal` y
+`-shm` **por separado y con nombre propio**: el WAL puede pasar de cero a decenas
+de MB entre dos vueltas del pull —ya pasó, 67,70 MB contra 69 libres— y sumado
+dentro de un total no se distingue de datos. Una pregunta como ésta se contesta
+abriendo una URL, o no se contesta.
+
+#### El procedimiento, escrito
+
+`scripts/CARGA_INICIAL.md`: exportar, importar, verificar, la prueba del
+volumen, y el push al final con su advertencia.
 
 #### Barrido del dominio viejo: cero
 
