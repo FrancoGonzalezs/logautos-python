@@ -1118,10 +1118,85 @@ de MB entre dos vueltas del pull —ya pasó, 67,70 MB contra 69 libres— y sum
 dentro de un total no se distingue de datos. Una pregunta como ésta se contesta
 abriendo una URL, o no se contesta.
 
+#### La carga inicial se hace COPIANDO la réplica del proyecto viejo
+
+Propuesto por Franco y validado midiendo. El viejo ya la tiene cargada, así que
+no hay nada que exportar de MySQL.
+
+**La ventaja no es comodidad: la base y su marca de agua viajan juntas**,
+consistentes por construcción, porque salen del mismo archivo en el mismo
+instante. Todo lo que la vía del volcado obliga a resolver —los dos relojes, el
+margen de una hora, reponer `sync_estado`, verificar que no quedó adelantada—
+**deja de existir**. Es la clase de problema que conviene no tener en vez de
+resolver bien.
+
+**Pero el archivo no se copia con `cp`.** La réplica está en modo WAL, y eso
+tiene dos trampas, las dos medidas:
+
+```
+base con 501 filas, 500 commiteadas y todavia en el WAL
+  copiando SOLO local.db        ->   1 fila     <- y la copia ABRE, sin error
+  copiando .db + -wal + -shm    -> 501 filas
+  backup() / VACUUM INTO        -> 501 filas
+```
+
+Y copiar los tres archivos tampoco alcanza, porque **son tres instantes
+distintos**: con 388 MB la copia tarda cientos de milisegundos y el hilo de sync
+sigue commiteando. Reproducido a propósito —`.db`, esperar 300 ms, `-wal`— con
+un escritor corriendo:
+
+| | resultado |
+|---|---|
+| copia cruda de los tres archivos | **12 de 12 corrompidas** (`database disk image is malformed`) |
+| `VACUUM INTO` con el mismo escritor | **0 de 12** |
+
+**Así que `VACUUM INTO`, y NO hay que apagar el hilo de sync**: toma una foto
+transaccional, lo que sale es la base en algún instante válido. Se elige sobre
+`backup()` porque compacta y deja un archivo único sin `-wal` al lado, que es lo
+que se quiere mover. Medido sobre los 388,5 MB reales:
+
+| | tiempo | tamaño |
+|---|---|---|
+| `VACUUM INTO` | **1,3 s** | 386,9 MB |
+| `gzip -6` | 5,9 s | **49,8 MB** (7,8×) |
+
+`quick_check` **ok**, las 35 tablas con el mismo conteo que el origen. Total
+~7 segundos.
+
+**El token del traspaso va en una CABECERA, nunca en la URL.** gunicorn no
+escribe access log por defecto y la aplicación tampoco loguea rutas —los dos
+comprobados—, pero el proxy de Railway está fuera de nuestro control, y un token
+en la URL termina en el log de alguien.
+
+#### El arrastre, y `limpiar_para_paralelo.py`
+
+Copiar trae también los datos propios de Regla Python. Lo que sale:
+`movimientos_regla` y las seis que le cuelgan, **`sync_push_pendientes`** —si
+viaja, el día que se encienda el push saldrían hacia Regla PHP escrituras de
+pruebas de agosto—, `avisos_pendientes_regla` por lo mismo, `fotos_publicadas`
+—sus tokens apuntan a archivos del `DATA_DIR` viejo, que no se copian—, y el
+historial de pruebas.
+
+**`sync_estado` NO se toca**: es lo que se vino a buscar.
+
+**Y `push_pendiente` se baja a 0.** No es una fila, y es el huérfano que
+importa: el UPSERT del pull **saltea** las filas con el flag en 1, así que
+vaciar la cola sin bajarlo deja esas unidades sin recibir actualizaciones de
+Regla PHP, en silencio y para siempre. Es el mismo huérfano que ya documentó
+`borrar_backlog.py`.
+
+**La lista del script es de lo que se CONSERVA, y una tabla sin clasificar lo
+frena.** Al revés de lo natural, a propósito: con una lista de lo que se borra,
+una tabla nueva de Regla Python sobreviviría en silencio; con un «borrá lo que
+no reconozcas», una tabla nueva de Regla PHP se perdería en silencio. Las dos
+fallas son mudas; frenar y nombrarla no lo es. Probado agregando una tabla
+inventada: frena y la nombra.
+
 #### El procedimiento, escrito
 
-`scripts/CARGA_INICIAL.md`: exportar, importar, verificar, la prueba del
-volumen, y el push al final con su advertencia.
+`scripts/CARGA_INICIAL.md`, con las dos vías: copiar el volumen (recomendada) y
+el volcado de phpMyAdmin (que trae de vuelta el problema de la marca). Más la
+prueba del volumen y el push al final con su advertencia.
 
 #### Barrido del dominio viejo: cero
 
