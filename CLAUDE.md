@@ -929,6 +929,122 @@ están construidas así:
    persona no lo sería, y por eso la condición 1 importa más que el largo del
    token.
 
+### 13. La mudanza al proyecto nuevo de Railway — 2026-09-09
+
+Cuenta de la empresa (`proyecto@logautos.cl`, GitHub `Regla-Python`), repo
+privado. El proyecto viejo queda vivo como vuelta atrás.
+
+#### El pull NO puede hacer la carga inicial, y falla en silencio
+
+**Medido, no supuesto**, contra una base vacía y contra Regla PHP de producción:
+
+| | pull | `importar_dump.py` |
+|---|---|---|
+| tiempo | **2 min 42 s** | **1 min 9 s** |
+| filas escritas | **0** | **942.741** |
+| tablas | 1 de 21 | **21 de 21** |
+| índices | ninguno | 20 |
+| resultado informado | **`ok`** | ok |
+
+Tres motivos independientes, cada uno bastaría solo:
+
+1. **Sólo sincroniza dos entidades** — `unidades` y `stock_consumibles`. Las
+   otras diecinueve tablas no las mira nadie. `tbl_users` es una de ellas: sin
+   ella **no se puede iniciar sesión**, y ése es el síntoma que se ve.
+2. **No crea tablas.** `_upsert` escribe sólo las columnas que existen en la
+   réplica; sin tabla son cero columnas, así que baja todo y escribe nada.
+3. **Y avanza la marca de agua igual.** La corrida de prueba dejó
+   `marca_agua = 2026-09-09 11:14:41` y `ultimo_resultado = ok`. La vuelta
+   siguiente pide *«lo que cambió después de ahora»*: esas **71.472 filas no se
+   vuelven a pedir nunca**. El agujero se tapa solo y se hereda.
+
+> Es el modo de falla de siempre —una corrida que no hizo nada se lee igual que
+> una que no tenía nada que hacer—, pero con una vuelta más: acá la corrida
+> **destruye la evidencia de lo que se perdió**.
+
+**Arreglado**: el pull ahora **corta** si la tabla no existe, antes de pedir una
+sola página, deja el estado en `error` y **no toca la marca de agua**. Probado
+en `probar_pull.py`. No crea la tabla a propósito: no conoce el esquema de Regla
+PHP —largos, `NOT NULL`, defaults—, sólo los nombres que vienen en el JSON, y
+una tabla inventada desde el JSON sería una réplica que se *parece* a la de al
+lado. La carga inicial es de `importar_dump.py`, que sí lee el DDL.
+
+#### Lo que hay que exportar, y cuánto pesa
+
+Medido sobre el volcado real: de las 121 tablas, **las 21 que la réplica usa son
+418,4 MB sin comprimir y 38,5 MB en `.sql.gz`** (10,9×). Las cuatro más pesadas
+son `newstocks_cidef` (95,3), `reparaciones_externas` (86,3), `orden_trabajo`
+(76,9) y `registros` (46,4).
+
+**38,5 MB es el número que importa**: es un archivo que se mueve por cualquier
+lado, y hace que la carga inicial deje de ser un problema de logística.
+
+`fotos_it` **no está** en el volcado de julio porque la creó el despliegue del
+IT del 2026-09-02. Un volcado nuevo la trae; uno viejo, no.
+
+#### `importar_dump.py` fallaba al final, y de la peor manera
+
+`CREATE INDEX` sobre `registros` hace un sort externo y SQLite lo escribe en un
+archivo temporal propio. El 2026-09-09 esa resolución falló en esta máquina:
+
+```
+sqlite3.OperationalError: unable to open database file
+```
+
+Y fallaba **después** de imprimir «filas cargadas: …», así que la lectura
+natural es *«cargó bien, se rompió al final»*. La base queda usable y lentísima
+—cada ficha de unidad recorre `registros` entera—, o sea que el síntoma aparece
+días después y lejos. Arreglado con `PRAGMA temp_store=MEMORY`: los sorts entran
+de sobra en memoria y dejan de depender de una carpeta que puede no estar.
+
+#### `verificar_carga.py` — que esté completa, no que lo parezca
+
+`--sql` imprime la consulta para pegar en phpMyAdmin (`COUNT(*)` y **no**
+`information_schema.TABLE_ROWS`, que en InnoDB es una estimación); `--contra`
+compara tabla por tabla. Además corta si `tbl_users` no tiene hashes y si faltan
+los índices de trabajo.
+
+Corrido sobre la réplica local encontró de entrada que **falta
+`stock_consumibles`**, que es una de las dos entidades del pull.
+
+#### La URL pública de las fotos: falla al arrancar
+
+`PUBLIC_BASE_URL` ya era explícita y nunca salía del request, pero se
+comprobaba **tarde**: la aplicación levantaba y reventaba recién al publicar la
+primera foto, en medio de una inspección. Ahora se valida en `crear_app()`, que
+es lo que ejecuta gunicorn al levantar.
+
+El costo es asimétrico y por eso va al arranque: un arranque que falla se ve en
+el acto, en el log del despliegue. **Una URL mal armada viaja a
+`archivo1..archivo9` de Regla PHP, que son columnas permanentes** —Regla PHP
+guarda la URL, no el archivo—, y no hay variable que la arregle después.
+
+Se rechaza vacía, con espacios, sin esquema y con ruta; se acepta con o sin
+barra final. **Una dirección `*.railway.app` se acepta**, deliberadamente: el
+proyecto nuevo tiene que poder levantar antes de que exista el CNAME. Pero toda
+foto publicada mientras ésa sea la base queda con ese host escrito para siempre.
+
+Probado en `probar_arranque.py`, que además comprueba que la URL **no cambia**
+con un request de otro host y que el módulo no toca `request` —mirando el
+árbol de sintaxis, no el texto, porque los comentarios sí nombran `request.host`
+para explicar por qué no se usa—.
+
+#### Barrido del dominio viejo: cero
+
+No hay ninguna referencia a `railway.app` en el repo. Las únicas URL absolutas
+son `logautos.cl` (el logo, servido por Regla PHP), `claude.logautos.cl` (su
+API) y `127.0.0.1` / `regla.example` en las pruebas.
+
+#### Lo que sigue abierto
+
+**Cómo llega la base al volumen.** El repo no puede llevar 388 MB y no hay
+consola en Railway. `semilla_volumen.py` resuelve las tablas chicas —y su
+documentación dice «correr DENTRO del contenedor», así que hay una vía— pero
+nunca se escribió cómo llegaron las grandes la primera vez.
+
+**Y no puede haber dos proyectos con el push encendido**: serían dos sistemas
+escribiéndole el mismo movimiento a Regla PHP con dos colas que no se conocen.
+
 ### 12. El port del IT — en curso desde el 2026-09-08
 
 **Medido contra `produccion/Pedido.php` y `produccion/Pedido_model.php`.**
@@ -1735,19 +1851,20 @@ tempdir y lo borra. Tres decisiones que se tomaron midiendo, no suponiendo:
 Medido después: de 33 GB acumulados y 717 MB por corrida a **371 MB de pico**,
 que la corrida siguiente barre.
 
-Las catorce suites, ninguna escribe en producción:
+Las quince suites, ninguna escribe en producción:
 
 ```bash
-# las catorce, y `ficha_estados` NO esta en la lista porque el script no existe:
+# las quince, y `ficha_estados` NO esta en la lista porque el script no existe:
 # estuvo nombrado aca meses y nadie lo notó, que es el mismo agujero de siempre
 for s in estados reconciliacion motivo_desvio push facturacion ubicacion ot_pdi \
          pull circulo circulo_ingreso circulo_mecanica check_list_mecanica \
-         correo_inspeccion retencion; do
+         correo_inspeccion retencion arranque; do
   python scripts/probar_$s.py || echo "FALLA $s"
 done
 # circulo         el circuito entero, y la PDI contra las DOS listas blancas
 # correo_inspeccion  el correo; NO manda ninguno, RESEND_API_KEY va sin poner
 # retencion       las unidades que Regla PHP no deja mover, y quien las destraba
+# arranque        que la app se NIEGUE a levantar con el entorno mal puesto
 python scripts/verificar_push_produccion.py   # 5 sondas contra producción, ninguna escribe
 python scripts/probar_precio_ot.py            # sondas; con --crear escribe OT reales sobre PRUEBA
 ```

@@ -164,6 +164,8 @@ LIMITE_DEFECTO = int(os.environ.get("SYNC_LIMITE", "200"))
 # claro en vez de girar para siempre contra produccion.
 MAX_PAGINAS = int(os.environ.get("SYNC_MAX_PAGINAS", "500"))
 
+_SALTO = chr(10)
+
 TIMEOUT_DEFECTO = 30.0
 
 # Ver la nota 4 del encabezado. Cualquier cosa menos "python-requests".
@@ -410,6 +412,32 @@ def sincronizar_entidad(entidad, dry_run=False, desde=None, limite=None,
         cliente = cliente or Legado()
 
         columnas = _columnas(db, conf["tabla"])
+
+        # LA TABLA TIENE QUE EXISTIR, Y SI NO EXISTE ESTO CORTA.
+        #
+        # `_upsert` solo escribe las columnas que estan en la replica. Con la
+        # tabla ausente eso son CERO columnas, asi que el pull baja todo, no
+        # escribe nada, y termina con `ultimo_resultado = ok`. Medido el
+        # 2026-09-09 contra una base vacia: 2 min 42 s, 71.472 filas
+        # recibidas, 0 creadas, 0 actualizadas, resultado "ok".
+        #
+        # Y ADEMAS AVANZA LA MARCA DE AGUA, que es lo que lo vuelve grave: la
+        # vuelta siguiente pide "lo que cambio despues de ahora", o sea que
+        # esas 71.472 filas no se vuelven a pedir NUNCA. El agujero se tapa
+        # solo y se hereda.
+        #
+        # El pull NO crea la tabla a proposito: no conoce el esquema de Regla
+        # PHP -- larguras, NOT NULL, defaults --, solo los nombres de las
+        # columnas que vienen en el JSON. Una tabla inventada desde el JSON
+        # seria una replica que se parece a la de al lado y no es. La carga
+        # inicial es de `importar_dump.py`, que si lee el DDL.
+        if not columnas:
+            raise RuntimeError(
+                "la tabla {!r} no existe en la replica, asi que este pull "
+                "bajaria todo y no escribiria nada.{}"
+                "  El pull mantiene la replica al dia; NO la crea.{}"
+                "  La carga inicial va con:  python scripts/importar_dump.py"
+                .format(conf["tabla"], _SALTO, _SALTO))
         marca_nueva = marca
         pagina = 1
         muestra = []

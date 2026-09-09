@@ -38,6 +38,12 @@ import time
 RAIZ = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, RAIZ)
 
+# La base publica de las fotos ahora se exige AL ARRANCAR (ver
+# `fotos_publicas.base_publica_configurada`). Una prueba tiene que declarar su
+# entorno igual que produccion: `regla.example` no resuelve a ningun lado, que
+# es exactamente lo que se quiere de una prueba que no debe publicar nada.
+os.environ.setdefault("PUBLIC_BASE_URL", "https://regla.example")
+
 from temporales import carpeta_de_prueba
 
 os.environ.setdefault("SECRET_KEY", "prueba")
@@ -266,6 +272,61 @@ def main(argv=None):
         del cols
 
     # ------------------------------------------------------------------
+    print("\nA BASE VACIA, EL PULL CORTA EN VEZ DE DECIR QUE ANDUVO")
+    #
+    # El 2026-09-09, preparando la mudanza al proyecto nuevo de Railway, se
+    # midio un pull completo contra una base SIN la tabla `newstocks_cidef`:
+    #
+    #     2 min 42 s, 71.472 filas recibidas, 0 creadas, 0 actualizadas,
+    #     ultimo_resultado = "ok", y la marca de agua avanzada a la hora
+    #     de esa corrida.
+    #
+    # `_upsert` solo escribe las columnas que existen en la replica; sin tabla
+    # son cero columnas, asi que escribe cero filas y nadie se entera. Y como
+    # la marca de agua avanzo, la vuelta siguiente pide "lo que cambio despues
+    # de ahora": esas 71.472 filas no se vuelven a pedir nunca. El agujero se
+    # tapa solo.
+    #
+    # Es el mismo modo de falla de `reconciliar.py` muriendo con KeyError: una
+    # corrida que no hizo nada se lee igual que una que no tenia nada que
+    # hacer.
+    vacia = os.path.join(tmp, "sin_tablas.db")
+    sqlite3.connect(vacia).close()
+
+    class ClienteQueNoDeberiaHablar(object):
+        """Si el corte funciona, a este no lo llama nadie."""
+
+        def __init__(self):
+            self.pedidos = 0
+
+        def cambios(self, ruta, desde, limite, pagina):
+            self.pedidos += 1
+            return {"filas": [{"id": 1, "vin": "X"}],
+                    "hasta": "2026-01-01 00:00:00"}
+
+    espia = ClienteQueNoDeberiaHablar()
+    try:
+        sincronizar_entidad("unidades", desde="", limite=500,
+                                 db_path=vacia, cliente=espia)
+        afirmar(False, "el pull corta si la tabla no existe")
+    except RuntimeError as e:
+        afirmar("no existe en la replica" in str(e),
+                "el pull corta si la tabla no existe",
+                str(e).split(chr(10))[0])
+
+    afirmar(espia.pedidos == 0,
+            "y corta ANTES de pedirle una sola pagina al servidor",
+            "{} pedidos".format(espia.pedidos))
+
+    est_vacia = sqlite3.connect(vacia).execute(
+        "SELECT ultimo_resultado, marca_agua FROM sync_estado "
+        " WHERE entidad = 'unidades'").fetchone()
+    afirmar(est_vacia[0] == "error", "queda como error, no como ok",
+            est_vacia[0])
+    afirmar(est_vacia[1] == "",
+            "y la marca de agua NO se mueve: si se moviera, esas filas no se "
+            "volverian a pedir nunca", repr(est_vacia[1]))
+
     try:
         shutil.rmtree(tmp, ignore_errors=True)
     except Exception:

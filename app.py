@@ -57,6 +57,23 @@ def crear_app():
     # tambien al hilo del sync, al del push y a los comandos de consola.
     instalar_guardas()
 
+    # LA BASE PUBLICA DE LAS FOTOS, COMPROBADA AL ARRANCAR.
+    #
+    # Va aca -- y no perezosamente al publicar la primera foto, que es donde
+    # estaba -- porque el costo de equivocarse es asimetrico. Un arranque que
+    # falla se ve en el acto, en el log del despliegue, y no le pasa nada a
+    # nadie. Una URL mal armada viaja a `archivo1..archivo9` de Regla PHP, que
+    # son columnas PERMANENTES: Regla PHP guarda la URL, no el archivo, asi que
+    # una foto con el host equivocado deja de verse en la pantalla de otro
+    # sistema y no hay variable que la arregle despues.
+    #
+    # Y esto se vuelve concreto justo ahora, con la mudanza al proyecto nuevo:
+    # mientras convivan la direccion de Railway y el dominio propio, derivar la
+    # base del request dejaria el host escrito segun por donde entro el que
+    # subio la foto. Por eso sale de PUBLIC_BASE_URL y de ningun otro lado.
+    from modulos.fotos_publicas import base_publica_configurada
+    app.config["BASE_PUBLICA"] = base_publica_configurada()
+
     app.config["MAX_CONTENT_LENGTH"] = 64 * 1024 * 1024
 
     app.jinja_env.filters["mostrar"] = mostrar

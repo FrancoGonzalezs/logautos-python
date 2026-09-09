@@ -71,6 +71,12 @@ import urllib.request
 RAIZ = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, RAIZ)
 
+# La base publica de las fotos ahora se exige AL ARRANCAR (ver
+# `fotos_publicas.base_publica_configurada`). Una prueba tiene que declarar su
+# entorno igual que produccion: `regla.example` no resuelve a ningun lado, que
+# es exactamente lo que se quiere de una prueba que no debe publicar nada.
+os.environ.setdefault("PUBLIC_BASE_URL", "https://regla.example")
+
 from temporales import carpeta_de_prueba
 
 CLAVE = "clave-de-prueba"

@@ -457,6 +457,27 @@ INDICES_DE_TRABAJO = [
 
 
 def crear_indices_de_trabajo(db):
+    # `temp_store=MEMORY` ANTES DE ORDENAR NADA.
+    #
+    # `CREATE INDEX` sobre `registros` (296.358 filas) hace un sort externo, y
+    # SQLite lo escribe en un archivo temporal propio -- no en la carpeta de la
+    # base, sino en la que le resuelve el sistema. El 2026-09-09 esa resolucion
+    # fallo en esta maquina y los veintiun tablas quedaron cargadas y SIN NINGUN
+    # indice, con este error:
+    #
+    #     sqlite3.OperationalError: unable to open database file
+    #
+    # Y fallaba DESPUES de imprimir "filas cargadas: ...", que es la peor forma
+    # de fallar: el que lo corre ve el resumen con las 942.741 filas y despues
+    # un traceback, y la lectura natural es "cargo bien, se rompio al final".
+    # La base queda usable y lentisima -- cada ficha de unidad recorreria
+    # `registros` entera --, o sea que el sintoma aparece dias despues y lejos.
+    #
+    # Los sorts de estos indices entran de sobra en memoria (el mas grande son
+    # 296.358 VIN de 17 caracteres), asi que no hay nada que ganar mandandolos a
+    # disco y si algo que perder: depender de una carpeta que puede no estar.
+    db.execute("PRAGMA temp_store=MEMORY")
+
     creados = 0
     for tabla, columnas in INDICES_DE_TRABAJO:
         existentes = {r[1] for r in db.execute('PRAGMA table_info("{}")'.format(tabla))}

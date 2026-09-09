@@ -124,6 +124,49 @@ class FaltaBasePublica(RuntimeError):
     """No hay con que armar una URL absoluta para el legado."""
 
 
+def base_publica_configurada():
+    """La base publica, validada. REVIENTA si falta o si esta mal formada.
+
+    LA LLAMA `crear_app()` AL ARRANCAR, y ese es el punto entero: hasta el
+    2026-09-09 la unica comprobacion vivia en `url_publica`, o sea que la
+    aplicacion levantaba tranquila y reventaba recien cuando alguien publicaba
+    la primera foto -- en medio de una inspeccion, con el usuario mirando.
+
+    UNA URL MAL PUESTA NO SE PUEDE DESHACER. Lo que se manda va a
+    `archivo1..archivo9` de Regla PHP, columnas permanentes que su pantalla
+    pinta en un `<img>`. No hay copia del otro lado: Regla PHP guarda la URL,
+    no el archivo. Un dominio equivocado ahi no es un error de configuracion
+    que se arregla cambiando la variable -- es una foto que dejo de verse en
+    el sistema de otro, para siempre, y en filas que ya nadie va a revisar.
+
+    POR ESO NUNCA SALE DEL REQUEST. `request.host` seria lo comodo y seria una
+    trampa: durante la mudanza conviven la direccion de Railway y el dominio
+    propio, asi que la URL escrita dependeria de por donde entro el que subio
+    la foto. Dos fotos de la misma inspeccion podrian quedar con hosts
+    distintos, y el sintoma aparece meses despues, en la pantalla de otro."""
+    base = (os.environ.get("PUBLIC_BASE_URL") or "").strip().rstrip("/")
+    if not base:
+        raise FaltaBasePublica(
+            "PUBLIC_BASE_URL no esta puesta.\n"
+            "  Con ella se arman las URL de las fotos que se le mandan a Regla "
+            "PHP, y quedan escritas en `archivo1..archivo9` PARA SIEMPRE.\n"
+            "  Tiene que ser el dominio DEFINITIVO y con esquema, por ejemplo "
+            "https://regla.logautos.cl\n"
+            "  En Railway se pone como variable del servicio.")
+    if not base.startswith(("http://", "https://")):
+        raise FaltaBasePublica(
+            "PUBLIC_BASE_URL tiene que empezar con http:// o https:// y vino "
+            "{!r}.\n"
+            "  Sin esquema, Regla PHP la resuelve contra SU propio host y la "
+            "foto da 404 en la pantalla de otro sistema.".format(base))
+    resto = base.split("//", 1)[1]
+    if not resto or "/" in resto:
+        raise FaltaBasePublica(
+            "PUBLIC_BASE_URL tiene que ser solo esquema y host, sin ruta ni "
+            "barra final, y vino {!r}.".format(base))
+    return base
+
+
 def url_publica(ruta_en_el_sitio):
     """La URL que se le manda al legado, con host. REVIENTA si no hay base.
 
@@ -137,16 +180,9 @@ def url_publica(ruta_en_el_sitio):
     la variable". No la exigia nadie: el comentario prometia una guarda que no
     existia. Ahora existe -- y esta aca y no en el push porque este es el unico
     lugar por el que se arma una URL para afuera."""
-    base = (os.environ.get("PUBLIC_BASE_URL") or "").rstrip("/")
-    if not base:
-        raise FaltaBasePublica(
-            "PUBLIC_BASE_URL no esta puesta y hay que mandarle al legado la "
-            "URL de una foto.\n"
-            "  Sin ella saldria `{}`, que el legado resuelve contra su propio "
-            "host y da 404.\n"
-            "  En Railway va la URL publica del servicio.".format(
-                ruta_en_el_sitio))
-    return base + ruta_en_el_sitio
+    # La MISMA validacion que corre al arrancar, no una copia: dos reglas
+    # para la misma variable es la forma de que una se quede atras.
+    return base_publica_configurada() + ruta_en_el_sitio
 
 
 @bp.route("/<token>")

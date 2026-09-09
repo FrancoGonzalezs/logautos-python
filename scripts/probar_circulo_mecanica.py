@@ -49,6 +49,11 @@ import urllib.request
 RAIZ = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, RAIZ)
 
+# La base publica se exige AL ARRANCAR, asi que tiene que estar puesta ANTES de
+# importar la app. Mas abajo esta prueba la saca a proposito para comprobar que
+# `url_publica` revienta sin ella, y la vuelve a poner.
+os.environ.setdefault("PUBLIC_BASE_URL", "https://regla.example")
+
 from temporales import carpeta_de_prueba
 os.environ.setdefault("SECRET_KEY", "prueba")
 
