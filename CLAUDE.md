@@ -1192,6 +1192,38 @@ no reconozcas», una tabla nueva de Regla PHP se perdería en silencio. Las dos
 fallas son mudas; frenar y nombrarla no lo es. Probado agregando una tabla
 inventada: frena y la nombra.
 
+#### La ruta de traspaso — `modulos/traspaso.py`, TEMPORAL
+
+Construida el 2026-09-09. El proyecto viejo le sirve la réplica al nuevo por
+HTTP, con token en cabecera. **Se borra al terminar la mudanza**: la variable,
+el código y el redespliegue — las tres cosas.
+
+**Se eligió sobre pasar el archivo por FTP del cPanel, y el argumento es de
+Franco:** el FTP no elimina la confianza, **la mueve** — de un token desechable
+a las credenciales que abren la cuenta entera donde vive el sistema de la
+empresa, tecleadas en la misma consola. Entre exponer algo que se borra en diez
+minutos y exponer la llave maestra, no hay duda.
+
+Las cuatro condiciones, todas con su prueba en `probar_traspaso.py`:
+
+| | por qué |
+|---|---|
+| sin `TRASPASO_TOKEN` el blueprint **no se registra** | la respuesta pasa a ser exactamente la misma que la de una dirección inventada; la prueba compara las dos |
+| el token va en **cabecera**, y la ruta **rechaza** el token por query string | gunicorn no escribe access log por defecto y la app tampoco loguea rutas —los dos comprobados—, pero el proxy de Railway no es nuestro. Es lo que alguien va a intentar por comodidad |
+| menos de 32 caracteres y **no arranca** | mejor no levantar que levantar creyendo que está protegido |
+| todo intento se imprime, con la IP | sirve `tbl_users`: que se use tiene que verse |
+
+**La copia no va al volumen**: el del proyecto viejo tiene ~69 MB libres de 434
+y la copia son 387 MB. Va al disco efímero del contenedor, y el espacio se
+comprueba **antes** — si no alcanza corta con los números, en vez de fallar a la
+mitad y entregar un `.gz` truncado que del otro lado se ve como una base
+incompleta.
+
+Con la variable puesta, un pedido sin token da 404 mientras que una dirección
+inventada da 302, **así que ahí sí se deduce que la ruta existe**. Es aceptable
+—sigue haciendo falta el token, y la ventana son minutos— y está escrito para
+que nadie lo descubra de nuevo. Es una razón más para sacarla enseguida.
+
 #### El procedimiento, escrito
 
 `scripts/CARGA_INICIAL.md`, con las dos vías: copiar el volumen (recomendada) y
@@ -2020,20 +2052,21 @@ tempdir y lo borra. Tres decisiones que se tomaron midiendo, no suponiendo:
 Medido después: de 33 GB acumulados y 717 MB por corrida a **371 MB de pico**,
 que la corrida siguiente barre.
 
-Las quince suites, ninguna escribe en producción:
+Las dieciséis suites, ninguna escribe en producción:
 
 ```bash
-# las quince, y `ficha_estados` NO esta en la lista porque el script no existe:
+# las dieciseis, y `ficha_estados` NO esta en la lista porque el script no existe:
 # estuvo nombrado aca meses y nadie lo notó, que es el mismo agujero de siempre
 for s in estados reconciliacion motivo_desvio push facturacion ubicacion ot_pdi \
          pull circulo circulo_ingreso circulo_mecanica check_list_mecanica \
-         correo_inspeccion retencion arranque; do
+         correo_inspeccion retencion arranque traspaso; do
   python scripts/probar_$s.py || echo "FALLA $s"
 done
 # circulo         el circuito entero, y la PDI contra las DOS listas blancas
 # correo_inspeccion  el correo; NO manda ninguno, RESEND_API_KEY va sin poner
 # retencion       las unidades que Regla PHP no deja mover, y quien las destraba
 # arranque        que la app se NIEGUE a levantar con el entorno mal puesto
+# traspaso        la ruta temporal de la mudanza: que este CERRADA
 python scripts/verificar_push_produccion.py   # 5 sondas contra producción, ninguna escribe
 python scripts/probar_precio_ot.py            # sondas; con --crear escribe OT reales sobre PRUEBA
 ```

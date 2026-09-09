@@ -12,6 +12,60 @@ de que la A esté disponible.
 
 ---
 
+## Las tres cosas que alguien va a repetir mal dentro de seis meses
+
+Están medidas, no razonadas. Van con el número porque «es más seguro» no frena
+a nadie.
+
+### 1. Copiar sólo `local.db` devuelve una base VÁLIDA con 500 filas menos
+
+La réplica está en modo WAL. Sobre una base con 501 filas, 500 de ellas
+commiteadas y todavía en el WAL:
+
+```
+copiando SOLO local.db        ->   1 fila
+copiando .db + -wal + -shm    -> 501 filas
+backup() / VACUUM INTO        -> 501 filas
+```
+
+**La copia de una fila abre perfectamente.** No da error, no avisa, pasa
+`quick_check`. Es una base SQLite legítima a la que le faltan 500 filas.
+
+Es el peor modo de falla que hay: el que copia ve un archivo, lo pone, la
+aplicación levanta, y lo que falta se descubre semanas después y lejos.
+
+### 2. Copiar los tres archivos en caliente: 12 de 12 corrompidas
+
+Porque **son tres instantes distintos**. Con 388 MB la copia tarda cientos de
+milisegundos y el hilo de sync sigue commiteando en el medio.
+
+Reproducido a propósito —copiar el `.db`, esperar 300 ms, copiar el `-wal`— con
+un escritor corriendo, doce vueltas:
+
+| método | corrompidas |
+|---|---|
+| copia cruda de los tres archivos | **12 de 12** (`database disk image is malformed`) |
+| `VACUUM INTO`, mismo escritor | **0 de 12** |
+
+No es «más seguro»: es la diferencia entre no funcionar nunca y funcionar
+siempre.
+
+### 3. La lista del script de limpieza es de lo que se CONSERVA
+
+Y una tabla sin clasificar **frena el script**. Está al revés de lo natural, a
+propósito, porque las dos alternativas fallan calladas:
+
+| si la lista fuera… | qué pasaría con una tabla nueva |
+|---|---|
+| de lo que se **borra** | una tabla nueva **de Regla Python** sobreviviría a la limpieza, en silencio |
+| «borrá lo que no reconozcas» | una tabla nueva **de Regla PHP** se perdería, en silencio |
+| **de lo que se conserva, y frená si no la conocés** | el script se detiene y la nombra |
+
+Las dos primeras son mudas. La tercera obliga a decidir, que es lo único que
+no se puede automatizar.
+
+---
+
 # Vía A — el proyecto viejo le sirve la base al nuevo
 
 El viejo ya tiene la réplica cargada. No hay nada que exportar de MySQL.
@@ -28,43 +82,19 @@ instante.
 
 Es la clase de problema que conviene no tener en vez de resolver bien.
 
-## Lo que se validó antes de construirlo, y qué dio
+## Lo que se validó antes de construirlo
 
-### El `.db` no se puede copiar con `cp`. Ni con el WAL al lado
+Las dos trampas del WAL están arriba, en **Las tres cosas**: copiar sólo el
+`.db` da una base válida con 500 filas menos, y copiar los tres archivos en
+caliente dio 12 de 12 corrompidas.
 
-La réplica está en modo **WAL**. Copiar sólo `local.db` deja afuera todo lo que
-esté en el WAL sin volcar:
+La conclusión operativa es que hay que tomar una **foto transaccional**, y hay
+dos formas: la API de respaldo (`backup()`) y `VACUUM INTO`. Se elige la
+segunda porque además **compacta** y deja un archivo único sin `-wal` al lado
+— que es exactamente lo que se quiere mover.
 
-```
-base con 501 filas, 500 de ellas commiteadas y todavia en el WAL
-
-A) copiando SOLO local.db        ->   1 fila
-B) copiando .db + -wal + -shm    -> 501 filas
-C) sqlite3 .backup()             -> 501 filas
-D) VACUUM INTO                   -> 501 filas
-```
-
-**Y la copia con una fila abre perfectamente.** No da error, no avisa: es una
-base SQLite válida con 500 filas menos.
-
-Copiar los tres archivos tampoco sirve, porque **son tres instantes distintos**.
-Con 388 MB la copia tarda cientos de milisegundos y el hilo de sync sigue
-commiteando en el medio. Reproducido a propósito —copiar el `.db`, esperar
-300 ms, copiar el `-wal`— con el escritor corriendo:
-
-| método | resultado |
-|---|---|
-| copia cruda `.db` + `-wal` 300 ms después | **12 de 12 corrompidas** (`database disk image is malformed`) |
-| `VACUUM INTO` con el mismo escritor | **0 de 12** |
-
-### Entonces: `VACUUM INTO`, y NO hay que apagar el hilo de sync
-
-Las dos vías consistentes son la API de respaldo (`backup()`) y `VACUUM INTO`.
-Las dos toman una foto transaccional: lo que sale es la base en **algún**
-instante válido, nunca a medio escribir.
-
-Se elige `VACUUM INTO` porque además **compacta**, y porque deja un archivo
-único sin `-wal` al lado — que es exactamente lo que se quiere mover.
+**Y no hay que apagar el hilo de sync.** Con un escritor commiteando sin parar,
+`VACUUM INTO` dio 0 de 12 fallos.
 
 Medido sobre la réplica real de 388,5 MB:
 
@@ -76,56 +106,74 @@ Medido sobre la réplica real de 388,5 MB:
 | `gzip -6` sobre la copia | **5,9 s** | **49,8 MB** (7,8×) |
 
 `PRAGMA quick_check` sobre la copia: `ok`. Las 35 tablas con el mismo conteo que
-el origen, cero diferencias.
-
-**El total es ~7 segundos y 49,8 MB**, sin tocar el hilo de sync.
+el origen, cero diferencias. **Total ~7 segundos.**
 
 ## El procedimiento
 
-### 1. En la consola del proyecto VIEJO — sacar la copia
+### 1. Levantar la ruta de traspaso en el proyecto VIEJO
+
+**Construida: `modulos/traspaso.py`.** Sirve una foto consistente de la réplica,
+comprimida, en streaming. No hay que apagar el hilo de sync.
+
+> **Se eligió esto sobre pasarlo por FTP del cPanel, y el argumento es de
+> Franco:** el FTP no elimina la confianza, **la mueve** — de un token
+> desechable a las credenciales que abren la cuenta entera donde vive el
+> sistema de la empresa, tecleadas en la misma consola. Entre exponer algo que
+> se borra en diez minutos y exponer la llave maestra, no hay duda.
 
 ```bash
-python - <<'PY'
-import gzip, os, shutil, sqlite3
-src = os.environ.get("DB_PATH", "/data/local.db")
-snap = "/data/copia.db"
-sqlite3.connect(src).execute("VACUUM INTO ?", (snap,))
-with open(snap, "rb") as f, gzip.open(snap + ".gz", "wb", 6) as g:
-    shutil.copyfileobj(f, g, 1 << 20)
-os.remove(snap)
-print("listo:", snap + ".gz", os.path.getsize(snap + ".gz") // 1000000, "MB")
-PY
+# 1. generar el token
+python -c "import secrets; print(secrets.token_urlsafe(48))"
+
+# 2. ponerlo como TRASPASO_TOKEN en las variables del proyecto VIEJO
+#    (el redespliegue lo levanta; en el log tiene que aparecer TRASPASO ACTIVO)
 ```
 
-Se borra el `.db` intermedio en el acto: **no se deja una copia de `tbl_users`
-sin comprimir dando vueltas en el volumen**.
+**Las cuatro condiciones, y ninguna es decorativa:**
 
-### 2. Pasarlo al proyecto NUEVO
+- **Sin la variable, la ruta no existe.** El blueprint no se registra, y la
+  respuesta pasa a ser **exactamente la misma** que la de una dirección
+  inventada. La prueba compara las dos.
+- **El token va en una CABECERA (`X-Traspaso-Token`), nunca en la URL.**
+  gunicorn no escribe access log por defecto y la aplicación tampoco loguea
+  rutas —los dos comprobados—, pero el proxy de Railway está fuera de nuestro
+  control. **La ruta rechaza el token por query string**, y hay una prueba que
+  lo afirma: es lo que alguien va a intentar por comodidad.
+- **Un token corto no arranca.** Menos de 32 caracteres y la aplicación
+  revienta al levantar. Mejor no arrancar que arrancar creyendo que está
+  protegido.
+- **Todo intento se imprime**, el que entra y el que no, con la IP de origen.
+  Es una ruta que sirve `tbl_users`: que se use tiene que verse.
 
-Ésta es la parte que hay que decidir, y hay dos formas. **Ninguna deja el
-archivo en una URL pública.**
+**La copia NO va al volumen.** El volumen del proyecto viejo tiene del orden de
+**69 MB libres de 434** y la copia son **387 MB**: no entra, y llenarlo tumbaría
+el sistema que estamos copiando. Va al disco efímero del contenedor, y el
+espacio se comprueba **antes** — si no alcanza corta con los números en vez de
+fallar a la mitad y entregar un `.gz` truncado.
 
-**A1 — ruta temporal con token en el viejo.** Es lo más directo. Tres
-condiciones, y las tres son por algo:
+### 2. Bajarla desde la consola del proyecto NUEVO
 
-- **El token va en una CABECERA, nunca en la URL.** gunicorn no escribe access
-  log por defecto y la aplicación tampoco loguea rutas —comprobado—, pero el
-  proxy de Railway está fuera de nuestro control. Un token en la URL termina en
-  el log de alguien; en una cabecera, no.
-- **Detrás de una variable de entorno que arranca apagada**, y que se saca
-  después. La ruta existe sólo mientras esa variable esté puesta.
-- **Se quita del código y se redespliega.** Un blueprint borrado no deja rastro
-  en el binario; lo que sí queda es la variable, así que se borra también.
+```bash
+curl -f -H "X-Traspaso-Token: EL_TOKEN" \
+     https://<el-viejo>/traspaso/replica.db.gz \
+     -o /tmp/replica.db.gz
+```
 
-**A2 — por el cPanel, sin HTTP en ningún momento.** Desde la consola del viejo
-se sube el `.gz` por FTP a una carpeta **fuera de `public_html`**, y desde la
-consola del nuevo se baja igual. Nunca pasa por una URL. Es más manual y
-necesita las credenciales de FTP escritas a mano en las dos consolas.
+`-f` para que un 404 —token mal escrito— no deje un archivo con el cuerpo del
+error adentro.
 
-> A2 no es lo mismo que la vía B: acá lo que viaja es **la réplica ya armada,
-> con su marca de agua**. El cPanel es sólo el intermediario.
+### 3. Apagar la ruta, y son TRES cosas
 
-### 3. En el proyecto NUEVO — poner la base
+Apenas la copia esté en el proyecto nuevo, en el viejo:
+
+1. **quitar la variable `TRASPASO_TOKEN`** — con eso la ruta deja de existir;
+2. **borrar `modulos/traspaso.py` y su bloque en `app.py`**;
+3. **redesplegar**, que es lo que hace efectivas las dos anteriores.
+
+Las tres. Quitar sólo la variable deja el código listo para que alguien la
+vuelva a poner; borrar sólo el código sin redesplegar no cambia lo que corre.
+
+### 4. Poner la base en su lugar
 
 ```bash
 gunzip -c /data/copia.db.gz > /data/local.db.nueva
@@ -141,7 +189,7 @@ print('marca      :', d.execute('SELECT entidad, marca_agua FROM sync_estado').f
 **Recién si eso dice `ok`** se renombra sobre `local.db`, con el servicio
 detenido o con el redespliegue. Y se borra el `.gz`.
 
-### 4. Limpiar el arrastre
+### 5. Limpiar el arrastre
 
 ```bash
 python scripts/limpiar_para_paralelo.py --db /data/local.db            # muestra
@@ -156,15 +204,31 @@ Lo que viaja de Regla Python y **sale**:
 | `sync_push_pendientes` | **la cola del push.** Si viaja, el día que se encienda el push saldrían hacia Regla PHP escrituras de pruebas de agosto |
 | `avisos_pendientes_regla` | igual: no puede salir un correo de una prueba vieja |
 | `fotos_publicadas` | los tokens apuntan a archivos del `DATA_DIR` del proyecto viejo, que no se copian. Serían URLs que dan 404 |
+
+**Las fotos publicadas el script las lista UNA POR UNA** —origen, referencia,
+fecha y ruta— antes de borrar nada. No se decide de memoria: una URL que ya haya
+viajado a `archivo1..archivo9` de Regla PHP queda en 404 si se borra su token,
+porque Regla PHP guarda la URL y no el archivo. Se mira lo que hay **en esa
+base**, no lo que uno recuerda.
 | `sync_conflictos`, `reconciliacion`, `permisos_regla`, `intentos_bloqueados_regla` | historial de pruebas; los permisos se resiembran solos |
 
 **`sync_estado` NO se toca.** Es lo que se vino a buscar.
 
-**Y `newstocks_cidef.push_pendiente` se baja a 0.** No es una fila y es el
-huérfano que importa: el UPSERT del pull **saltea** las filas con el flag en 1,
-así que una unidad que quede así deja de recibir actualizaciones de Regla PHP,
-en silencio y para siempre. Vaciar la cola sin bajar el flag produce
-exactamente eso.
+> ### `push_pendiente` a 0 no es un paso más de la lista
+>
+> Es el detalle que más caro habría salido, y no es una fila: es una columna de
+> `newstocks_cidef`.
+>
+> Lo pone en 1 quien encola y lo baja quien resuelve. **El UPSERT del pull
+> SALTEA las filas con el flag en 1.** Así que vaciar `sync_push_pendientes` sin
+> bajar el flag deja esas unidades **sin recibir actualizaciones de Regla PHP,
+> para siempre y sin ninguna señal**: no hay error, no hay log, no hay fila
+> divergente que la reconciliación pueda ver — la unidad simplemente se congela
+> en el estado que tenía ese día.
+>
+> El script lo recalcula y lo verifica al terminar. Es el mismo huérfano que ya
+> documentó `borrar_backlog.py`, y sigue siendo el peor resultado posible de un
+> borrado que parece inocente.
 
 **La lista del script es de lo que se CONSERVA, y una tabla sin clasificar lo
 frena.** Al revés de lo natural, a propósito: con una lista de lo que se borra,
@@ -172,7 +236,7 @@ una tabla nueva de Regla Python sobreviviría en silencio; con un «borrá lo qu
 no reconozcas», una tabla nueva de Regla PHP se perdería en silencio. Las dos
 fallas son mudas. Frenar y nombrarla no lo es.
 
-### 5. Verificar
+### 6. Verificar
 
 ```bash
 python scripts/verificar_carga.py --sql        # pegar en phpMyAdmin, exportar CSV

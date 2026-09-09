@@ -204,10 +204,29 @@ def main():
             "SELECT COUNT(*) FROM fotos_publicadas").fetchone()[0]
         if publicadas:
             print("")
-            print("OJO CON LAS FOTOS PUBLICADAS: {}".format(publicadas))
-            print("   Si alguna de esas URL ya viajo a archivo1..archivo9 de")
-            print("   Regla PHP, borrarlas la deja en 404. Revisar antes si")
-            print("   alguna corresponde a una inspeccion REAL y no de prueba.")
+            print("LAS FOTOS PUBLICADAS SE LISTAN UNA POR UNA: {}".format(
+                publicadas))
+            print("")
+            print("   Una URL que ya haya viajado a archivo1..archivo9 de Regla")
+            print("   PHP queda en 404 si se borra su token: Regla PHP guarda la")
+            print("   URL, no el archivo. Asi que esto NO se decide de memoria --")
+            print("   se mira lo que hay ACA, en esta base, antes de borrar.")
+            print("")
+            print("   {:<22} {:<12} {:<20} {}".format(
+                "origen", "referencia", "publicada", "ruta"))
+            for o, r, f, ruta in db.execute(
+                    "SELECT origen, referencia, publicada_en, ruta "
+                    "  FROM fotos_publicadas ORDER BY publicada_en, rowid LIMIT 40"):
+                print("   {:<22} {:<12} {:<20} {}".format(
+                    (o or "")[:22], (str(r) or "")[:12], (f or "")[:20],
+                    (ruta or "")[:44]))
+            if publicadas > 40:
+                print("   ... y {} mas".format(publicadas - 40))
+            print("")
+            print("   Si TODAS son de pruebas --origen `check_list_mecanica` o")
+            print("   `prueba`, sobre unidades PRUEBA-- se borran sin problema.")
+            print("   Si alguna es de una inspeccion REAL, hay que decidirla")
+            print("   aparte ANTES de correr con --borrar.")
 
     if not args.borrar:
         print("")

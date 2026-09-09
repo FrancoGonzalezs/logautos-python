@@ -58,7 +58,13 @@ bp = Blueprint("acceso", __name__)
 # cookie. Lo que la protege es el token de la URL, no el login. Ver el
 # encabezado de modulos/fotos_publicas.py para lo que eso protege y lo que
 # no.
-LIBRES = {"acceso.login", "acceso.salir", "static", "fotos_publicas.ver"}
+# `traspaso.replica` va aca porque quien la consume es la CONSOLA del
+# proyecto nuevo, que no tiene con que iniciar sesion -- su base todavia
+# esta vacia, que es justamente por lo que se baja la replica. No queda
+# desprotegida: `traspaso` exige su propio token en una cabecera, y sin la
+# variable de entorno el blueprint ni se registra.
+LIBRES = {"acceso.login", "acceso.salir", "static", "fotos_publicas.ver",
+          "traspaso.replica"}
 
 
 def buscar_usuario(email):

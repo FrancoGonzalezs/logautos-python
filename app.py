@@ -121,6 +121,28 @@ def crear_app():
     app.register_blueprint(bp_kpis)
     app.register_blueprint(bp_reconciliacion)
 
+    # LA RUTA DE TRASPASO, TEMPORAL Y APAGADA POR DEFECTO.
+    #
+    # Sirve la replica entera --incluida `tbl_users` con correos, RUT,
+    # telefonos y hashes de 144 personas reales-- para armar el proyecto nuevo
+    # de Railway sin volver a exportar de MySQL.
+    #
+    # SIN `TRASPASO_TOKEN` EL BLUEPRINT NO SE REGISTRA, asi que la ruta no
+    # existe: devuelve 404 igual que cualquier direccion inventada. No es una
+    # ruta apagada que contesta 403 -- es una ruta que no esta.
+    #
+    # ES TEMPORAL Y SE BORRA. Cuando el proyecto nuevo tenga su base: se quita
+    # la variable, se saca este bloque y se borra `modulos/traspaso.py`. Las
+    # tres cosas. Ver scripts/CARGA_INICIAL.md.
+    from modulos.traspaso import bp as bp_traspaso, esta_activo as _traspaso_on
+    if _traspaso_on():
+        app.register_blueprint(bp_traspaso)
+        print("=" * 70)
+        print("TRASPASO ACTIVO: GET /traspaso/replica.db.gz sirve la replica")
+        print("   con la cabecera X-Traspaso-Token. Es TEMPORAL:")
+        print("   sacar la variable y el codigo apenas termine la mudanza.")
+        print("=" * 70)
+
     # LA RED DE SEGURIDAD DE LA RETENCION.
     #
     # `movimientos.registrar()` levanta `UnidadRetenida` cuando la unidad esta
